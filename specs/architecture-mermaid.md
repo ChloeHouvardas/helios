@@ -10,8 +10,9 @@ Provides the tools Qwen uses to create applications.
 
 - **Financial Tools Interface + SDK:** Exposes reusable financial capabilities through developer-facing interfaces.
 - **Application Builder:** Provides app specifications, templates, and integration tooling.
-- **Action Agent Builder:** A framework for creating agents that perform financial workflows.
-- **Audit Agent Builder:** A framework for creating agents that monitor and review those workflows.
+- **Agent Toolkit:** Groups the agent frameworks packaged into generated applications:
+  - **Action Agent Builder:** A framework for creating agents that perform financial workflows.
+  - **Audit Agent Builder:** A framework for creating agents that monitor and review those workflows.
 - **Validation + Deployment:** Checks generated applications and supports automated deployment, including revision feedback to Qwen.
 
 ### 2. Generated Applications
@@ -59,8 +60,11 @@ flowchart TB
         direction LR
         D1["Financial Tools Interface + SDK"]
         D2["Application Builder"]
-        D3["Action Agent Builder"]
-        D4["Audit Agent Builder"]
+        subgraph TK["Agent Toolkit"]
+            direction LR
+            D3["Action Agent Builder"]
+            D4["Audit Agent Builder"]
+        end
         D5["Validation + Deployment"]
     end
 

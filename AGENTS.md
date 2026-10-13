@@ -6,9 +6,13 @@ Helios is a platform for building and deploying agentic financial applications u
 
 Refer to:
 - `README.md` — Project overview
-- `docs/architecture.md` — Architecture and components
-- `docs/interfaces.md` — Component interfaces
-- `docs/decisions.md` — Decisions and open questions
+- `specs/architecture-mermaid.md` — Architecture and components
+- `specs/interfaces.md` — Component interfaces
+- `specs/decisions.md` — Decisions and open questions
+- `specs/tech-stack.md` — Tech stack decisions
+
+## Startup
+- When a new session is asked to work on this repo, read all the reference docs to understand the scope of the system and its architecture. 
 
 ## Communication
 
@@ -21,6 +25,7 @@ Refer to:
 
 ## Development Conventions
 
+- Use conventional commit messages (`feat:`, `fix:`, `docs:`, `chore:`, etc.).
 - Prefer simple, modular implementations.
 - Follow existing patterns where practical.
 - Avoid unnecessary abstractions and unrelated changes.
@@ -44,9 +49,10 @@ Do not assume an implementation request authorizes a major architectural redesig
 
 Keep documentation concise and consistent.
 
-- Update `architecture.md` when approved architectural changes occur.
-- Update `interfaces.md` when contracts change.
-- Update `decisions.md` when decisions are confirmed.
+- Update `specs/architecture-mermaid.md` when approved architectural changes occur.
+- Update `specs/interfaces.md` when contracts change.
+- Update `specs/decisions.md` when decisions are confirmed.
+- Update `specs/tech-stack.md` when tech stack choices are made.
 - Update `README.md` when project scope or setup changes.
 - Prefer updating existing documents over creating new ones.
 

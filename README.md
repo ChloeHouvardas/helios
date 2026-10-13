@@ -22,8 +22,9 @@ Helios has three main parts:
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Interfaces](docs/interfaces.md)
-- [Decisions](docs/decisions.md)
+- [Architecture](specs/architecture-mermaid.md)
+- [Interfaces](specs/interfaces.md)
+- [Decisions](specs/decisions.md)
+- [Tech Stack](specs/tech-stack.md)
 
 The architecture is evolving. Implementation details can be refined as components are developed.
