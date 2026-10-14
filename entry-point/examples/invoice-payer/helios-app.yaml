@@ -1,0 +1,152 @@
+# helios-app.yaml — invoice-payer
+#
+# The app spec for the entry-point worked example, answering the user request:
+#   "Make me an app that automatically manages and pays my invoices."
+#
+# Format follows specs/app-builder.md §"The app spec". Nothing reads this file
+# yet — platform/app-builder/ is a design placeholder with no validator, no
+# scaffolder and no stacks.yaml (see entry-point/references/platform-status.md).
+# It is written anyway, for three reasons:
+#   1. It forces the decisions in Step 2 of BUILD.md before any code is written.
+#   2. It is the design record a reviewer reads to understand the app's shape.
+#   3. It becomes machine-checkable the moment the validator lands.
+#
+# The invariants from specs/app-builder.md were self-checked by hand. app.py
+# enforces the cross-file one at runtime (action tools ⊆ audit tools).
+
+spec_version: "1"
+
+identity:
+  id: invoice-payer              # kebab-case; equals app_id in the audit manifest
+  name: Invoice Payer
+  description: >
+    Pays supplier invoices for a small business. Tracks what is due, makes sure
+    funds are available, obtains the owner's confirmation before money moves,
+    pays on time, and notifies the supplier. Duplicate invoices, changed supplier
+    payment details and unusually large amounts are held or refused for the owner
+    to deal with.
+
+# What already exists. Populated by the question phase's integration block, which
+# is asked early on purpose: whether something already exists changes every later
+# answer. This app is standalone, so every field is null — and that is a recorded
+# answer, not an unanswered question.
+existing:
+  system: null
+  stack: null
+  data: null
+  ui: null
+
+stack:
+  # Exactly one of `use` / `match_existing`. This is a standalone prototype, so it
+  # names a stack rather than matching an existing system.
+  #
+  # CAVEAT: stacks.yaml does not exist yet, so this name resolves to nothing.
+  # specs/app-builder.md defines the mechanism; specs/tech-stack.md still leaves
+  # web framework and data storage to be selected during implementation. The
+  # prototype below this line runs on plain Python with no web framework and a
+  # JSON data file, which is a legitimate reading of "the mechanism, not the
+  # choice" — but it must not be presented as a stack the platform ships.
+  use: helios-python-web-1
+
+data:
+  # Exactly one of `local` / `integration`. This app owns its invoice book.
+  #
+  # The field set is what app.py's InvoiceBook loads from data/invoices.json.
+  # Note the three fields that exist ONLY to serve the audit rules —
+  # `duplicate`, and the supplier's `payment_details_changed`. They are not
+  # business data the agent reads; they are facts the auditor resolves. Modelling
+  # them here is deliberate: a control that has nowhere to read from is a control
+  # that fails closed and denies everything.
+  local:
+    entities:
+      - name: supplier
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: name, type: string, required: true }
+          - { name: email, type: string, required: true }
+          - { name: bank_account, type: string, required: true }
+          # Fact-source input for rule app.payee_details_changed. Never exposed
+          # to the agent through lookup_invoice.
+          - { name: payment_details_changed, type: boolean, required: true }
+
+      - name: invoice
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: supplier_id, type: string, required: true }
+          # Money is decimal, never float: a rounding error in an invoice total
+          # is a real financial error. The tools move integer cents.
+          - { name: amount, type: decimal, required: true }
+          - { name: currency, type: string, required: true }
+          - { name: due_date, type: date, required: true }
+          - { name: status, type: string, required: true }
+          # Fact-source input for rule app.duplicate_invoice.
+          - { name: duplicate, type: boolean, required: true }
+          - { name: reference, type: string, required: false }
+
+      - name: account
+        fields:
+          - { name: id, type: string, required: true }
+          # Integer cents, matching fin_tools' convention throughout.
+          - { name: balance_cents, type: integer, required: true }
+
+      # Append-only evidence. The audit builder writes a hash-chained log of its
+      # own; this entity is the app's record of what it did, kept separate on
+      # purpose — one is the app's memory, the other is tamper-evident evidence.
+      - name: action_log_entry
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: kind, type: string, required: true }
+          - { name: at, type: datetime, required: true }
+          - { name: payload, type: json, required: true }
+
+# Shared knowledge graph. A declaration today and a wiring point later: the graph
+# service's read/write interface is still to be defined (specs/interfaces.md),
+# and specs/decisions.md leaves open how it distinguishes authoritative records
+# from agent observations. app.py does not call these — it uses fin_tools' local
+# graph prototype only if you add it.
+#
+# The distinction that makes this safe already exists in the prototype:
+# graph.observe is rejected if it would overwrite a verified fact, so an agent
+# cannot promote its own guess to a record of truth.
+graph:
+  reads:
+    # Nothing yet. This app is the origin of payment events rather than a
+    # consumer of them. A cash-planning app would read these.
+    []
+  publishes:
+    - { entity: payment, events: [settled, refused, held] }
+    - { entity: invoice, events: [status_changed] }
+
+agents:
+  action_manifest: agents/invoice-payer-action.json    # Agent Toolkit format
+  audit_manifest: agents/invoice-payer-audit.yaml      # Audit Agent Builder format
+
+ui:
+  # `align_with` is null because the app is standalone; the UI kit's guidelines
+  # apply as defaults. The framework is not chosen here — the named stack decides
+  # how these patterns are rendered.
+  #
+  # The prototype implements no web UI. `approval_queue` exists as the CLI
+  # ScriptedOwner in app.py, which prints the auditor's own `owner_question`.
+  # That is the honest state of it, and it is the page that matters most: every
+  # side-effect action can be held, so without a queue the agents pause
+  # invisibly and the user discovers it when they wonder why nothing happened.
+  pages:
+    - { id: dashboard, title: Cash and what is due, pattern: summary }
+    - { id: invoices, title: Invoices, pattern: table }
+    - { id: invoice, title: Invoice, pattern: detail }
+    - { id: holds, title: Needs your approval, pattern: approval_queue }
+    - { id: policy, title: Payment limits, pattern: settings }
+  align_with: null
+
+tools:
+  # The app's view of the financial tools in play. Must be a SUPERSET of both
+  # manifests' tool lists: a tool an agent can call that the app never declared
+  # is a tool nobody reviewed.
+  #
+  # Names are the real ones from platform/financial-tools
+  # (entry-point/references/financial-tools.md), not invented ones.
+  - payments.balance        # read-only
+  - payments.send           # side-effecting — gated, needs a verified auth_code
+  - email.send              # side-effecting — gated, externally visible
+  - lookup_invoice          # app-local read tool, declared in both manifests
