@@ -1,0 +1,182 @@
+# Audit manifest: Payables (second flagship app)
+#
+# Included to demonstrate that the audit agent is a FRAMEWORK, not a
+# hard-coded check for one app. Nothing in the runtime is Collect-specific:
+# this manifest declares different tools, different tasks and different
+# rules, and the same code enforces them.
+#
+# The Payables mandate from helios-context.md:
+#   "Duplicate invoices, changed supplier payment details and unusual amounts
+#    are held for the user to verify."
+#
+# All three are expressed as facts, not as arguments — which is what makes
+# them safe. A payment agent cannot talk its way past a changed-bank-details
+# check, because the check never reads anything the agent supplied.
+
+manifest_version: "1"
+app_id: helios-payables
+name: Payables Audit Agent
+description: >
+  Governs an action agent that pays supplier invoices. Reads are free;
+  moving money is gated per call, capped per payment, refused outright when
+  a supplier's payment details changed, and held for the owner on
+  duplicates and outliers.
+
+tools:
+  - name: lookup_supplier
+    description: Look up a supplier, their invoices and their payment details history
+    side_effect: false
+
+  - name: list_due_invoices
+    description: List supplier invoices due within a window
+    side_effect: false
+
+  - name: check_duplicate_invoice
+    description: Test whether an invoice looks like a duplicate of one already recorded
+    side_effect: false
+
+  - name: pay_supplier
+    description: >
+      Send money to a supplier. Irreversible once executed, so every call is
+      gated and every call is logged with the amount and the payee.
+    side_effect: true
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [supplier_id, invoice_id, amount, currency]
+      properties:
+        supplier_id:
+          type: string
+          minLength: 1
+        invoice_id:
+          type: string
+          minLength: 1
+        amount:
+          type: string
+          pattern: '^[0-9]+(\.[0-9]{1,2})?$'
+          description: Decimal string; money is never a float
+        currency:
+          type: string
+          enum: [USD, EUR, CNY, GBP]
+        reference:
+          type: string
+          maxLength: 140
+
+  - name: reschedule_payment
+    description: Move a scheduled payment to a later date. Reversible, but still a change.
+    side_effect: true
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [invoice_id, new_due_date]
+      properties:
+        invoice_id:
+          type: string
+          minLength: 1
+        new_due_date:
+          type: string
+          format: date
+        reason:
+          type: string
+          maxLength: 500
+
+tasks:
+  payables.pay_invoice:
+    description: Pay a supplier invoice that is due
+    allowed_tools:
+      - lookup_supplier
+      - list_due_invoices
+      - check_duplicate_invoice
+      - pay_supplier
+    # Money movement gets the shortest grant lifetime in the app: enough to
+    # complete one payment, not enough to sit around unused.
+    ttl_seconds: 120
+
+  payables.reschedule:
+    description: Move a payment to a later date when cash is short
+    allowed_tools: [lookup_supplier, list_due_invoices, reschedule_payment]
+    ttl_seconds: 300
+    tool_overrides:
+      reschedule_payment:
+        max_calls: 3
+        condition: a payment may be rescheduled at most three times per grant
+
+rules:
+  # Changed supplier payment details are the classic fraud vector. This is a
+  # DENY, not a hold: the agent should not be able to proceed at all until a
+  # human re-verifies the payee out of band. `payment_details_changed` is
+  # resolved from the fact source, so the agent cannot simply omit it.
+  - id: app.payee_details_changed
+    description: Never pay a supplier whose payment details recently changed
+    task_types: [payables.pay_invoice]
+    tools: [pay_supplier]
+    message: >
+      this supplier's payment details changed recently; payment is refused
+      until the owner re-verifies the payee
+    deny_if_fact_true: [payment_details_changed]
+    severity: critical
+
+  # A duplicate invoice is held, not denied: it may be legitimate (two
+  # genuine invoices for the same amount) and only the owner can tell.
+  - id: app.duplicate_invoice
+    description: Hold duplicate-looking invoices for owner verification
+    task_types: [payables.pay_invoice]
+    tools: [pay_supplier]
+    message: this invoice looks like a duplicate; the owner must verify it
+    approval_if_fact_true: [duplicate_invoice]
+
+  # Unusual amounts are held. This is the shape that matters most in
+  # payables: the AGENT chooses `amount`, but the CEILING is the recorded
+  # invoice amount resolved from the trusted ledger. The agent cannot raise
+  # its own ceiling by editing arguments, and cannot lower the recorded
+  # amount either — both sides of the comparison are outside its control.
+  - id: app.amount_matches_invoice
+    description: The payment may not exceed the recorded invoice amount
+    task_types: [payables.pay_invoice]
+    tools: [pay_supplier]
+    message: the payment exceeds the recorded invoice amount
+    limits:
+      - argument: amount
+        max_from_fact: invoice_amount
+        on_exceed: hold
+    severity: critical
+
+  # Per-payment ceiling. Above it, a human decides — this is the platform's
+  # "owner approval for large amounts" mandate applied to payables.
+  - id: app.large_payment_approval
+    description: Owner approval for payments over 25,000
+    task_types: [payables.pay_invoice]
+    tools: [pay_supplier]
+    message: payments over 25,000 need owner approval
+    limits:
+      - argument: amount
+        max: "25000.00"
+        on_exceed: hold
+
+  # Currency is constrained to the declared enum by the tool's own schema,
+  # which the baseline argument-validation rule enforces. This rule adds a
+  # business constraint on top: cross-currency payment needs a human, because
+  # the FX exposure is a decision the agent should not make alone.
+  - id: app.no_unlisted_currency
+    description: Only settle in the invoice's own currency
+    task_types: [payables.pay_invoice]
+    tools: [pay_supplier]
+    message: cross-currency payment needs owner approval
+    forbidden_values:
+      currency: [XXX]
+
+  # Rescheduling must say why. The reason is what the owner reads later when
+  # they ask why a payment moved, and it is what makes the log useful.
+  - id: app.reschedule_reason
+    description: A rescheduled payment must state a reason
+    task_types: [payables.reschedule]
+    tools: [reschedule_payment]
+    message: a rescheduled payment must state a reason
+    required_arguments: [invoice_id, new_due_date, reason]
+
+settings:
+  default_ttl_seconds: 300
+  contact_window_days: 30
+  log_path: payables-audit-log.jsonl
+  advisory: [heuristic]
+  allow_unsigned_grants: false
