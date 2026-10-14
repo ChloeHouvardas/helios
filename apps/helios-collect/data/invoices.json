@@ -1,0 +1,141 @@
+{
+  "_readme": [
+    "Invoice fixtures for helios-collect. Loaded by agent_toolkit.store.Store,",
+    "so the shape matches platform/action-agent-builder's own invoices.json.",
+    "",
+    "Each invoice exists to exercise exactly ONE control path. The demo runs all",
+    "of them; see README.md for the table. Do not add a second defect to an",
+    "invoice without saying which rule you intend to demonstrate, or the run",
+    "stops proving anything: two rules firing at once cannot be told apart.",
+    "",
+    "Money is a decimal STRING here, never a float. The platform's own fixture",
+    "uses floats (4200.0); this app does not, because a rounding error in an",
+    "invoice total is a real financial error. The fact source reads either.",
+    "",
+    "`disputed` is a CONTROL INPUT: it is read by the fact source and withheld",
+    "from the agent by lookup_invoice. An agent cannot talk its way past a flag",
+    "it was never given.",
+    "",
+    "A negative `due_date_days_ago` means the invoice is not due yet."
+  ],
+
+  "INV-1001": {
+    "customer_id": "CUST-001",
+    "number": "RL-2026-047",
+    "amount": "4200.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 51,
+    "due_date_days_ago": 21,
+    "status": "unpaid",
+    "disputed": false,
+    "notes": "Stage 2 milestone billing. Scenario: the normal path."
+  },
+
+  "INV-1002": {
+    "customer_id": "CUST-002",
+    "number": "MS-2026-112",
+    "amount": "850.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 40,
+    "due_date_days_ago": 10,
+    "status": "unpaid",
+    "disputed": false,
+    "notes": "Scenario: this customer has already been contacted twice in the last 7 days, so app.contact_frequency refuses a third. Chasing harder is exactly what an unbounded agent does."
+  },
+
+  "INV-1003": {
+    "customer_id": "CUST-003",
+    "number": "HL-2026-078",
+    "amount": "12500.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 35,
+    "due_date_days_ago": 5,
+    "status": "unpaid",
+    "disputed": false,
+    "notes": "Scenario: over the 10,000 owner-approval threshold, so app.large_invoice_approval holds. The amount is a FACT, so under-reporting it in the email body cannot slip it under."
+  },
+
+  "INV-1004": {
+    "customer_id": "CUST-005",
+    "number": "NG-2026-233",
+    "amount": "3100.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 45,
+    "due_date_days_ago": 15,
+    "status": "unpaid",
+    "disputed": false,
+    "notes": "Scenario: the customer asked for 45 more days. Over the 14-day agent authority, so app.extension_limit holds for the owner."
+  },
+
+  "INV-1005": {
+    "customer_id": "CUST-005",
+    "number": "NG-2026-241",
+    "amount": "2200.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 38,
+    "due_date_days_ago": 8,
+    "status": "unpaid",
+    "disputed": false,
+    "notes": "Scenario: the customer asked for 10 more days. Inside the agent's own authority, so it is offered without bothering the owner. Paired with INV-1004 to show the threshold is a threshold."
+  },
+
+  "INV-1006": {
+    "customer_id": "CUST-004",
+    "number": "CI-2026-088",
+    "amount": "1980.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 48,
+    "due_date_days_ago": 18,
+    "status": "unpaid",
+    "disputed": true,
+    "notes": "Scenario: the customer disputes the work. app.disputed_invoice DENIES rather than holds, because a collections reminder sent into an open dispute makes the situation worse and no queue item fixes that. This is a deny-vs-hold decision, not an oversight."
+  },
+
+  "INV-1007": {
+    "customer_id": "CUST-001",
+    "number": "RL-2026-049",
+    "amount": "3100.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 9,
+    "due_date_days_ago": -21,
+    "status": "unpaid",
+    "disputed": false,
+    "notes": "Scenario: not due for another 21 days. app.not_yet_due denies, so an agent working through a queue cannot chase a customer early. Due-ness is a fact computed from the store's own clock, never an agent claim."
+  },
+
+  "INV-1008": {
+    "customer_id": "CUST-006",
+    "number": "LF-2026-014",
+    "amount": "450.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 42,
+    "due_date_days_ago": 12,
+    "status": "unpaid",
+    "disputed": false,
+    "notes": "Scenario: the customer paid in full. record_inbound_payment is allowed and the money lands in the configured receivables account. Note the agent never names that account."
+  },
+
+  "INV-1009": {
+    "customer_id": "CUST-003",
+    "number": "HL-2026-091",
+    "amount": "12500.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 60,
+    "due_date_days_ago": 30,
+    "status": "unpaid",
+    "disputed": false,
+    "notes": "Scenario: THE DEMO. The agent claims a payment larger than the invoice arrived. app.payment_exceeds_amount_due holds it, because the ceiling is max_from_fact: invoice_amount_cents, resolved from the ledger. The agent chose the number; the ledger chose the ceiling; neither can move the other."
+  },
+
+  "INV-1010": {
+    "customer_id": "CUST-004",
+    "number": "CI-2026-095",
+    "amount": "9600.00",
+    "currency": "CNY",
+    "issued_date_days_ago": 55,
+    "due_date_days_ago": 25,
+    "status": "unpaid",
+    "disputed": false,
+    "notes": "Scenario: 9,600 against an 8,000 credit limit. Under the 10,000 reminder threshold on purpose, so it isolates app.credit_limit_approval from app.large_invoice_approval. Chasing this customer for more work is a credit decision, not a collections one."
+  }
+}
