@@ -36,14 +36,21 @@ Refer to:
 
 For routine changes, work within the existing architecture.
 
-If a request would significantly affect the architecture:
+Significant architectural changes do **not** require a pause-and-wait cycle.
+Approval comes from the user directly, and **a decision the user has already made
+carries forward** — do not re-litigate settled decisions or request approval a
+second time for something already approved.
 
-1. Pause before implementing or updating documentation.
-2. Briefly explain the proposed change and its implications.
-3. Recommend consulting the team.
-4. Wait for explicit approval before proceeding.
+Proceed, then document: state the change, its implications, and which components
+it affects, in the same pass as the work.
 
-Do not assume an implementation request authorizes a major architectural redesign.
+Still flag *before* proceeding when a change would:
+
+- break, or require edits inside, another agent's package — coordinate across that
+  boundary rather than editing it, and
+- be hard to reverse once shipped (data migrations, removing a public boundary).
+
+Do not treat an implementation request as authorizing an unrelated redesign.
 
 ## Documentation
 
