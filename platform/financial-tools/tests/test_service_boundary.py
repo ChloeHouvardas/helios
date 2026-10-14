@@ -48,6 +48,38 @@ def test_catalog_identical_across_transports(server):
 
 # -- §3: trust material stays server-side ---------------------------------
 
+def test_secret_is_read_from_the_environment(monkeypatch):
+    """The deployment path: no explicit secret, only the environment.
+
+    This branch was previously broken (bytes/str key mismatch) and untested
+    because every other test passed a secret explicitly.
+    """
+    monkeypatch.setenv("HELIOS_INTENT_SECRET", "env-provided-secret")
+    bundle = build_world()
+    srv = ToolServer(bundle, port=free_port()).start()
+    try:
+        assert bundle.intents.secret == b"env-provided-secret"
+        # and codes signed with it actually work
+        intent = bundle.intents.capture_intent("chloe", 500, "CNY", "s", "p")
+        code = bundle.intents.confirm(intent.intent_id, by="chloe").code
+        out = HttpToolClient(srv.base_url, timeout_seconds=5).call(
+            "payments.send", payer="ops", payee="s", amount_cents=500,
+            currency="CNY", auth_code=code)
+        assert out["result"]["state"] == "settled"
+    finally:
+        srv.stop()
+
+
+def test_explicit_secret_wins_over_the_environment(monkeypatch):
+    monkeypatch.setenv("HELIOS_INTENT_SECRET", "env-secret")
+    bundle = build_world()
+    srv = ToolServer(bundle, port=free_port(), secret=b"explicit").start()
+    try:
+        assert bundle.intents.secret == b"explicit"
+    finally:
+        srv.stop()
+
+
 def test_client_cannot_obtain_the_signing_secret(server):
     srv, bundle = server
     assert bundle.intents.secret == b"server-only-secret"

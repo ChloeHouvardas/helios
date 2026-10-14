@@ -74,7 +74,8 @@ def make_handler(bundle: Any, *, secret: Optional[bytes] = None) -> type:
     `intents.confirm` still gets an auth code back (that is the human's
     confirmation), but the *material* that makes codes unforgeable never leaves.
     """
-    resolved = secret if secret is not None else os.environb.get(SECRET_ENV)
+    resolved = secret if secret is not None else (
+        os.environ.get(SECRET_ENV, "").encode() or None)
     if resolved:
         bundle.intents.secret = resolved
 
