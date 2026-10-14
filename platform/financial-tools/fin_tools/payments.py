@@ -121,7 +121,7 @@ def register(registry=REGISTRY) -> None:
         "payments.send", "Send a payment. Side-effecting: requires a verified "
         "intent auth code bound to (amount, currency, payee).",
         {"payer": "str", "payee": "str", "amount_cents": "int", "currency": "str",
-         "auth_code": "str|None", "idempotency_key": "str|None", "memo": "str"},
+         "auth_code": "str|None", "idempotency_key": "str|None", "memo": "str|None"},
         {"payment_id": "str", "state": "str", "reject_reason": "str|None"},
         side_effects=True, tags=("payments",),
     )
@@ -130,12 +130,13 @@ def register(registry=REGISTRY) -> None:
               idempotency_key: Optional[str] = None, memo: str = "") -> Dict[str, Any]:
         return _payments().send_payment(
             payer=payer, payee=payee, amount_cents=amount_cents, currency=currency,
-            auth_code=auth_code, idempotency_key=idempotency_key, memo=memo)
+            auth_code=auth_code, idempotency_key=idempotency_key,
+            memo=memo or "")
 
     @registry.tool(
         "payments.receive", "Record an inbound payment. Side-effecting (ledger).",
         {"payer": "str", "payee": "str", "amount_cents": "int", "currency": "str",
-         "reference": "str"},
+         "reference": "str|None"},
         {"payment_id": "str", "state": "str"},
         side_effects=True, tags=("payments",),
     )
@@ -143,7 +144,7 @@ def register(registry=REGISTRY) -> None:
                  reference: str = "") -> Dict[str, Any]:
         return _payments().receive_payment(
             payer=payer, payee=payee, amount_cents=amount_cents,
-            currency=currency, reference=reference)
+            currency=currency, reference=reference or "")
 
     @registry.tool(
         "payments.balance", "Read an account balance (cents). Read-only.",

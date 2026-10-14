@@ -221,16 +221,18 @@ def register(registry=REGISTRY) -> None:
     @registry.tool(
         "simulation.forecast", "Monte-Carlo cash-in forecast over the invoice "
         "book using payer profiles. Read-only.",
-        {"invoices": "list[dict]", "policy": "dict|None", "n_runs": "int",
-         "seed": "int"},
+        {"invoices": "list[dict]", "policy": "dict|None", "n_runs": "int|None",
+         "seed": "int|None"},
         {"summary": "dict", "curve": "dict[int,int]"},
         side_effects=False, tags=("simulation",),
     )
     def _forecast(invoices: List[Dict[str, Any]],
                   policy: Optional[Dict[str, Any]] = None,
-                  n_runs: int = 200, seed: int = 7) -> Dict[str, Any]:
+                  n_runs: Optional[int] = 200,
+                  seed: Optional[int] = 7) -> Dict[str, Any]:
         pol = SimPolicy(**policy) if policy else SimPolicy()
-        res = simulate(invoices, _profiles(), policy=pol, n_runs=n_runs, seed=seed)
+        res = simulate(invoices, _profiles(), policy=pol,
+                       n_runs=n_runs or 200, seed=seed if seed is not None else 7)
         return {"summary": res.summary, "curve": res.curve()}
 
 
