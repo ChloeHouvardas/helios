@@ -138,3 +138,103 @@ disagreement *between* files. Both preconditions are pinned by tests
 (`test_the_broken_fixture_spec_is_itself_valid`,
 `test_the_broken_fixture_tools_and_facts_both_import`) so a well-meaning edit cannot
 quietly disable the checks. See `tests/fixtures/broken-app/README.md`.
+
+## 3. Task 3 — stacks.yaml and the schema tool
+
+- Added `stacks.yaml` (`helios-python-web-1`: FastAPI 0.143.1 + stdlib `sqlite3` +
+  Jinja2 3.1.6 + HTMX 2.0.11, Python 3.13, with the type map and the CHECK
+  fragments), `stacks.py`, `schema.py` (`ddl_for`, `store_module_for`,
+  `seed_from_json`) and `_runtime_coerce.py`. Vendored `htmx.min.js` under
+  `kit/static/`.
+- Why: the spec's `stack.use` resolved to nothing, so both real apps named a stack
+  that did not exist. Money is TEXT with a parse CHECK rather than REAL, because a
+  rounding error in an invoice total is a real financial error, not a display
+  artefact.
+- Affects: no existing file modified. Every version was read from an installed
+  distribution or the vendored file's own banner, never recalled.
+
+### Three findings that look correct on a first read
+
+1. **SQLite applies column affinity BEFORE a CHECK runs.** Binding the float `12.5`
+   into a TEXT column arrives as the string `'12.5'` and satisfies every
+   constraint, so no pure-SQL rule can distinguish a decimal string from a float
+   that stringifies. The float refusal therefore lives in the coercion layer at
+   the Python boundary, where the value is still a float and can be refused with
+   its field named.
+2. **An unguarded CHECK rejects NULL.** A CHECK passes when it evaluates to NULL,
+   but `typeof(col) = 'text'` is FALSE for NULL — so every *optional*
+   date/decimal/json column was unwritable. `helios-collect.last_contacted` hit
+   this immediately. Optional columns now emit `CHECK (col IS NULL OR (...))`.
+3. **GLOB matches digit SHAPE only**, so `'2026-13-45'` satisfied the date pattern
+   and `'2026-10-15T99:99:99'` satisfied the datetime one. Explicit `BETWEEN`
+   range clauses were added for month, day, hour, minute and second.
+
+### One implementation of the coercion rules, embedded
+
+The generated `store.py` cannot import `app_builder`, but the seeder runs inside
+`app_builder` and needs identical rules. Two copies would mean a fixture accepted
+at seed time and refused at write time — or the reverse, which is how a wrong
+number gets into a database without an error. So the rules exist once in
+`_runtime_coerce.py` and `schema.py` embeds that file's *source text* into each
+generated store via `inspect.getsource`. Same code, two places, no drift.
+
+### A packaging bug that editable installs hide completely
+
+`stacks.yaml` lives outside `src/`, so it was absent from the built wheel and an
+installed `app-builder` could not generate any schema. Every test passed anyway,
+because an editable install *is* the source tree. Found by building a wheel and
+installing it non-editable into a scratch venv, then generating DDL from
+site-packages. Added `force-include` plus a test asserting the resolved path is one
+of the searched candidates. **Anything that must work installed needs this check**;
+the repo's own test suite can never catch it.
+
+## 4. Task 4 — the UI kit
+
+- Added `app_builder/kit/` (the package) and `kit/__init__.py` (the module):
+  `base.html.j2`, `tokens.css`, one template per pattern
+  (`summary, table, detail, form, approval_queue, settings`) and the
+  `_held_action.html.j2` partial. Relative URLs throughout; light/dark from one
+  token set via `prefers-color-scheme`.
+- Why: P2 had not landed `apps/helios-collect/templates/` (checked), so there was
+  nothing to start from. The kit is written to be copied into a generated app
+  rather than imported by it.
+- Affects: no existing file modified. 91 new tests; suite total 362 -> 620 passed.
+
+### `StrictUndefined` is what caught the real template bugs
+
+Rendering each pattern under `StrictUndefined` found two classes of defect that the
+lenient render hid completely:
+
+1. **An optional variable in `{% if %}` raises under strict mode.** The `default`
+   filter is safe because it receives the Undefined object without touching it, but
+   `{% if subtitle %}` calls `__bool__` and raises. All five patterns that extend
+   `base.html.j2` failed on this one line in the layout. Each template now
+   normalises its optional context up front with `{% set x = x | default(...) %}`.
+2. **`default('...')` does not catch an EMPTY value.** A hold whose
+   `owner_question` was `""` rendered nothing for the owner to decide on — a blank
+   question on the one card whose entire purpose is to ask one. Fixed with
+   `default(..., true)`.
+
+### The kit's masking extends the platform set rather than reusing it
+
+`auth_code` — a single-use credential bound to (amount, currency, payee), and
+exactly what a payment proposal carries — is **not** in
+`audit_agent.contracts.REDACTED_KEYS`. Relying on the platform set would have
+printed it on the approval queue, in front of a human, on the one page where a
+mistake is most visible. `SENSITIVE_KEYS` is the union of the platform set and the
+kit's own additions, and a test asserts the platform's keys are a subset so the
+kit cannot fall behind if the platform list grows.
+
+Masking stays shallow for the same reason `audit_agent.redact` does: a deep walk
+would rewrite a nested key that happens to be named `token` for a legitimate
+business reason (a queue token, a pagination token), and silently mangling real
+data is its own kind of bug.
+
+### Coverage gap closed
+
+The pattern-level strict test renders `approval_queue` with **no holds**, so
+`_held_action.html.j2` — the template where masking happens — was never exercised
+under `StrictUndefined`. Added explicit tests for it with a complete record, a
+minimal one and an empty one. A queue that errors on one malformed hold would hide
+every other pending action behind it, which is the worst failure available for that
+page.
