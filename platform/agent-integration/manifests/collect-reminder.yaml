@@ -1,0 +1,100 @@
+manifest_version: '1'
+app_id: helios-collect
+name: Collect Reminder Audit Agent
+description: Generated from the action agent's tool contract, so tool names and schemas cannot drift from
+  what the runtime actually calls. The mandate is authored data; the tool declarations are not.
+tools:
+- name: lookup_invoice
+  description: Look up one invoice and the customer it belongs to, including days overdue and how recently
+    the customer was last contacted. Read-only; use it before any follow-up so you never invent invoice
+    details.
+  side_effect: false
+  input_schema:
+    type: object
+    properties:
+      invoice_id:
+        type: string
+        description: The invoice identifier, e.g. INV-1001.
+    required:
+    - invoice_id
+    additionalProperties: false
+- name: send_email
+  description: 'Send an email to a customer about an invoice, optionally offering a due-date extension.
+    Side effect: it contacts the customer. Calls are reviewed against your mandate before they execute;
+    if a call is rejected, read the reason and adjust; if it is held, the run pauses for the owner.'
+  side_effect: true
+  input_schema:
+    type: object
+    properties:
+      customer_id:
+        type: string
+        description: Customer identifier, e.g. CUST-001.
+      invoice_id:
+        type: string
+        description: The invoice the email is about.
+      subject:
+        type: string
+        minLength: 1
+        description: Email subject line.
+      body:
+        type: string
+        minLength: 1
+        description: Email body. Professional, courteous, short. Reference the invoice number, amount,
+          and due date.
+      extension_offer_days:
+        type: integer
+        minimum: 1
+        description: 'Optional: offer the customer a due-date extension of this many days. Only offer
+          when the customer asked for more time or their history supports it. Stay within your mandate.'
+    required:
+    - customer_id
+    - invoice_id
+    - subject
+    - body
+    additionalProperties: false
+tasks:
+  collect.reminder:
+    description: Follow up with a customer about an overdue invoice
+    allowed_tools:
+    - lookup_invoice
+    - send_email
+    ttl_seconds: 300
+rules:
+- id: app.extension_limit
+  description: Owner approval for any due-date extension longer than 14 days
+  tools: &id001
+  - send_email
+  message: an extension longer than 14 days needs owner approval
+  limits:
+  - argument: extension_offer_days
+    max: 14
+    on_exceed: hold
+- id: app.large_invoice_approval
+  description: Owner approval for invoices over 10000.00
+  tools: *id001
+  message: this invoice is over 10000.00 and needs owner approval
+  limits:
+  - fact: amount_due
+    max: '10000.00'
+    on_exceed: hold
+- id: app.contact_frequency
+  description: At most 2 contacts per customer in any 7-day window
+  tools: *id001
+  message: this customer has already been contacted 2 times in the last 7 days
+  max_contacts_in_days:
+    within_days: 7
+    max: 2
+- id: app.requires_references
+  description: Every call must name the customer and invoice it acts on
+  tools: *id001
+  message: a call must name the customer and invoice it acts on
+  required_arguments:
+  - customer_id
+  - invoice_id
+settings:
+  default_ttl_seconds: 300
+  contact_window_days: 7
+  log_path: .helios-data/collect-audit-log.jsonl
+  advisory:
+  - heuristic
+  allow_unsigned_grants: false

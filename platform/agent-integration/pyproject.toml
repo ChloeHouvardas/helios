@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agent-integration"
+version = "0.1.0"
+description = "Glue layer that makes the Action Agent Builder and the Audit Agent Builder work together: adapters, the audit bridge, the gated agent loop, and a CLI"
+readme = "README.md"
+# audit-agent-builder requires >=3.13, so the integration layer does too.
+requires-python = ">=3.13"
+dependencies = [
+    "agent-toolkit",
+    "audit-agent-builder",
+    "pyyaml>=6.0",
+    "jsonschema>=4.21",
+]
+
+[project.optional-dependencies]
+# None. The model driver talks to an OpenAI-compatible endpoint over stdlib
+# urllib, so the real-model path needs no extra install — and the whole
+# package (loop, bridge, holds, CLI, tests) runs offline with no token at all.
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+agent-integration = "agent_integration.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_integration"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+# Both sibling packages are consumed as editable local paths. This package is
+# the ONLY place in the repo that imports both: the audit agent must stay
+# standalone, so it never learns that agent_toolkit exists.
+[tool.uv.sources]
+agent-toolkit = { path = "../action-agent-builder", editable = true }
+audit-agent-builder = { path = "../audit-agent-builder", editable = true }
