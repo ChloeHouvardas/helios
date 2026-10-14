@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "audit-agent-builder"
+version = "0.1.0"
+description = "Helios Audit Agent Builder: a standalone audit agent that authorises which tools an action agent may use, per task, under deterministic fail-closed policy"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# The advisory reviewer is NON-BINDING and optional. It never changes a
+# verdict, so the audit agent is fully functional without it.
+advisory = [
+    "qwen-agent>=0.0.15",
+]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+audit-agent = "audit_agent.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/audit_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
