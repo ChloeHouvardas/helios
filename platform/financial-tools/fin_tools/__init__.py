@@ -26,6 +26,15 @@ from . import payments as _pay_mod
 from . import spreadsheet_tools as _sheet_mod
 from . import knowledge_graph as _graph_mod
 from . import simulation as _sim_mod
+from .service import (
+    SECRET_ENV,
+    HttpToolClient,
+    InProcessToolClient,
+    ServiceUnavailable,
+    ToolClient,
+    ToolServer,
+    free_port,
+)
 
 
 @dataclass
@@ -67,4 +76,6 @@ __all__ = [
     "IntentService", "Intent", "AuthCode", "VerificationError",
     "Payments", "EmailSender", "KnowledgeGraph",
     "PayerProfile", "SimPolicy", "simulate", "what_if", "sandbox_run",
+    "ToolClient", "InProcessToolClient", "HttpToolClient", "ToolServer",
+    "ServiceUnavailable", "SECRET_ENV", "free_port",
 ]
