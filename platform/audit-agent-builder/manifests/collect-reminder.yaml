@@ -1,0 +1,124 @@
+# Audit manifest: Collect Reminder
+#
+# The audit agent for Build 1's reference action agent (specs/build1.md).
+# This file IS the audit agent's configuration — no Python. Qwen generates a
+# file like this when it builds an app, and `build_audit_agent()` turns it
+# into a running auditor.
+#
+# The mandate from build1.md, and where each part is enforced:
+#   1. maximum extension length            -> rule app.extension_cap (clamp)
+#   2. owner approval for longer extension -> rule app.extension_approval (hold)
+#   3. limit on how often a customer is
+#      contacted                           -> rule app.contact_frequency
+#   4. owner approval for large invoices   -> rule app.large_invoice_approval
+
+manifest_version: "1"
+app_id: helios-collect
+name: Collect Reminder Audit Agent
+description: >
+  Governs an action agent that chases overdue invoices. The agent may read
+  invoice data freely and may send a reminder email, but the extension it
+  offers is capped, large invoices go to the owner, and a customer cannot be
+  contacted more than twice a week.
+
+tools:
+  - name: lookup_invoice
+    description: >
+      Look up an overdue invoice and the customer's contact history.
+      Read-only; returns amount due, due date, days overdue and prior contacts.
+    side_effect: false
+
+  - name: send_reminder_email
+    description: >
+      Send an overdue-invoice reminder email to the customer. May include a
+      due-date extension offer. Changes state, so every call is gated.
+    side_effect: true
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [invoice_id, message]
+      properties:
+        invoice_id:
+          type: string
+          minLength: 1
+          description: Invoice to remind about
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Body of the reminder
+        extension_days:
+          type: integer
+          minimum: 0
+          maximum: 3650
+          description: Due-date extension offered; 0 or absent means none
+
+tasks:
+  collect.reminder:
+    description: Follow up with a customer about an overdue invoice
+    allowed_tools: [lookup_invoice, send_reminder_email]
+    # A grant is authority to act now, not a standing capability.
+    ttl_seconds: 300
+
+rules:
+  # Mandates 1 and 2 together: an extension up to 14 days is inside the
+  # agent's own authority, and anything longer goes to the owner.
+  #
+  # Note the deliberate choice of `on_exceed: hold` over `clamp: true`. They
+  # are alternative policies for the same mandate shape, not complements:
+  #   - clamp: allow the call but silently reduce the value (no human)
+  #   - hold:  refuse to decide alone and route it to the owner
+  # build1.md asks for owner approval on longer extensions, so hold is right
+  # here. Declaring both would also not work the way it looks: every rule
+  # evaluates the agent's ORIGINAL request independently, so a clamp in one
+  # rule does not make a later hold rule see a reduced value. That
+  # order-independence is intentional — a rule's verdict must not depend on
+  # where it sits in a generated file.
+  - id: app.extension_limit
+    description: Owner approval for any due-date extension longer than 14 days
+    tools: [send_reminder_email]
+    message: an extension longer than 14 days needs owner approval
+    limits:
+      - argument: extension_days
+        max: 14
+        on_exceed: hold
+
+  # Mandate 3: contact frequency, counted from trusted store history. An
+  # agent cannot lower this number by describing the customer as untouched;
+  # the count is resolved from the fact source, not from the request.
+  - id: app.contact_frequency
+    description: At most two contacts per customer in any 7-day window
+    tools: [send_reminder_email]
+    message: this customer has already been contacted twice in the last 7 days
+    max_contacts_in_days:
+      within_days: 7
+      max: 2
+
+  # Mandate 4: large invoices go to the owner. The amount is a FACT, read
+  # from the trusted store — so under-reporting it in the arguments cannot
+  # slip an invoice under the threshold.
+  - id: app.large_invoice_approval
+    description: Owner approval for invoices over 10,000
+    tools: [send_reminder_email]
+    message: this invoice is over 10,000 and needs owner approval
+    limits:
+      - fact: amount_due
+        max: "10000.00"
+        on_exceed: hold
+
+  # Every reminder must name the invoice it concerns, so the owner brief and
+  # the audit log are always traceable to a record.
+  - id: app.requires_invoice
+    description: A reminder must identify its invoice
+    tools: [send_reminder_email]
+    message: a reminder must name the invoice it concerns
+    required_arguments: [invoice_id, message]
+
+settings:
+  default_ttl_seconds: 300
+  contact_window_days: 7
+  log_path: collect-audit-log.jsonl
+  # `heuristic` is deterministic and always available. Adding `qwen` appends
+  # model commentary for a human reviewer; it can never change a verdict.
+  advisory: [heuristic]
+  allow_unsigned_grants: false
