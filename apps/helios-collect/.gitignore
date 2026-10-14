@@ -1,0 +1,10 @@
+# Generated at runtime by app.py: per-run action logs and the auditor's
+# hash-chained evidence. Regenerable, and committing them would bury real diffs in
+# hash churn. The root .gitignore covers `.runs/`; this app writes to `runs/`, so
+# it is ignored here rather than by editing a shared file.
+runs/
+
+# Byte-compiled artifacts, in case this app is imported rather than run.
+__pycache__/
+*.py[cod]
+.pytest_cache/
