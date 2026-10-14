@@ -43,6 +43,7 @@ from . import spreadsheet_tools as _sheet_mod
 from . import knowledge_graph as _graph_mod
 from . import simulation as _sim_mod
 from .service import (
+    EXECUTION_SECRET_ENV,
     SECRET_ENV,
     HttpToolClient,
     InProcessToolClient,
@@ -51,6 +52,7 @@ from .service import (
     ToolServer,
     free_port,
 )
+from .persistence import SqlitePersistence
 from .toolkit_bridge import (
     NOT_AGENT_CALLABLE,
     agent_tool_definitions,
@@ -150,7 +152,8 @@ __all__ = [
     "Payments", "EmailSender", "KnowledgeGraph", "Collect",
     "PayerProfile", "SimPolicy", "simulate", "what_if", "sandbox_run",
     "ToolClient", "InProcessToolClient", "HttpToolClient", "ToolServer",
-    "ServiceUnavailable", "SECRET_ENV", "free_port",
+    "ServiceUnavailable", "SECRET_ENV", "EXECUTION_SECRET_ENV", "free_port",
+    "SqlitePersistence",
     "to_json_schema", "as_tool_definitions", "agent_tool_definitions",
     "NOT_AGENT_CALLABLE",
     "flat_from_json_schema", "contract_problems", "problem_message",

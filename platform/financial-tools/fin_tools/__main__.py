@@ -20,7 +20,8 @@ import os
 import sys
 
 from . import build_world
-from .service import SECRET_ENV, ToolServer
+from .service import EXECUTION_SECRET_ENV, SECRET_ENV, ToolServer
+from .persistence import DATA_DIR_ENV, SqlitePersistence
 from .toolkit_bridge import NOT_AGENT_CALLABLE
 
 _DEV_SECRET = b"dev-only-secret-rotate-me"
@@ -37,13 +38,27 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     secret = os.environ.get(SECRET_ENV, "").encode() or None
-    bundle = build_world()
-    server = ToolServer(bundle, host=args.host, port=args.port, secret=secret)
+    execution_secret = os.environ.get(EXECUTION_SECRET_ENV) or None
+    data_dir = os.environ.get(DATA_DIR_ENV) or None
+
+    bundle = build_world(data_dir=data_dir)
+
+    # Durability: restore the last snapshot before serving, then persist after
+    # each mutating call. A no-op when HELIOS_DATA_DIR is unset (tests, local dev).
+    persistence = SqlitePersistence(data_dir=data_dir)
+    restored = persistence.restore(bundle)
+
+    server = ToolServer(bundle, host=args.host, port=args.port, secret=secret,
+                        execution_secret=execution_secret, persistence=persistence)
 
     if not secret:
         print(f"WARNING: {SECRET_ENV} is not set; running with a development "
               f"secret. Authorizations are forgeable by anyone holding this "
               f"code. Set it before deploying.", file=sys.stderr)
+    if not execution_secret:
+        print(f"WARNING: {EXECUTION_SECRET_ENV} is not set; the HTTP endpoint is "
+              f"UNAUTHENTICATED. Any caller who can reach this port can invoke "
+              f"the tools. Set it before deploying.", file=sys.stderr)
 
     agent_visible = [t.name for t in bundle.registry.list()
                      if t.name not in NOT_AGENT_CALLABLE]
@@ -55,6 +70,8 @@ def main(argv=None) -> int:
     print(f"  tools published:      {len(agent_visible)}")
     print(f"  gated (need review):  {len(gated)} -> {', '.join(sorted(gated))}")
     print(f"  intent signing:       {'from ' + SECRET_ENV if secret else 'DEVELOPMENT SECRET'}")
+    print(f"  http auth:            {'bearer (' + EXECUTION_SECRET_ENV + ')' if execution_secret else 'NONE'}")
+    print(f"  persistence:          {'restored from ' + str(persistence.path) if restored else (str(persistence.path) if persistence.enabled else 'in-memory only')}")
     print(f"  discover:  curl {server.base_url}/tools")
     print("  press Ctrl-C to stop")
     try:
@@ -63,6 +80,7 @@ def main(argv=None) -> int:
         print("\nstopping")
     finally:
         server.stop()
+        persistence.close()
     return 0
 
 
