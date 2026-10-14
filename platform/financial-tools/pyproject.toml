@@ -21,6 +21,11 @@ dependencies = [
     # against the JSON Schemas it ships.
     "jinja2>=3.1",
     "jsonschema>=4.21",
+    # payments_collect models default to Asia/Shanghai via zoneinfo, resolved
+    # at import time (models.py: SHANGHAI = ZoneInfo("Asia/Shanghai")). tzdata
+    # is the IANA database fallback for hosts with no system zoneinfo (slim
+    # containers, Windows). Cheap insurance for an import-time constant.
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +53,7 @@ packages = [
     "spreadsheets",
     "spreadsheets.dev",
     "email_tool",
+    "payments_collect",
 ]
 
 # email_tool loads its JSON Schemas and Jinja2/markdown templates from paths

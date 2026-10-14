@@ -77,6 +77,9 @@ numpy==2.5.4
 openpyxl==3.1.5
 et-xmlfile==2.0.0
 
+# --- IANA tz database fallback (payments_collect zoneinfo) ----------------
+tzdata==2026.5
+
 # --- misc resolved transitives --------------------------------------------
 annotated-doc==0.0.5
 opentelemetry-api==1.45.1
