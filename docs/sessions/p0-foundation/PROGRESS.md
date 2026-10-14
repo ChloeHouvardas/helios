@@ -45,3 +45,63 @@ Note for later tasks: `qwen_agent` is legitimately imported at
 `audit_agent/advisory.py:202` behind a lazy optional extra, so the
 `audit-agent-builder` `advisory` extra stays. Only the `action-agent-builder`
 declaration was dead.
+
+## 2. Task 2 — deployment engine imported as platform/deployment
+
+Copied 20 files from OTHER-TEAMMATE-STUFF/deployment-stuff keeping the upstream
+layout, excluding `.venv/`, `.helios-run/` (the tenant secret `demo.json` lives
+there — verified absent from the copy and from the staged set), `engine.log`,
+`__pycache__/`, `.DS_Store`. Added `pyproject.toml` (`helios-deployment`, maps
+`sdk/helios_sdk` to flat `helios_sdk` because that is the documented/base-image
+import name; `cli/helios.py` does define `main()`, so the console script is
+real), pinned `requirements.txt` to match `requirements-dev.txt`, and rewrote
+`bootstrap.sh`: Docker socket now detected in the required order ($DOCKER_HOST,
+OrbStack, Colima, /var/run/docker.sock) instead of hard-coded OrbStack, venv on
+python3.13, and the stale Traefik lines replaced (the script starts nginx; there
+is no Traefik anywhere in the engine). Wrote 96 offline tests (docker-py mocked
+with `unittest.mock`, `REPO`/`TENANTS_DIR` redirected to a temp dir so no test
+writes tenant state into the tree).
+
+Fixed one real defect while testing: `_build_error_text` read `exc.build_logs`,
+but docker-py sets `BuildError.build_log` (singular); the `getattr(..., [])`
+default made the typo silent, so every build failure dropped the compiler
+output and reported only the short reason — defeating the documented
+crash-log-to-agent feedback. Now reads the correct attribute. Also recorded
+(not changed) a real coverage gap: `lint()` matches `TEXT_EXT` against
+`Path.suffix`, and `Path(".env").suffix` is `""`, so a bare `.env` is never
+scanned; pinned by a test so nobody assumes it is. Verified `test-all.sh`:
+`all 6 suites green: 499 passed` (403 + 96). Next: Task 3.
+
+## 3. Task 3 — four teammate packages imported into financial-tools
+
+All four imported as siblings of `fin_tools`, registered in the shared
+`platform/financial-tools/pyproject.toml` explicit package list, installed from
+the one repo venv. Each is its own commit. Test files moved under
+`platform/financial-tools/tests/` with package-name prefixes; internal imports
+were relative so no package code changed. New deps pinned in
+requirements-dev.txt: numpy, openpyxl (+et-xmlfile), jinja2, jsonschema, tzdata.
+
+- **helios_forecast** (+68): folder copy is NEWER than the branch (adds
+  calibration.py, validation.py); CRLF normalised to LF. Also copied the two
+  forecasting specs and financial_api/market.py (stdlib-only, so P1 can wire it).
+  Skipped apps/forecast-demo, M1/M2 docs, and every committed venv/cache/egg-info.
+- **spreadsheets** (+67): from `origin/payments` via checkout+reset (that branch
+  is the spreadsheets tool despite the name). Renamed the developer guide to
+  README.md. Offline verified, not assumed: the "live" feishu/wps/grist targets
+  are served by LocalSheetEngine (in-process, formats URL strings, never dials)
+  and Qwen is injected as NullQwen — zero skips, no credentials touched.
+- **email_tool** (+105): from email-tool/sender/, renamed `sender`->`email_tool`,
+  kept templates/ + schemas/ as package-data. Two relocation fixes:
+  test_email_schemas.py now imports SCHEMAS_DIR from the package (its
+  `Path(__file__).parent.parent/schemas` hop broke on the move), and the default
+  idempotency data dir follows the package (rule unchanged). Corrected the
+  Windows-only venv paths + dropped-conftest description in DEVELOPER-GUIDE.md.
+- **payments_collect** (+38): from payments-tool/collect/, renamed
+  `collect`->`payments_collect` to avoid a generic name in the flat layout.
+  tzdata is a HARD dep: models.py resolves `ZoneInfo("Asia/Shanghai")` at import,
+  so the IANA db must exist or the package won't import. No fastapi/uvicorn/httpx
+  despite the upstream requirements listing them (a provider layer never written).
+
+Every package checked for GLM/Zhipu/bigmodel references — none. All offline,
+zero skips across all four. financial-tools grew 86 -> 364. Verified
+`test-all.sh`: `all 6 suites green: 777 passed`. Next: Task 4, the six defects.

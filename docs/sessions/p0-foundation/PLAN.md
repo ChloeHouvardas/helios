@@ -48,21 +48,21 @@ platform `src/` dirs, because the repo venv did not exist yet.
 ## Numbered tasks
 
 - [x] **T0** research notes — nothing to commit (see deviation 2).
-- [ ] **T1** one environment, one test command: fix the two un-installable
+- [x] **T1** one environment, one test command: fix the two un-installable
       pyprojects (`fin_tools` needs `[build-system]` + explicit packages;
       `agent_toolkit` drop unused `qwen-agent` and the script entry pointing at
       a non-existent `cli.py`), write `scripts/bootstrap-venv.sh`,
       `scripts/test-all.sh`, pinned `requirements-dev.txt`, extend `.gitignore`,
       replace every `python3 -m pytest` instruction with venv commands.
       Done when `scripts/test-all.sh` prints 403 passed.
-- [ ] **T2** import the deployment engine into `platform/deployment/` from
+- [x] **T2** import the deployment engine into `platform/deployment/` from
       `OTHER-TEAMMATE-STUFF/deployment-stuff/fPT9INmvWJ/default/helios/`,
       excluding `.venv/`, `.helios-run/` (holds a runtime secret), `engine.log`,
       `.DS_Store`. Add `pyproject.toml`, pin `requirements.txt`, fix
       `bootstrap.sh` Docker-socket detection order and drop stale Traefik lines.
       Add `tests/test_contracts.py` + `tests/test_orchestrator_offline.py`
       (docker-py mocked; no daemon required). Wire into `test-all.sh`.
-- [ ] **T3** import the four financial-tool teammates as sibling packages of
+- [x] **T3** import the four financial-tool teammates as sibling packages of
       `fin_tools`, tests under `platform/financial-tools/tests/` with
       package-prefixed filenames: `helios_forecast` (folder copy, newer, LF),
       `spreadsheets` (`origin/payments`, offline), `email_tool`
