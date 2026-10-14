@@ -105,6 +105,46 @@ since it is another session's deliverable.
 **Decision needed.** Does P0 own importing `deployment-stuff` into `platform/deployment/`?
 Until it does, there is no `helios` CLI, no tenant `demo`, and no `/health` to check.
 
+### Update — the engine does exist, and the container runtime does not
+
+The engine referenced by B1 was located in the read-only teammate directory at
+`OTHER-TEAMMATE-STUFF/deployment-stuff/fPT9INmvWJ/default/helios/`. It is complete:
+`engine/{app,orchestrator,contracts}.py`, `cli/helios.py`, `sdk/helios_sdk/`,
+`bootstrap.sh`, `test-deploy.sh`, the three golden images
+(`images/app-base`, `images/auditor`, `images/core`, each with a `Dockerfile` and the
+latter two with a `server.py`), and `examples/sample-app/` containing a real
+`helios.yaml` + `main.py`. Its README describes docker-py control plane + nginx
+reverse proxy + per-tenant networks + audit sidecar holding `EXECUTION_SECRET` +
+golden base images + Redis event bus — matching decisions B1 and B2 exactly.
+
+So Task 2 is blocked only by the import into `platform/deployment/`, not by missing
+software. But the runtime prerequisite is independently unavailable:
+
+```
+$ which docker colima orbstack
+~/.local/bin/docker
+colima not found
+orbstack not found
+$ docker info >/dev/null 2>&1 && echo UP || echo DOWN
+DOWN
+$ [ -n "${HELIOS_ENGINE_URL:-}" ] && echo SET || echo UNSET
+UNSET
+$ ls "$HOME/.orbstack/run/docker.sock"
+ls: ~/.orbstack/run/docker.sock: No such file or directory
+```
+
+A `docker` client exists but no daemon, no VM, and no engine URL. `bootstrap.sh`
+itself does `open -a OrbStack` and waits for `docker info`, so it cannot succeed here.
+Task 2's own fallback therefore applies: **write BLOCKED and continue with the
+in-process equivalents** (`app.py` runs and `server.py` under `uvicorn` on localhost).
+Note `bootstrap.sh` also targets `python3.12`, while section A mandates 3.13 for
+everything else — a mismatch the importing session must reconcile.
+
+**Decision needed.** May this session copy `deployment-stuff/.../helios/` into
+`platform/deployment/` itself, or does that import belong to P0? Copying it is the one
+step that would unblock Task 2, but it is another session's deliverable and section C3
+marks `OTHER-TEAMMATE-STUFF/` read-only.
+
 ---
 
 ## Task 3 — the cross-app story
@@ -157,3 +197,73 @@ listed here. Writing it now would produce a document describing software that do
 exist.
 
 **Decision needed.** None — this unblocks automatically once tasks 1–4 land.
+
+---
+
+## Findings for STATUS.md, recorded now so they are not lost
+
+These are not blockers. They are verified facts that Task 5 will need, captured while
+the upstream work is still landing.
+
+### The teammate tools are not integrated into `fin_tools`
+
+`platform/financial-tools/fin_tools` registers 12 tools in 5 families
+(payments 3, email 2, spreadsheet 3, graph 3, simulation 1), wired in
+`fin_tools/__init__.py:56-77` via `build_world()` and registered through
+`contracts.py:40-88`. Transports: `InProcessToolClient` (`service.py:53-63`) and
+`HttpToolClient` + `ToolServer` over stdlib `http.server` (`service.py:120-181`,
+endpoints `GET /tools` and `POST /call`). **Persistence: none** — all state is the
+in-memory `World` dataclass (`contracts.py:96-106`); there is no database and no
+file-backed store.
+
+Zero teammate tools are merged. Still standalone in `OTHER-TEAMMATE-STUFF/`:
+
+- `email-tool/sender/` — `EmailSender` with SMTP transport, idempotency store, template
+  registry; exposes `send_email` as a `TOOL` dict (`sender/tool.py:51-63`), not
+  registered on `fin_tools.REGISTRY`. 6 test files.
+- `payments-tool/collect/` — `PaymentStore` plus `Receivable`, `PaymentAttempt`,
+  `PaymentLink`, `Settlement`, `LedgerEntry`, `ProviderEvent` models. No tool
+  registration. 2 test files.
+- `forecasting-simulation/platform/financial-tools/helios_forecast/` — 5 read-only tools
+  (`forecast_project`, `forecast_simulate`, `forecast_scenario`, `behavior_profile`,
+  `promise_rate`) with its own `TOOLS` list and `call_tool()` dispatcher separate from
+  `fin_tools.REGISTRY` (`tools.py:111-322`).
+- `forecasting-simulation/services/financial-api/financial_api/` — `market.py` with a
+  Tushare LPR/SHIBOR adapter (`fetch_lpr`, `fetch_shibor`, `current_rate`,
+  `interest_flows`), plus `forecast.py` and an HTTP `server.py`.
+
+This matters for Task 5's D1 box, which is required to list the `fin_tools` catalog
+"by family incl. teammates' email/collect/forecast/market/spreadsheets". As of
+`cc96f0a` those families are **not** in `fin_tools`, so that box cannot honestly be
+written yet. It also matters for Task 3 step 1, which needs `fin_tools` service
+`email.outbox` to hold the alert email — `email.outbox` does exist
+(`email_sender.py:92`, read-only), but the teammate `send_email` does not feed it.
+
+### Legacy GLM/Zhipu/bigmodel.cn references are all in `agent-integration`
+
+Competition rule (section A) says Qwen is the only generative model allowed and any
+reference to GLM, Zhipu or bigmodel.cn is legacy and must be removed when that file is
+touched. Decision B3 says Qwen via DashScope OpenAI-compatible mode is the model.
+There are none in `OTHER-TEAMMATE-STUFF/`, but there are many in the tracked tree:
+
+- `SETUP.md:1` — "YOU NEED TO ADD THE GLM-5.3 API KEY IN A .env INSIDE OF /platform"
+- `platform/agent-integration/src/agent_integration/model_driver.py:1` and throughout
+- `platform/agent-integration/src/agent_integration/cli.py:5,12`
+- `platform/agent-integration/src/agent_integration/__init__.py:19`
+- `platform/agent-integration/README.md:41,52,64,67,73,76,169,175`
+- `platform/agent-integration/tests/test_model_driver.py` — 14 hits, including
+  `:222` asserting `DEFAULT_BASE_URL == "https://open.bigmodel.cn/api/paas/v4"` and
+  `:223` asserting `DEFAULT_MODEL == "glm-5.3"`
+- `platform/agent-integration/tests/conftest.py:4`
+
+`HANDOFF.md` §6 already flags this as "the most urgent" open question, and notes the
+driver is provider-shaped (OpenAI-compatible chat completions, stdlib HTTP), so the
+switch is a base-URL/model-id change, not a rewrite. The driver already accepts
+`DASHSCOPE_API_KEY` among its token env var names
+(`tests/test_model_driver.py:227-228`), which suggests the migration was anticipated.
+
+This session did **not** change them. `agent-integration` is the seam package and is
+owned by another session; per section D the two `DEFAULT_*` assertions above are tests
+that encode the legacy wire protocol, and flipping them without also flipping
+`model_driver.py` would just turn the suite red. The whole migration must land as one
+commit in the owning package.
