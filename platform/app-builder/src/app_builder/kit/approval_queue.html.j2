@@ -1,0 +1,96 @@
+{#
+  Pattern: approval_queue — held actions awaiting the owner's decision.
+
+  The pattern that matters most. Every side-effect action can be held, so every
+  app with agents needs somewhere for the owner to decide; without one the agents
+  pause invisibly and the owner discovers it only when they wonder why nothing
+  happened. That is why the validator warns when a spec declares no page with this
+  pattern, and why the scaffolder always generates the template for it.
+
+  Each held action is rendered by _held_action.html.j2, which shows the auditor's
+  owner_question, the rule that held it and why, the proposed arguments with
+  sensitive keys masked, and Approve/Decline buttons posting with HTMX.
+
+  Decisions are scoped to the exact action that was held. Approving one hold is
+  not a standing permission for the next thing the agent does, so each card
+  carries its own hold_id and the server compares the proposed arguments before
+  executing.
+#}
+{% extends "base.html.j2" %}
+{% block title %}{{ heading | default(title | default('Needs your approval')) }} — {{ app_name | default('Helios app') }}{% endblock %}
+
+{% block subtitle %}
+  {% set holds = holds | default([]) %}
+  {% if holds %}
+    <p class="shell__subtitle">
+      {{ holds | length }} action{{ 's' if (holds | length) != 1 else '' }} held by the audit agent.
+      Each one runs only if you approve it, and only with the arguments shown.
+    </p>
+  {% else %}
+    <p class="shell__subtitle">Nothing is waiting on you.</p>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+  {# Normalised here too, not only in the subtitle block above: the two blocks are
+     rendered independently, so each needs its own defaults. #}
+  {% set holds = holds | default([]) %}
+  {% set decided = decided | default([]) %}
+  {% set decide_url = decide_url | default('holds/decide') %}
+
+  {% if holds %}
+    {# Each card is swapped in place when its own decision posts back, so one
+       decision does not re-render the whole queue and lose the owner's position
+       in it. #}
+    <div id="holds">
+      {% for hold in holds %}
+        {% include "_held_action.html.j2" %}
+      {% endfor %}
+    </div>
+
+    {% if decided %}
+      <section class="card mt-5">
+        <h2 class="card__heading">Decided today</h2>
+        <div class="table-wrap">
+          <table class="data">
+            <thead>
+              <tr>
+                <th scope="col">Tool</th>
+                <th scope="col">Decision</th>
+                <th scope="col">By</th>
+                <th scope="col">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in decided %}
+                <tr>
+                  <td class="mono">{{ item.tool | default('—') }}</td>
+                  <td>
+                    {# `status` is defaulted before comparison: comparing an
+                       undefined under StrictUndefined raises rather than being
+                       merely false. #}
+                    {% set status = item.status | default('') %}
+                    <span class="badge badge--{{ 'ok' if status == 'approved' else ('danger' if status == 'rejected' else 'hold') }}">
+                      {{ status or '—' }}
+                    </span>
+                  </td>
+                  <td>{{ item.decided_by | default('—') }}</td>
+                  <td class="tiny muted">{{ item.decided_at | default('—') }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% endif %}
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">Nothing needs your decision</p>
+      <p class="empty__body">
+        When an agent proposes an action the audit agent holds — over a limit, on a
+        changed payee, past a contact frequency — it appears here with the reason
+        and the exact arguments, and does nothing until you decide.
+      </p>
+    </div>
+  {% endif %}
+{% endblock %}

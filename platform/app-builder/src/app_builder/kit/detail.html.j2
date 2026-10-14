@@ -1,0 +1,105 @@
+{#
+  Pattern: detail — one record, with an edit affordance.
+
+  `record` is a mapping of field name to value. `fields` optionally reorders or
+  labels them as a list of {key, label}; without it every key is shown in sorted
+  order, which is the right default for a generated app whose record shape comes
+  straight from the spec's entity.
+
+  The edit affordance is emitted only when `edit_href` is supplied. A detail page
+  that offers a link to a form the app does not have is a broken button, so the
+  absence of the affordance is the honest rendering.
+#}
+{% extends "base.html.j2" %}
+{% block title %}{{ heading | default(title | default('Record')) }} — {{ app_name | default('Helios app') }}{% endblock %}
+
+{% block content %}
+  {# Optional context normalised up front: under StrictUndefined a bare
+     `{% if x %}` on an unset variable raises, whereas `default` is safe. #}
+  {% set record = record | default(none) %}
+  {% set fields = fields | default([]) %}
+  {% set actions = actions | default([]) %}
+  {% set related_sections = related_sections | default([]) %}
+  {% set edit_href = edit_href | default('') %}
+  {% set back_href = back_href | default('') %}
+  {% set status = status | default('') %}
+  {% set status_tone = status_tone | default('info') %}
+  {% set empty_title = empty_title | default('No such record') %}
+  {% set empty_body = empty_body | default('The record this page was opened for does not exist, or is no longer here.') %}
+
+  {% if not record %}
+    <div class="empty">
+      <p class="empty__title">{{ empty_title }}</p>
+      <p class="empty__body">{{ empty_body }}</p>
+      {% if back_href %}<p class="mt-4"><a class="btn btn--secondary" href="{{ back_href }}">Back to the list</a></p>{% endif %}
+    </div>
+  {% else %}
+    <section class="card">
+      <div class="btn-row" style="justify-content: space-between; align-items: baseline;">
+        <h2 class="card__heading mt-0">{{ heading | default(title | default('Record')) }}</h2>
+        {% if status %}
+          <span class="badge badge--{{ status_tone }}">{{ status }}</span>
+        {% endif %}
+      </div>
+
+      <dl class="fields">
+        {# With no explicit field list, show every key. Sorted, so the order does
+           not depend on dict insertion and the page is stable across runs. #}
+        {% if fields %}
+          {% for field in fields %}
+            <dt>{{ field.label | default(field.key) }}</dt>
+            <dd>{{ field.format(record[field.key]) if field.format is defined and field.format is callable else (record[field.key] if record[field.key] is not none else '—') }}</dd>
+          {% endfor %}
+        {% else %}
+          {% for key, value in record.items() | sort %}
+            <dt>{{ key }}</dt>
+            <dd>
+              {% if value is none %}
+                <span class="faint">—</span>
+              {% elif value is boolean %}
+                {{ 'yes' if value else 'no' }}
+              {% else %}
+                {{ value }}
+              {% endif %}
+            </dd>
+          {% endfor %}
+        {% endif %}
+      </dl>
+    </section>
+
+    {% if edit_href or back_href or actions %}
+      <div class="btn-row mt-5">
+        {% if back_href %}<a class="btn btn--secondary" href="{{ back_href }}">Back</a>{% endif %}
+        {% if edit_href %}<a class="btn" href="{{ edit_href }}">Edit</a>{% endif %}
+        {% for action in actions %}
+          <a class="btn btn--{{ action.tone | default('secondary') }}" href="{{ action.href }}">{{ action.label }}</a>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {# Related records — e.g. the payments against one invoice. Optional, and
+       rendered as a compact table so a detail page can show context without the
+       caller building a second page for it. #}
+    {% for related in related_sections %}
+      <section class="card mt-5">
+        <h3 class="card__heading">{{ related.heading | default('Related') }}</h3>
+        {% if related.rows | default([]) %}
+          <div class="table-wrap">
+            <table class="data">
+              <thead>
+                <tr>{% for column in related.columns %}<th scope="col" class="{{ 'num' if column.numeric | default(false) else '' }}">{{ column.label | default(column.key) }}</th>{% endfor %}</tr>
+              </thead>
+              <tbody>
+                {% for row in related.rows %}
+                  <tr>{% for column in related.columns %}<td class="{{ 'num' if column.numeric | default(false) else '' }}">{{ row[column.key] if row[column.key] is not none else '—' }}</td>{% endfor %}</tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="tiny muted mt-0">{{ related.empty | default('None recorded.') }}</p>
+        {% endif %}
+      </section>
+    {% endfor %}
+  {% endif %}
+{% endblock %}

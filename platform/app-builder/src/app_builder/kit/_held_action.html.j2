@@ -1,0 +1,122 @@
+{#
+  The held-action card: the clearest expression of "the model proposes, code
+  decides".
+
+  This is the single most important partial in the kit. Every side-effect action
+  can be held, so every app with agents needs somewhere for the owner to decide —
+  and an app without one has agents that pause invisibly, which the owner
+  discovers only when they wonder why nothing happened.
+
+  It renders what the auditor actually produced, not a summary of it:
+    hold.owner_question  what the owner must decide, in plain language
+    hold.findings        which rule(s) held it, and why
+    hold.arguments       the proposed call, with sensitive keys masked
+    hold.tool            which tool would run
+
+  Approve and Decline post with HTMX so the decision does not reload the page and
+  lose the rest of the queue. Both carry the hold_id, because an approval applies
+  only to the exact action that was held.
+
+  Fields come from audit_agent.contracts.HoldRecord: hold_id, request_id, app_id,
+  agent_id, principal, task_type, tool, arguments, findings, owner_question,
+  created_at, status. A missing one renders as an empty cell rather than a broken
+  page, because the queue must stay usable when the runtime is mid-upgrade.
+#}
+{% set hold = hold | default({}) %}
+{#-
+  Every field is normalised here rather than defaulted inline, because under
+  StrictUndefined `{% if hold.status %}` RAISES when the key is absent — only the
+  `default` filter is safe, since it receives the Undefined without touching it.
+  A hold mid-write, or one from an older runtime, must still render: the queue is
+  the owner's view of what is paused, and a page that errors hides every other
+  pending action behind it.
+-#}
+{% set hold_id = hold.hold_id | default('') %}
+{% set hold_tool = hold.tool | default('') %}
+{% set hold_status = hold.status | default('') %}
+{% set hold_task = hold.task_type | default('') %}
+{% set hold_agent = hold.agent_id | default('') %}
+{% set hold_created = hold.created_at | default('') %}
+{% set hold_decided_by = hold.decided_by | default('') %}
+{% set hold_decided_at = hold.decided_at | default('') %}
+{% set decide_url = decide_url | default('holds/decide') %}
+<article class="held" id="hold-{{ hold_id or 'unknown' }}">
+  <div class="held__head">
+    <span class="held__tool">{{ hold_tool or '(unknown tool)' }}</span>
+    {% if hold_status %}
+      <span class="badge badge--{{ 'ok' if hold_status == 'approved' else ('danger' if hold_status == 'rejected' else 'hold') }}">{{ hold_status }}</span>
+    {% else %}
+      <span class="badge badge--hold">awaiting your decision</span>
+    {% endif %}
+  </div>
+
+  {# The question is what the owner reads first. `default(..., true)` is required:
+     without the boolean second argument an EMPTY string is not treated as missing,
+     so a hold whose owner_question is blank would render nothing to decide on.
+     Falls back to the rule messages rather than leaving the owner guessing. #}
+  <p class="held__question">
+    {{ hold.owner_question | default('An action needs your approval before it runs.', true) }}
+  </p>
+
+  {% set findings = hold.findings | default([]) %}
+  {% if findings %}
+    <div class="held__reason">
+      {% for finding in findings %}
+        {% set severity = finding.severity | default('') %}
+        <p class="mt-0">
+          <span class="held__rule">{{ finding.rule_id | default('rule') }}</span>
+          {%- if severity %} <span class="badge badge--{{ severity }}">{{ severity }}</span>{% endif %}
+          <br>{{ finding.message | default('') }}
+        </p>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+  {% set args = (hold.arguments | default({})) | mask %}
+  {% if args %}
+    <table class="args">
+      <caption class="sr-only">Proposed arguments</caption>
+      <tbody>
+        {% for key, value in args.items() | sort %}
+          <tr>
+            <th scope="row">{{ key }}</th>
+            {# A masked value gets its own styling so the owner can see that
+               something was withheld deliberately, rather than assuming the field
+               is empty. #}
+            <td class="{{ 'masked' if value == '***REDACTED***' else '' }}">{{ value }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p class="tiny muted">This action carries no arguments.</p>
+  {% endif %}
+
+  {# Decisions are scoped to the exact held action, so the hold_id travels with
+     the request and the server compares the proposed arguments before executing.
+     An approval that applied to "the next thing this agent does" would be a
+     standing permission, which is not what a hold is. #}
+  {% if hold_status in ('', 'pending') %}
+    <form class="btn-row" method="post"
+          hx-post="{{ decide_url }}"
+          hx-target="#hold-{{ hold_id or 'unknown' }}"
+          hx-swap="outerHTML">
+      <input type="hidden" name="hold_id" value="{{ hold_id }}">
+      <button class="btn btn--ok" type="submit" name="decision" value="approve">Approve</button>
+      <button class="btn btn--danger" type="submit" name="decision" value="decline">Decline</button>
+      <span class="htmx-indicator tiny muted" aria-live="polite">working…</span>
+    </form>
+  {% else %}
+    <p class="held__meta">
+      Decided {{ hold_decided_at or '—' }}
+      {% if hold_decided_by %} by {{ hold_decided_by }}{% endif %}.
+    </p>
+  {% endif %}
+
+  <p class="held__meta">
+    hold <span class="mono">{{ hold_id or '—' }}</span>
+    · task <span class="mono">{{ hold_task or '—' }}</span>
+    · agent <span class="mono">{{ hold_agent or '—' }}</span>
+    · raised {{ hold_created or '—' }}
+  </p>
+</article>

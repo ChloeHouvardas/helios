@@ -1,0 +1,114 @@
+{#
+  Pattern: settings — mandate limits and preferences.
+
+  Two halves, and the distinction is the point of the page:
+
+  `limits` are what the owner MAY change — the mandate's ceilings and windows.
+  `policy` is what the owner may NOT change from here: the rules the audit agent
+  enforces, shown read-only so the owner can see what governs the agents without
+  being able to loosen it from a web form.
+
+  That split is deliberate. A settings page that lets an owner raise a payment
+  ceiling is a settings page that lets them weaken a control, and the platform's
+  claim is that controls live in code. So the read-only half renders the rule ids
+  and messages from the audit manifest, and the editable half posts to the app's
+  own config, which the validator and the auditor still check against.
+#}
+{% extends "base.html.j2" %}
+{% block title %}{{ heading | default(title | default('Settings')) }} — {{ app_name | default('Helios app') }}{% endblock %}
+
+{% block content %}
+  {# Optional context normalised up front: under StrictUndefined a bare
+     `{% if x %}` on an unset variable raises, whereas `default` is safe. #}
+  {% set limits = limits | default([]) %}
+  {% set policy = policy | default([]) %}
+  {% set app_info = app_info | default({}) %}
+  {% set field_errors = field_errors | default({}) %}
+  {% set form_error = form_error | default('') %}
+  {% set saved = saved | default(false) %}
+  {% set method = method | default('post') %}
+  {% set action = action | default('settings/') %}
+  {% set hx_post = hx_post | default('') %}
+
+  {% if limits %}
+    <form class="card stack" method="{{ method }}" action="{{ action }}"
+          {% if hx_post %}hx-post="{{ hx_post }}" hx-target="closest form" hx-swap="outerHTML"{% endif %}>
+      <h2 class="card__heading">Limits you set</h2>
+      {% if form_error %}<div class="error" role="alert">{{ form_error }}</div>{% endif %}
+      {% if saved %}<p class="badge badge--ok">Saved</p>{% endif %}
+
+      {% for limit in limits %}
+        {% set error = field_errors.get(limit.name) %}
+        <label class="field">
+          <span class="field__label">{{ limit.label | default(limit.name) }}</span>
+          <input type="{{ 'number' if limit.type | default('') in ('integer', 'decimal') else 'text' }}"
+                 name="{{ limit.name }}"
+                 value="{{ limit.value | default('') }}"
+                 {% if limit.type | default('') == 'decimal' %}step="{{ limit.step | default('0.01') }}"{% endif %}
+                 {% if limit.type | default('') == 'integer' %}step="1"{% endif %}
+                 {% if limit.min is defined %}min="{{ limit.min }}"{% endif %}
+                 {% if limit.max is defined %}max="{{ limit.max }}"{% endif %}
+                 {% if limit.readonly | default(false) %}readonly{% endif %}
+                 {% if error %}aria-invalid="true"{% endif %}>
+          {% if limit.hint | default('') %}<span class="field__hint">{{ limit.hint }}</span>{% endif %}
+          {% if error %}<span class="field__hint" style="color: var(--danger);">{{ error }}</span>{% endif %}
+        </label>
+      {% endfor %}
+
+      <div class="btn-row">
+        <button class="btn" type="submit">Save</button>
+        <span class="htmx-indicator tiny muted" aria-live="polite">saving…</span>
+      </div>
+    </form>
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">No owner-settable limits</p>
+      <p class="empty__body">
+        This app's mandate has nothing the owner is expected to tune. The policy
+        below still applies.
+      </p>
+    </div>
+  {% endif %}
+
+  {% if policy %}
+    <section class="card mt-5">
+      <h2 class="card__heading">What the audit agent enforces</h2>
+      <p class="tiny muted">
+        Read-only. These rules are code, checked on every call; they are shown here
+        so the policy is visible, not so it can be changed from a form.
+      </p>
+      <div class="table-wrap">
+        <table class="data">
+          <thead>
+            <tr>
+              <th scope="col">Rule</th>
+              <th scope="col">Tools</th>
+              <th scope="col">What it does</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rule in policy %}
+              <tr>
+                <td class="mono">{{ rule.id | default('—') }}</td>
+                <td class="mono tiny">{{ (rule.tools | default([])) | join(', ') or 'all' }}</td>
+                <td>{{ rule.message | default(rule.description | default('')) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
+  {% if app_info %}
+    <section class="card mt-5">
+      <h2 class="card__heading">About this app</h2>
+      <dl class="fields">
+        {% for key, value in app_info.items() | sort %}
+          <dt>{{ key }}</dt>
+          <dd class="mono tiny">{{ value if value is not none else '—' }}</dd>
+        {% endfor %}
+      </dl>
+    </section>
+  {% endif %}
+{% endblock %}
