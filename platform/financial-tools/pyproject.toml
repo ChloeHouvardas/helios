@@ -1,0 +1,10 @@
+[project]
+name = "fin-tools"
+version = "0.1.0"
+description = "Helios Financial Tools Developer Interface — offline prototypes (payments, email, spreadsheets, simulation, intent verification, knowledge graph)"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
