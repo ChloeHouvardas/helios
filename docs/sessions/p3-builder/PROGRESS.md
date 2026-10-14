@@ -238,3 +238,218 @@ under `StrictUndefined`. Added explicit tests for it with a complete record, a
 minimal one and an empty one. A queue that errors on one malformed hold would hide
 every other pending action behind it, which is the worst failure available for that
 page.
+
+## 5. Task 5 — scaffolder
+
+- Added `app_builder/scaffold.py` and `app_builder/deployment.py`. `scaffold()` writes
+  23 files from a validated spec; `deployment.py` reads the engine's accepted
+  `helios.yaml` field set at generation time.
+- Why: this is the piece that turns a spec into something runnable. The generated
+  skeleton validates with 0 errors and its own generated tests pass, so it is a
+  working starting point rather than a pile of stubs.
+- Affects: no existing file modified. Verified against both real apps' specs and via
+  a `--dry-run` into `apps/helios-collect` that listed only files absent there and
+  wrote nothing.
+
+### Four bugs found while building it
+
+1. **`helios-app.yaml` was not among the generated files.** The scaffolded app could
+   not be validated at all, because the validator resolves both manifest paths
+   relative to that file. The spec is now copied **verbatim** rather than re-dumped
+   from the model, because a spec carries the author's comments — the reasoning behind
+   a data model, why an entity is integrated rather than local — and round-tripping
+   through pydantic destroys all of it.
+2. **`yaml.safe_dump(model_dump())` raises `RepresenterError`.** The closed sets are
+   `StrEnum` members, which YAML cannot represent. `mode="json"` emits the plain
+   string values. This only affects the in-memory fallback path, which is why the
+   first smoke test — which passed a `spec_path` — did not catch it.
+3. **`guess_side_effect` matched a verb anywhere in the name**, so `read_record`
+   looked like a write because it contains the segment `record`. Now only the segment
+   carrying the *operation* counts: the last one for a namespaced name
+   (`payments.send`), the first for snake_case (`record_payment`). All nine tools
+   across both real apps are guessed correctly under this rule — verified by comparing
+   against their audit manifests, which is the only available evidence the rule is
+   right rather than merely plausible.
+4. **A generated test called `load_manifest(dict)`.** That function takes a *path*;
+   `validate_manifest` takes the document. The failure surfaced as a `TypeError` from
+   inside `pathlib`, which reads like a broken install.
+
+## 6. Task 6 — intake
+
+- Added `app_builder/intake.py` and `app_builder/cli.py` (`questions`,
+  `spec-from-intake`, `new`, `validate`). Exit codes match `check_app.py`'s existing
+  0/1/2 so pipelines can treat all three alike.
+- Why: this is the on-ramp from one sentence to a spec. An unanswered question is
+  recorded as `not sure` and becomes a `# TODO`, never a guess.
+- Affects: no existing file modified. Verified end to end: intake -> spec -> scaffold
+  -> `validate` with 0 errors, nothing in between hand-written.
+
+### Three parsing bugs, all found by writing the tests
+
+1. **Page patterns were matched by scanning the whole answer for members of
+   `UI_PATTERNS`.** That set is a `frozenset`, so match order is arbitrary — and the
+   pattern list is zipped against the page list *positionally*. The result mapped
+   `holds` to `settings` and `policy` to `approval_queue`. Now matched per chunk,
+   preserving the order the user wrote, with a chunk that names no pattern still
+   consuming a slot so later pages do not shift.
+2. **A structured answer was flattened by dumping each element and joining with
+   `"; "`.** The result is not valid YAML, so entity parsing fell through to line
+   scanning and turned `[{"name": "invoice", ...}]` into an entity called `name`. The
+   whole structure is now dumped once.
+3. **`--app-id` was passed through unvalidated**, so `!!!` produced a spec that failed
+   inside `AppSpec.parse` with a message about the *spec* rather than about the
+   argument, with no way to connect the two. Now validated, offering the derived form
+   as an example.
+
+The emptiness check for a structured answer must not recurse through the cleaner: the
+first version passed the dict back into the function calling it and hit
+`RecursionError` on any dict-shaped answer.
+
+## 7. Task 7 — `agent_toolkit.cli`
+
+- Added `platform/action-agent-builder/src/agent_toolkit/cli.py` with `inspect`,
+  `validate [--audit]` and `demo`, plus `tests/test_cli.py` (36 tests) — the first
+  `tests/` directory in that package, so `test-all.sh` went from 5 suites to 6.
+- Why: `pyproject.toml` has declared `agent-toolkit = "agent_toolkit.cli:main"` since
+  the package was created, but the module did not exist, so the installed console
+  script crashed with `ModuleNotFoundError` on every invocation. **No `pyproject.toml`
+  change was needed** — the task description said P0 had removed the script entry, but
+  it was still declared and simply broken. A regression test invokes the entry point
+  as a subprocess, because calling `main()` in-process cannot detect broken console
+  wiring.
+- Affects: one new module and one new test file in another agent's package. Nothing
+  existing was modified. `audit_agent` is imported *inside* the validate handler, not
+  at module scope, to preserve the boundary that `agent-integration` is the only
+  package importing both.
+
+`demo` drives the store, gate and action log through four proposals — allowed, held,
+denied, undeclared — with a fixed date, no model and no network. It shows the whole
+decision space rather than only the happy path, because a demo of approvals alone
+would not demonstrate that the control works when the agent misbehaves, which is the
+only case the control exists for. Fixture data made the four outcomes available
+without inventing any: INV-1003 is 12,500 against a 10,000 threshold, and CUST-002 was
+contacted 1 day ago against a 3-day minimum.
+
+## 8. Task 8 — the coding-agent on-ramp
+
+- Rewrote `entry-point/BUILD.md` as an 11-step procedure around the real commands,
+  with a Traps section preserving 32 items from the old BUILD.md and HANDOFF.md §5.
+  Updated `entry-point/SKILL.md` and `entry-point/references/platform-status.md` to
+  the real status, `specs/app-builder.md` and `specs/tech-stack.md` to what shipped,
+  and `platform/app-builder/{README,PLAN}.md`.
+- Why: BUILD.md told the reader "you are the scaffolder", which is no longer true, and
+  platform-status.md claimed there was no agent loop, no scaffolder, no validator and
+  no `agent_toolkit` CLI — all four exist.
+- Affects: seven existing files, all documentation. No code changed. Suite stayed at
+  784 tests, exit 0.
+
+Two things were **verified against source rather than trusted** from the old text
+before being carried into the rewrite, because both are specific enough to be wrong:
+`RunResult.summary()` really does count `len(self.actions)` for
+`side_effects_attempted` while read-only calls are appended there too
+(`agent_integration/runtime.py:131-132`), and `ToolDescriptor.from_contract()` really
+does read `has_side_effect` where `ToolDefinition` names it `side_effect`
+(`audit_agent/policy.py:92`, closed by `ToolContractView` at
+`agent_integration/adapters.py:66`).
+
+`specs/app-builder.md` gained two honest corrections rather than only good news:
+`identity.id` **uniqueness across apps is not implemented** (it needs a registry of app
+ids and nothing here holds one), and two cross-file checks are unreachable through
+`AuditManifest.load()` because that loader already raises on the same conditions — kept
+as defence in depth for an in-memory manifest and documented as such rather than
+presented as live coverage.
+
+`PLAN.md` was **shrunk, not deleted** (289 -> ~110 lines). It described Vite-built
+React and SQLAlchemy, so keeping it whole meant keeping a second copy of the design
+that had already drifted from both the spec and the code. Six items in it are genuinely
+open and three decide whether the surprise task can be met, so the open items stayed.
+
+## Done-when — outputs pasted
+
+**1. `scripts/test-all.sh` exits 0 with the new suite counted**
+
+```
+=== action-agent-builder (platform/action-agent-builder) ===
+36 passed in 0.22s
+=== audit-agent-builder (platform/audit-agent-builder) ===
+79 passed in 0.88s
+=== agent-integration (platform/agent-integration) ===
+123 passed in 10.65s
+=== financial-tools (platform/financial-tools) ===
+86 passed in 8.87s
+=== app-builder (platform/app-builder) ===
+386 passed in 2.94s
+=== helios-collect (apps/helios-collect) ===
+74 passed in 1.26s
+===============================================
+test-all: 6 suite(s) run
+test-all: skipped — entry-point (no tests/)
+test-all: all suites green
+EXIT CODE = 0
+```
+
+784 tests total. Baseline at the start of the session was 362 across 5 suites.
+
+**2. `helios-app validate`**
+
+| target | exit | errors | warnings |
+|---|---|---|---|
+| `apps/helios-collect` | 0 | 0 | 2 |
+| `entry-point/examples/invoice-payer` | 0 | 0 | 4 |
+| `platform/app-builder/tests/fixtures/broken-app` | 1 | **8** | 8 |
+
+The broken fixture's 8 errors are 8 *distinct* checks: undeclared tool, spec-tools not
+a superset, identity mismatch, no task allows anything, rule binds an unknown argument,
+rule needs a missing fact, and the two directions of side-effect disagreement. Each is
+asserted by name in `test_validate.py`, so a check that stops running fails on its own
+row rather than quietly dropping the total.
+
+**3. `helios-app new /tmp/p3-smoke --spec entry-point/examples/invoice-payer/helios-app.yaml`**
+
+```
+23 file(s) written to /private/tmp/p3-smoke
+EXIT CODE = 0
+```
+
+Then, on the result: `validate` -> `0 error(s), 4 warning(s)`; re-running `new` ->
+`0 file(s) written, 23 skipped`.
+
+## Left undone, deliberately
+
+**GLM / Zhipu / bigmodel.cn references were not removed.** The competition rule says
+any reference to them is legacy and must be removed *when you touch that file*. Every
+occurrence is in a file no task here touched: `SETUP.md` (1 line), `HANDOFF.md` (4
+lines), and — overwhelmingly — `platform/agent-integration/`, where a case-insensitive
+grep counts 48 lines across `model_driver.py` (10), `.env.example` (10),
+`tests/test_model_driver.py` (16), `README.md` (8), `cli.py` (2), `__init__.py` (1)
+and `tests/conftest.py` (1).
+
+The two load-bearing lines are `model_driver.py:54-55`:
+`DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"` and
+`DEFAULT_MODEL = "glm-5.3"`. One thing that makes this cheaper than it looks: the
+driver's env-var list at `model_driver.py:64-67` **already includes
+`DASHSCOPE_API_KEY`** alongside `GLM_API_KEY` and `ZHIPUAI_API_KEY`, so the credential
+side needs no change — only the two defaults and the tests that hard-code them.
+
+Editing `platform/agent-integration/` is outside this session's scope — it is another
+agent's package, and section C forbids editing directories not assigned here. The
+driver is OpenAI-compatible, so reconciling it to DashScope is a base-URL and model-id
+change rather than a rewrite, but its tests hard-code the old values and would all need
+updating together. Recorded in `HANDOFF-TO-P1-P2.md`, in `BUILD.md`'s
+non-negotiables, and in `platform-status.md` §1 instead of done. **This is the highest
+priority item left in the repo** and it is not this session's to close.
+
+Related: **`qwen_agent` is installed (0.0.34) but does not import**, because `numpy` is
+absent. So the model-driven path is not runnable as-is even after the driver is
+repointed — verified by attempting the import, not inferred from the dependency list.
+
+**`identity.id` uniqueness across apps** is not enforced — there is no registry of app
+ids anywhere in the repo to check against. Documented as open in
+`specs/app-builder.md`.
+
+**No generated app has been served end to end.** `server.py` is generated with all five
+routes and a lazy `build_app` import, but `platform/deployment/` does not exist in the
+repo, so there is nothing to deploy against. `POST /holds/decide` is generated as a
+`NotImplementedError` rather than a stub returning 200: a decision endpoint that
+silently does nothing is worse than one that errors, because the owner believes they
+approved.

@@ -27,6 +27,43 @@ What p3-builder's `test-all.sh` does that a naive version does not:
 
 Reconcile rather than overwrite; if P0's version already handles these, take that one.
 
+## To whoever owns `platform/agent-integration/` — highest priority item in the repo
+
+**The model driver still targets GLM-5.3 on `bigmodel.cn`.** The competition rule is
+that Qwen is the only allowed generative model, and any reference to GLM, Zhipu or
+`bigmodel.cn` is legacy that must be removed when the file is touched.
+
+p3-builder did **not** touch these files, so it did not remove the references — and
+editing `platform/agent-integration/` is outside this session's scope. Recorded here
+instead of silently left alone.
+
+Where they are (all verified by grep on 2026-10-15):
+
+| File | What it carries |
+|---|---|
+| `src/agent_integration/model_driver.py` | defaults to `glm-5.3`; base URL `https://open.bigmodel.cn/api/paas/v4`; env vars `GLM_API_KEY`, `ZHIPUAI_API_KEY` |
+| `src/agent_integration/cli.py` | help text names GLM-5.3 |
+| `src/agent_integration/__init__.py` | module docstring names GLM-5.3 |
+| `README.md` | eight lines reference GLM-5.3 / Zhipu / the bigmodel endpoint |
+| `.env.example` | ten lines: default model, base URL, and both env var names |
+| `tests/test_model_driver.py` | sixteen lines hard-coding `glm-5.3`, `bigmodel.cn` and `ZHIPUAI_API_KEY` |
+| `tests/conftest.py` | a comment referencing the "public GLM endpoint" |
+
+Also outside that package: `SETUP.md` (line 1, asks for a GLM-5.3 key in a `.env`)
+and `HANDOFF.md` (lines 173, 279, 329, 374).
+
+The driver is OpenAI-compatible, so pointing it at DashScope is a base-URL and
+model-id change rather than a rewrite — but the test file hard-codes the old values
+throughout, so the two have to change together or the suite goes red. `HANDOFF.md`
+§6 already flags this as the most urgent open question; nothing has closed it.
+
+One related finding while verifying this: **`qwen_agent` is installed in the repo venv
+(0.0.34) but does not import** — it needs `numpy`, which is absent. So the
+model-driven path is not runnable as-is even after the driver is repointed. Either add
+`numpy` to the dev group or keep driving the runtime from deterministic code, as both
+reference apps do. This is recorded in `platform-status.md` §1 and in `BUILD.md`'s
+Traps.
+
 ## To P1 (`platform/financial-tools/`)
 
 **1. The package cannot be installed with `pip install -e`.**
