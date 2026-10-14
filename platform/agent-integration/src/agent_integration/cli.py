@@ -1,16 +1,19 @@
 """CLI: spin up a gated agent, watch the audit agent decide, own the holds.
 
-    agent-integration demo                 # offline, all four scenarios
-    agent-integration run --task "..."     # real Qwen, interactive approvals
-    agent-integration run --offline ...    # scripted, no API key needed
+    agent-integration doctor               # is the model reachable? run this first
+    agent-integration demo                 # offline, all five scenarios
+    agent-integration run --task "..."     # GLM-5.3, interactive approvals
+    agent-integration run --offline ...    # scripted, no token needed
     agent-integration inspect              # what does the auditor govern
-    agent-integration show-manifest        # the generated audit YAML
+    agent-integration manifest --out X     # generate the audit YAML
+    agent-integration selfcheck            # do the two packages still agree
 
-Everything works with no API key. ``run`` uses a scripted driver when
-``--offline`` is given or no key is configured, and real Qwen otherwise.
+Everything works with no token at all. ``run`` uses a scripted driver when
+``--offline`` is given or no token is configured, and GLM-5.3 otherwise.
 
-Exit codes are meaningful for CI: 0 ran, 2 refused (the auditor granted no
-authority), 3 held with nobody to decide, 4 the run errored.
+Exit codes are meaningful for CI: 0 ran, 1 config or connectivity, 2 refused
+(the auditor granted no authority), 3 held with nobody to decide, 4 the run
+errored.
 """
 
 from __future__ import annotations

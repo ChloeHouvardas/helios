@@ -36,23 +36,45 @@ action agent ──ToolContractView──▶ AuditBridge ──▶ audit agent (
 
 | Command | What it does |
 | --- | --- |
-| `demo` | Runs four scenarios offline and prints every verdict |
-| `run --task "..."` | One agent on one task. Real Qwen if `DASHSCOPE_API_KEY` is set, scripted otherwise |
-| `run --offline --task "..." --call 'send_email:{...}'` | Scripted, no key needed |
+| `demo` | Runs five scenarios offline and prints every verdict |
+| `doctor` | Checks model connectivity with one minimal request — run this first |
+| `run --task "..."` | One agent on one task. GLM if a token is set, scripted otherwise |
+| `run --offline --task "..." --call 'send_email:{...}'` | Scripted, no token needed |
 | `inspect` | The authority surface: which tools are gated, which are read-only |
 | `manifest [--out path]` | Print or write the generated audit YAML |
 | `selfcheck` | Prove the two packages agree — names, side-effect flags, schemas |
 
-Exit codes: `0` ran, `2` refused (auditor granted no authority), `3` held with
-nobody to decide.
+Exit codes: `0` ran, `1` config/connectivity, `2` refused (auditor granted no
+authority), `3` held with nobody to decide, `4` the run errored.
 
-## Using a real model
+## Using the real model
+
+GLM-5.3 over the OpenAI-compatible Chat Completion protocol, stdlib HTTP only
+— no SDK, no dependency tree.
 
 ```bash
-cp .env.example .env      # add DASHSCOPE_API_KEY
+cp .env.example .env      # set HELIOS_LLM_API_KEY
 set -a; source .env; set +a
-python -m agent_integration.cli run --task "Follow up on overdue invoice INV-1001"
+agent-integration doctor  # one minimal request, tells you exactly what is wrong
+agent-integration run --task "Follow up on overdue invoice INV-1001"
 ```
+
+`doctor` prints the token as `L2...1Y (13 chars)` — the shape, never the value.
+
+Two things about the GLM-5.3 contract that are easy to get wrong, both handled
+in `model_driver.py` and asserted by tests:
+
+- **Auth is a plain Bearer token.** GLM-5.3 rejects the legacy JWT-shaped key,
+  so nothing signs or encodes the token.
+- **Thinking cannot be disabled.** `reasoning_effort` (`low`/`high`/`max`)
+  picks the depth; a request sending `thinking.type: "disabled"` fails outright.
+  `tool_choice` only accepts `"auto"`, and `temperature` caps at `1.0`.
+
+If your token came from a gateway rather than Zhipu directly — a token shaped
+like `L2...` instead of `sk-...` usually means it did — set
+`HELIOS_LLM_BASE_URL` to that gateway, or pass `--base-url`. The public
+endpoints are `https://open.bigmodel.cn/api/paas/v4` (mainland) and
+`https://api.z.ai/api/paas/v4` (international).
 
 When the auditor holds an action the CLI prompts you:
 
@@ -65,8 +87,8 @@ When the auditor holds an action the CLI prompts you:
 Say `y` and the runtime resumes with that single action and nothing else.
 Say `n` and the denial reason goes back to the model as its next observation.
 
-Without a key nothing changes except the driver: `run` warns and falls back to
-scripted.
+Without a token nothing changes except the driver: `run` warns and falls back
+to scripted.
 
 ## Three gaps this closes
 
@@ -144,11 +166,18 @@ src/agent_integration/
 ├── manifest_gen.py   # audit YAML derived from real tool definitions
 ├── bridge.py         # authorize → adjudicate → grant lifecycle
 ├── runtime.py        # gated loop + resume + ScriptedDriver
-├── qwen_driver.py    # real Qwen, imported lazily
+├── model_driver.py   # GLM-5.3, stdlib HTTP, imported lazily
 ├── wiring.py         # build_integration()
-└── cli.py            # demo / run / inspect / manifest / selfcheck
-tests/                # 87 tests, no network, no API key
+└── cli.py            # demo / doctor / run / inspect / manifest / selfcheck
+tests/
+├── conftest.py           # blocks non-loopback sockets; clears model tokens
+├── test_integration.py   # 87 tests: adapters, bridge, runtime, evidence
+└── test_model_driver.py  # 36 tests: GLM wire protocol against a local mock
 ```
+
+123 tests. No network, no token — `conftest.py` fails any test that tries to
+reach anything off loopback, so the suite cannot quietly depend on a vendor
+endpoint or on whose shell it ran in.
 
 Regenerate the manifest after changing any tool:
 
