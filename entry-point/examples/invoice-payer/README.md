@@ -12,7 +12,13 @@ python3 app.py                     # narrated run over five invoices
 python3 app.py --trace             # per-step trace for each
 python3 app.py --invoice INV-1003  # one control path in isolation
 python3 app.py --json              # machine-readable
-python3 -m pytest tests -q         # each control asserted individually
+```
+
+Tests run from the repo root with the repo venv (`scripts/bootstrap-venv.sh`
+builds it; `scripts/test-all.sh` runs every suite):
+
+```bash
+.venv/bin/python -m pytest entry-point/examples/invoice-payer/tests -q
 ```
 
 Runs offline: no API key, no network, no real money. Dependencies are the three
@@ -127,7 +133,8 @@ elsewhere:
 | `test_the_fact_source_never_reads_the_request` | the property that makes the above meaningful |
 
 ```bash
-python3 -m pytest tests -q     # 41 tests, offline
+# from the repo root, with the repo venv
+.venv/bin/python -m pytest entry-point/examples/invoice-payer/tests -q   # 41 tests, offline
 ```
 
 The two to show a judge: `test_a_lie_in_resolved_facts_changes_nothing` (an agent

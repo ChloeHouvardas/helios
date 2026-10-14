@@ -7,9 +7,9 @@ prototype — **no network, no DB, no real money**.
 ## Run
 
 ```bash
-cd platform/financial-tools
-python3 -m pytest          # 44 tests, offline
-python3 -m fin_tools.demo  # end-to-end story
+# from the repo root; scripts/bootstrap-venv.sh builds .venv first
+.venv/bin/python -m pytest platform/financial-tools/tests -q   # 86 tests, offline
+.venv/bin/python -m fin_tools.demo                             # end-to-end story
 ```
 
 ## Components

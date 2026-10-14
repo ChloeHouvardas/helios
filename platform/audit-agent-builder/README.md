@@ -9,17 +9,17 @@ A standalone audit agent that decides **what an action agent may use, for which 
 ## Quick start
 
 ```bash
-cd platform/audit-agent-builder
-python3 -m pytest tests -q                       # 79 tests, fully offline
+# from the repo root; scripts/bootstrap-venv.sh builds .venv first
+.venv/bin/python -m pytest platform/audit-agent-builder/tests -q   # 79 tests, fully offline
 
 # What authority does a manifest grant?
-python3 -m audit_agent.cli inspect manifests/collect-reminder.yaml
+.venv/bin/python -m audit_agent.cli inspect platform/audit-agent-builder/manifests/collect-reminder.yaml
 
 # Is a generated manifest sound? (CI: exit 1 if not)
-python3 -m audit_agent.cli validate manifests/collect-reminder.yaml
+.venv/bin/python -m audit_agent.cli validate platform/audit-agent-builder/manifests/collect-reminder.yaml
 
 # See it decide, with reasons
-python3 -m audit_agent.cli demo manifests/collect-reminder.yaml \
+.venv/bin/python -m audit_agent.cli demo platform/audit-agent-builder/manifests/collect-reminder.yaml \
   --subject INV-1001 \
   --fact INV-1001:amount_due=450.00 \
   --fact INV-1001:recent_contact_count=0 \

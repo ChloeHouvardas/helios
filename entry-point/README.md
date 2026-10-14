@@ -64,9 +64,11 @@ The runtime — interception, gating, logging, holds — already exists and work
 ## Run the example
 
 ```bash
-cd examples/invoice-payer
+cd entry-point/examples/invoice-payer
 python3 app.py                 # narrated run over five invoices
-python3 -m pytest tests -q     # 41 tests, offline
+
+# tests run from the repo root with the repo venv (scripts/bootstrap-venv.sh)
+.venv/bin/python -m pytest entry-point/examples/invoice-payer/tests -q   # 41 tests, offline
 ```
 
 No API key, no network, no dependencies beyond the three platform packages plus

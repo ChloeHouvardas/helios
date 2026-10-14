@@ -134,22 +134,25 @@ This is the section to trust. Each was run on 2026-10-15 against this checkout; 
 ### Environment
 
 ```bash
-# Python 3.13.9. audit-agent-builder's floor is 3.13; use one interpreter for everything.
-# Packages are NOT pip-installed globally. Two different paths work:
+# One environment for the whole repo. Build it once from the repo root:
+scripts/bootstrap-venv.sh          # creates .venv on Python 3.13, installs the
+                                   # four first-party packages editable plus the
+                                   # pins in requirements-dev.txt
 
-# (a) source-on-path — used by the apps and the example
-cd platform/audit-agent-builder && PYTHONPATH=src python3 -m pytest tests -q   # 79 passed
-cd platform/financial-tools     && python3 -m pytest tests -q                  # 61 passed, 2 skipped
-cd apps/helios-collect          && python3 -m pytest tests -q                  # 74 passed
-cd entry-point/examples/invoice-payer && python3 -m pytest tests -q            # 41 passed
+# One test command for the whole repo:
+scripts/test-all.sh                # 403 passed across five suites
 
-# (b) agent-integration has its OWN venv — use it, or imports fail
-cd platform/agent-integration && .venv/bin/python -m pytest tests -q           # 123 passed
+# Run a single suite with the venv interpreter (from the repo root):
+.venv/bin/python -m pytest platform/audit-agent-builder/tests -q     #  79 passed
+.venv/bin/python -m pytest platform/financial-tools/tests     -q     #  86 passed
+.venv/bin/python -m pytest platform/agent-integration/tests   -q     # 123 passed
+.venv/bin/python -m pytest apps/helios-collect/tests          -q     #  74 passed
+.venv/bin/python -m pytest entry-point/examples/invoice-payer/tests -q  # 41 passed
 ```
 
-**378 tests green** across five suites. All offline; `agent-integration/tests/conftest.py` blocks any non-loopback socket, so the suite cannot quietly depend on a vendor endpoint or on whose shell it ran in.
+**403 tests green** across five suites. All offline; `agent-integration/tests/conftest.py` blocks any non-loopback socket, so the suite cannot quietly depend on a vendor endpoint or on whose shell it ran in.
 
-> ⚠️ `python3 -m pytest` inside `platform/agent-integration` fails with `ModuleNotFoundError: No module named 'agent_integration'`. Use `.venv/bin/python`. That venv does **not** have `fin_tools` on its path.
+> ⚠️ Use `.venv/bin/python`, never the system `python3`. The system interpreter is not guaranteed to be 3.13 (both `audit_agent` and `agent_integration` require `>=3.13`) and has none of the dependencies installed. The old per-package `PYTHONPATH=src` incantations and the separate `platform/agent-integration/.venv` are superseded by `scripts/bootstrap-venv.sh`; `scripts/test-all.sh` runs every suite in its own process so the per-suite `conftest.py` path shims cannot leak into each other.
 
 ### Flow A — a gated agent loop runs end to end, offline, no key
 

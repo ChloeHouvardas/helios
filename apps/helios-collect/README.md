@@ -12,7 +12,13 @@ python3 app.py --scenario INV-1006   # one control path
 python3 app.py --json           # machine-readable
 python3 app.py --list           # what each scenario demonstrates
 python3 app.py --dashboard      # the receivables book
-python3 -m pytest tests -q      # 74 tests, offline
+```
+
+Tests run from the repo root with the repo venv (`scripts/bootstrap-venv.sh`
+builds it; `scripts/test-all.sh` runs every suite):
+
+```bash
+.venv/bin/python -m pytest apps/helios-collect/tests -q   # 74 tests, offline
 ```
 
 Runs offline. No API key, no network, no dependencies beyond the four platform
@@ -171,10 +177,11 @@ apps/helios-collect/
 ## Verification
 
 ```bash
-python3 -m pytest tests -q                                    # 74 passed
-python3 entry-point/checks/check_app.py apps/helios-collect    # 0 errors, 3 warnings
-cd platform/audit-agent-builder && PYTHONPATH=src python3 -m audit_agent.cli \
-    inspect ../../apps/helios-collect/agents/helios-collect-audit.yaml
+# from the repo root, using the repo venv
+.venv/bin/python -m pytest apps/helios-collect/tests -q              # 74 passed
+.venv/bin/python entry-point/checks/check_app.py apps/helios-collect # 0 errors, 3 warnings
+.venv/bin/python -m audit_agent.cli \
+    inspect apps/helios-collect/agents/helios-collect-audit.yaml
 ```
 
 The three remaining checker warnings are expected and explained in
