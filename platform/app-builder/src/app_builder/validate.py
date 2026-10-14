@@ -598,6 +598,11 @@ def _import_module(module_path: Path, *, timeout: float = 30.0
     bare name (`from book import Book`), which only resolves with the app
     directory as the working root — the same reason `test-all.sh` cds into each
     suite before running it.
+
+    Run with `-B` so no `__pycache__` is written into the directory being
+    validated. `specs/app-builder.md` calls the validator "cheap, side-effect
+    free", and a read-only check that litters bytecode into someone else's app
+    directory is not that — it would also fail outright on a read-only checkout.
     """
     # Resolve FIRST. The subprocess runs with cwd=app_dir, so a relative path
     # handed in by the caller would be resolved a second time against that new
@@ -608,7 +613,7 @@ def _import_module(module_path: Path, *, timeout: float = 30.0
     try:
         import subprocess
         proc = subprocess.run(
-            [sys.executable, "-c", script],
+            [sys.executable, "-B", "-c", script],
             capture_output=True, text=True, timeout=timeout, cwd=str(app_dir),
         )
     except subprocess.TimeoutExpired:

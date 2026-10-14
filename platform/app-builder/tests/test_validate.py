@@ -304,6 +304,24 @@ def test_a_relative_app_path_resolves_correctly(monkeypatch) -> None:
     assert report.errors == [], "\n".join(report.errors)
 
 
+def test_validating_writes_nothing_into_the_app_directory(tmp_path: Path) -> None:
+    """The validator must be side-effect free, including on the directory it reads.
+
+    Importing a module normally writes `__pycache__` next to it. For a validator
+    that means littering bytecode into someone else's app directory — and failing
+    outright on a read-only checkout, which is how CI often mounts a repo.
+    """
+    import shutil
+    shutil.copytree(BROKEN, tmp_path / "app")
+    before = {p.relative_to(tmp_path / "app") for p in (tmp_path / "app").rglob("*")}
+
+    report = validate_app(tmp_path / "app")
+    assert report.exit_code == 1  # it really did validate
+
+    after = {p.relative_to(tmp_path / "app") for p in (tmp_path / "app").rglob("*")}
+    assert after == before, f"validation created: {sorted(after - before)}"
+
+
 # ---------------------------------------------------------------------------
 # Report behaviour
 # ---------------------------------------------------------------------------
