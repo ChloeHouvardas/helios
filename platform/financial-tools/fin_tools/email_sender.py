@@ -77,7 +77,16 @@ class EmailSender:
         return list(self.world.outbox)
 
 
-def register(registry=REGISTRY) -> None:
+def register(registry=REGISTRY, sender: Optional[EmailSender] = None) -> None:
+    """Register the email tools.
+
+    `sender` binds the closures to ONE instance so two bundles in a process
+    cannot cross-talk; see `bind()` for why the fallback is deprecated.
+    """
+
+    def _bound() -> EmailSender:
+        return sender if sender is not None else _instance()
+
     @registry.tool(
         "email.send", "Send an email to a customer/contact. Side-effecting "
         "(visible to a human outside the system).",
@@ -87,7 +96,7 @@ def register(registry=REGISTRY) -> None:
     )
     def _send(to: str, subject: str, body: str,
               template: Optional[str] = None) -> Dict[str, Any]:
-        return _instance().send(to=to, subject=subject, body=body, template=template)
+        return _bound().send(to=to, subject=subject, body=body, template=template)
 
     @registry.tool(
         "email.outbox", "List emails queued by this app. Read-only.",
@@ -95,7 +104,7 @@ def register(registry=REGISTRY) -> None:
         side_effects=False, tags=("email",),
     )
     def _outbox() -> Dict[str, Any]:
-        return {"messages": _instance().outbox()}
+        return {"messages": _bound().outbox()}
 
 
 _INSTANCE: Dict[str, EmailSender] = {}
@@ -106,4 +115,10 @@ def _instance() -> EmailSender:
 
 
 def bind(sender: EmailSender) -> None:
+    """Deprecated: point the module-level singleton at `sender`.
+
+    Process-global state — the last `build_world()` to call this wins and
+    silently redirects every earlier bundle's email dispatch. Pass the instance
+    to `register()` instead.
+    """
     _INSTANCE["email"] = sender

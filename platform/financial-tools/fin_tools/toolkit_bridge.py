@@ -10,7 +10,11 @@ Two shape gaps are closed here, and both fail *silently* if left unadapted:
    field-name/type map. The action side and the audit validator need real JSON
    Schema (``properties``, ``required``, ``additionalProperties``). Without the
    conversion the auditor's argument validation never fires and malformed calls
-   reach execution.
+   reach execution. A tool that already declares a full JSON Schema
+   (``ToolSpec.input_json_schema``, which is what every imported teammate
+   package ships) is passed through **untouched**: converting it via the flat
+   map would drop its enums, ranges and nested structure, and with them the
+   auditor's ability to reject a malformed argument.
 
 2. **Handler calling convention.** `fin_tools` handlers take keyword arguments;
    ``agent_toolkit`` calls ``handler(arguments)`` with a Mapping.
@@ -110,7 +114,9 @@ def as_tool_definitions(
         tools.append(ToolDefinition(
             name=spec.name,
             description=spec.description.strip(),
-            input_schema=to_json_schema(spec.input_schema),
+            # Pass a declared JSON Schema through untouched; convert only when
+            # all the tool gave us is the flat map.
+            input_schema=spec.effective_input_schema(),
             output_schema=to_json_schema(spec.output_schema),
             side_effect=bool(spec.side_effects),
             handler=handler,

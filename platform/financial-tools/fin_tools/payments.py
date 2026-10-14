@@ -114,8 +114,18 @@ class Payments:
 # Registered tool views (the developer interface surface)
 # ---------------------------------------------------------------------------
 
-def register(registry=REGISTRY) -> None:
-    """Register the payment tools. Called by fin_tools.build_world()."""
+def register(registry=REGISTRY, payments: Optional[Payments] = None) -> None:
+    """Register the payment tools. Called by fin_tools.build_world().
+
+    `payments` binds the closures to ONE instance, which is what lets two
+    bundles coexist in a single process. Without it they fall back to the
+    module-level singleton below, and the last `build_world()` to run silently
+    captures every earlier bundle's dispatch. The singleton path still works for
+    callers that `bind()` by hand; it is deprecated, not removed.
+    """
+
+    def _bound() -> Payments:
+        return payments if payments is not None else _payments()
 
     @registry.tool(
         "payments.send", "Send a payment. Side-effecting: requires a verified "
@@ -128,7 +138,7 @@ def register(registry=REGISTRY) -> None:
     def _send(payer: str, payee: str, amount_cents: int, currency: str,
               auth_code: Optional[str] = None,
               idempotency_key: Optional[str] = None, memo: str = "") -> Dict[str, Any]:
-        return _payments().send_payment(
+        return _bound().send_payment(
             payer=payer, payee=payee, amount_cents=amount_cents, currency=currency,
             auth_code=auth_code, idempotency_key=idempotency_key,
             memo=memo or "")
@@ -142,7 +152,7 @@ def register(registry=REGISTRY) -> None:
     )
     def _receive(payer: str, payee: str, amount_cents: int, currency: str,
                  reference: str = "") -> Dict[str, Any]:
-        return _payments().receive_payment(
+        return _bound().receive_payment(
             payer=payer, payee=payee, amount_cents=amount_cents,
             currency=currency, reference=reference or "")
 
@@ -152,7 +162,7 @@ def register(registry=REGISTRY) -> None:
         side_effects=False, tags=("payments",),
     )
     def _balance(account: str) -> Dict[str, int]:
-        return {"balance_cents": _payments().balance(account)}
+        return {"balance_cents": _bound().balance(account)}
 
 
 _INSTANCE: Dict[str, Payments] = {}
@@ -163,4 +173,10 @@ def _payments() -> Payments:
 
 
 def bind(payments: Payments) -> None:
+    """Deprecated: point the module-level singleton at `payments`.
+
+    This is process-global state. A second `build_world()` overwrites it and
+    silently redirects every earlier bundle's tool dispatch — the trap that made
+    the last world built win. Pass the instance to `register()` instead.
+    """
     _INSTANCE["payments"] = payments

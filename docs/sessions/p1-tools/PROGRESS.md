@@ -30,3 +30,34 @@ as SKIP.
 **State:** `scripts/test-all.sh` green. Baseline 607 passed (financial-tools 364,
 audit-agent-builder 79, agent-integration 123, invoice-payer 41),
 action-agent-builder SKIP, `seam check: OK`, 12 tools registered.
+
+## 1. One contract
+
+**Did:** Added `ToolSpec.input_json_schema` (wins over the flat map),
+`tenant_scoped`, `records_contact`, and `effective_input_schema()`; `declare()`
+emits all three. Added `ToolSpec.from_definition()` and `from_teammate()`, both
+accepting `side_effect` singular, both wrapping a `handler(Mapping)` into
+`handler(**kwargs)`, both reporting every contract problem in one pass. Added
+`flat_from_json_schema()` as the lossy summary so existing `input_schema`
+consumers keep working. The bridge now passes a declared JSON Schema through
+untouched and converts only when there is nothing but a flat map. Replaced the
+module-level singleton binding: `payments.register(reg, payments)`,
+`email_sender.register(reg, sender)` and `simulation.register(reg, profiles)`
+take their own instance, and `build_world()` passes it. `bind()` and
+`set_profiles()` stay as deprecated shims. `Bundle` gained `tenant`, `data_dir`
+and `profiles`; added `require_tenant()` in `contracts.py` (not `__init__.py`,
+which would have been a cycle for the Task 3 module).
+
+**Learned:** `set_profiles()` was never called anywhere, so the third singleton
+was already dead weight — the refactor was safe. Only one direct `ToolSpec(...)`
+construction exists (inside the registry decorator), so the new fields could be
+keyword-defaulted without breaking positional callers. `test_registry.py` asserts
+a `<=` subset on `declare()` keys, so adding keys is compatible. `helios_forecast`
+exposes `list_tools()`, so its five real contracts adapt directly rather than
+through fixtures.
+
+**State:** green — 393 passed in financial-tools (364 baseline + 29 new contract
+tests), audit-agent-builder 79, agent-integration 123, invoice-payer 41;
+636 across the four suites. `seam check: OK`; still 12 tools (no new families
+yet). Two worlds in one process verified to keep two ledgers, two outboxes and
+two payer-profile dicts.

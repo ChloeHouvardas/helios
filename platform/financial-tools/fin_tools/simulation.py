@@ -215,8 +215,17 @@ def sandbox_run(world: World, intents, tool: str, **kwargs: Any) -> ShadowReport
                         effects=diff_effects(before, after))
 
 
-def register(registry=REGISTRY) -> None:
-    """Read-only simulation tools exposed to agents."""
+def register(registry=REGISTRY,
+             profiles: Optional[Dict[str, PayerProfile]] = None) -> None:
+    """Read-only simulation tools exposed to agents.
+
+    `profiles` is the dict this bundle's payer profiles live in. Closing over it
+    (rather than reading the module-level `_PROFILES`) is what keeps two worlds
+    in one process from sharing a payer book. Omit it and the deprecated global
+    below is used, which is process-wide.
+    """
+    holder: Dict[str, PayerProfile] = (
+        profiles if profiles is not None else _PROFILES)
 
     @registry.tool(
         "simulation.forecast", "Monte-Carlo cash-in forecast over the invoice "
@@ -231,15 +240,23 @@ def register(registry=REGISTRY) -> None:
                   n_runs: Optional[int] = 200,
                   seed: Optional[int] = 7) -> Dict[str, Any]:
         pol = SimPolicy(**policy) if policy else SimPolicy()
-        res = simulate(invoices, _profiles(), policy=pol,
+        res = simulate(invoices, holder, policy=pol,
                        n_runs=n_runs or 200, seed=seed if seed is not None else 7)
         return {"summary": res.summary, "curve": res.curve()}
 
 
+#: Deprecated process-global payer profiles. `build_world()` no longer uses
+#: this; each bundle carries its own dict. Kept so `set_profiles()` callers
+#: from before the per-bundle change still behave as they did.
 _PROFILES: Dict[str, PayerProfile] = {}
 
 
 def set_profiles(profiles: Dict[str, PayerProfile]) -> None:
+    """Deprecated: set the process-global payer profiles.
+
+    Mutating global state means the last caller wins for every bundle that was
+    built without its own profiles dict. Set `bundle.profiles` instead.
+    """
     _PROFILES.clear()
     _PROFILES.update(profiles)
 
