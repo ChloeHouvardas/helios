@@ -141,3 +141,43 @@ enumerable link id per the p1-tools spec, not the unguessable token; a productio
 cashier URL should use the token. And `simulation.sandbox_run` still has a branch
 for a tool named `email.send_template` that now collides with the real registered
 tool (different signature); no test exercises it, left for a follow-up.
+
+## 4. Forecasting family
+
+**Did:** Added `fin_tools/forecast.py` — the cents↔float boundary over the
+imported `helios_forecast`. Six read-only tools: `forecast.project`,
+`forecast.simulate`, `forecast.scenario`, `forecast.query` (one tool, `query`
+arg selects balance_at/min_balance/first_shortfall/expected_total/
+probability_below), `behavior.profile`, `behavior.promise_rate`. Money is
+integer cents at the tool edge, converted to float only at the engine call via
+`to_engine_units`/`to_cents` (ROUND_HALF_EVEN back). JSON Schemas lifted from
+the teammate's registry shape with every money field retyped to integer cents.
+Documented the D12 `common_shock` symmetry caveat on `forecast.simulate`'s
+description. Re-boded the `simulation.forecast` tool to translate the persona
+invoice book into engine flows and delegate to `forecast.project`/`simulate`,
+keeping its signature and `{summary, curve}` shape; module-level
+`simulate`/`what_if`/`sandbox_run` untouched (their own tests + the shadow
+sandbox depend on them). Added per-day `inflows_cents`/`outflows_cents` to
+`forecast.project` for the cash-in curve.
+
+**Learned:** Conversion MUST be field-specific, never a blind numeric walk — a
+flow mixes money (`amount`, `amount_distribution[i][0]`) with non-money that must
+not be scaled (`offset_days` day counts, `probability`, `resize` factors). Three
+tests pin that a 7-day offset stays 7 days, a 0.5 probability halves not x100s,
+and a 0.5 resize factor halves. The engine tolerates an empty `opening` (accounts
+derive from flows) and `percentile_levels` is generic, so the shim requests
+p10/p50/p90. The persona→flow translation preserves expected value exactly
+(Gaussian delay discretised into offset weights, dispute folded as weighted
+buckets, partial-payer as a near flow + a `probability`-gated deferred
+remainder); the two-instalment case is EV-exact but only approximates the
+correlated original in the tails — noted since the shim is compatibility-only.
+Two of my own test assertions were wrong, not the code: `250_00` is 25000 in
+Python (underscore separator), and percentile bands are seed-invariant over a
+discrete timing distribution at large n_paths (they converge to
+weight-determined thresholds) — replaced the brittle "different seed → different
+percentile" with a proof that shortfall probability is strictly between 0 and 1.
+
+**State:** green — financial-tools 470 passed + 1 skipped (437 + 33 new), 25
+tools registered. `seam check: OK`. Verified all six forecast/behavior tools
+enter `build_validated()` as read-only (none gated), and `simulation.forecast`
+still registered and read-only. Full four-suite run green.
