@@ -82,10 +82,10 @@ The side-effect flag determines whether a call runs directly or goes through the
 
 ## Interfaces to Define Later
 
-- Generated application package format
+- Generated application package format — spec format defined in `specs/app-builder.md`; packaging and hosting still open
 - Agent manifest format
 - Audit agent definitions beyond the deterministic gate
-- Financial tool schemas and permissions (contract shape agreed; individual tools still to be defined)
+- Financial tool schemas and permissions (contract shape agreed; individual tool prototypes live in `platform/financial-tools/`, see its README and `research/README.md`)
 - Knowledge graph read/write interface
 - Shared event format
 - Deployment API and hosting model
