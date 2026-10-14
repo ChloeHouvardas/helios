@@ -1,0 +1,394 @@
+# Audit manifest: Helios Collect
+#
+# THIS FILE IS THE AUDIT AGENT. There is no Python policy in this app — every
+# control below is data that `build_audit_agent()` compiles into deterministic
+# rules. It is written before the action manifest on purpose (BUILD.md step 3):
+# this file is the registry of what may be granted at all, so writing it first
+# makes the mandate the constraint the agent has to fit inside.
+#
+# The mandate, from specs/helios-context.md §"Helios Collect" and specs/build1.md:
+#   1. chase overdue invoices                    -> task collect.reminder
+#   2. negotiate reasonable terms                -> task collect.negotiate_terms
+#   3. direct incoming money to the right place  -> task collect.apply_payment
+#
+# Three properties this manifest is designed around, all traceable to BUILD.md:
+#
+#   * Facts are not claims. Every safety-critical value is resolved from the
+#     app's own store by `facts.py`, never read from the agent's arguments. The
+#     agent gets to NAME an invoice; it never gets to STATE what that invoice says.
+#
+#   * Deny and hold are different decisions. `app.disputed_invoice` and
+#     `app.not_yet_due` DENY, because no owner decision makes them safe. The
+#     rest HOLD, because they might be legitimate and only the owner can tell.
+#     Getting this backwards either floods the queue with unactionable items or
+#     silently permits a bad action.
+#
+#   * The agent has no argument that names a destination account. Money is routed
+#     by app configuration (`config.py`), not by the agent. It cannot misdirect a
+#     payment because there is nothing in the request to misdirect it with. This
+#     is the single strongest control in the app and it is structural, not a rule.
+#
+# Deliberate omission: no `required_arguments` rule duplicating a tool's JSON
+# Schema. `baseline.arguments_validate` already enforces `required`, so a second
+# rule checking the same thing is theatre that makes this file look busier than
+# the policy actually is. Every rule below adds a control the schema cannot express.
+
+manifest_version: "1"
+app_id: helios-collect
+name: Helios Collect Audit Agent
+description: >
+  Governs the agents inside Helios Collect: chasing overdue invoices, agreeing
+  due-date extensions, and applying inbound payments. Reading the invoice book is
+  free. Every contact with a customer, every agreed term and every recorded
+  payment is gated per call against limits resolved from the app's own store.
+
+tools:
+  # --- read-only: these run directly, no gate --------------------------------
+  - name: list_overdue_invoices
+    description: >
+      List the invoices that are overdue right now, oldest first, with customer
+      and amount. Read-only. Use it to decide what to work on; it never tells you
+      anything you may act on without looking the invoice up.
+    side_effect: false
+    input_schema:
+      type: object
+      properties: {}
+      additionalProperties: false
+
+  - name: lookup_invoice
+    description: >
+      Look up one invoice and its customer, including days overdue, days since the
+      customer was last contacted and how many times they were contacted this week.
+      Read-only. Call this before any follow-up so you never invent invoice details.
+    side_effect: false
+    input_schema:
+      type: object
+      properties:
+        invoice_id: { type: string, minLength: 1 }
+      required: [invoice_id]
+      additionalProperties: false
+
+  # --- side-effecting: every call becomes a gated proposal -------------------
+  - name: send_email
+    description: >
+      Send an email to a customer about an invoice, optionally offering a due-date
+      extension. Side effect: it contacts a human outside the system, which is the
+      threshold that matters for gating. Reviewed against the mandate before it
+      executes. If rejected, read the reason and adjust; if held, the run pauses
+      for the owner. Do not reword and retry a held or denied call.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        customer_id:
+          type: string
+          description: Customer identifier, e.g. CUST-001.
+        invoice_id:
+          type: string
+          description: The invoice the email is about.
+        subject:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Email subject line.
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: >
+            Email body. Professional, courteous, short. Reference the invoice
+            number, amount and due date exactly as lookup_invoice returned them.
+        extension_offer_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: >
+            Optional: offer the customer a due-date extension of this many days.
+            Only offer when the customer asked for more time. Stay within your
+            mandate; anything longer than the cap goes to the owner.
+      required: [customer_id, invoice_id, subject, body]
+      additionalProperties: false
+
+  - name: record_agreed_extension
+    description: >
+      Record that the customer agreed to a due-date extension, move the invoice's
+      due date, and publish the new terms to the shared knowledge graph so other
+      Helios apps (such as the cash planner) forecast against the real date.
+      Side effect: it changes the ledger and publishes shared state.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        invoice_id:
+          type: string
+          minLength: 1
+          description: The invoice the agreed extension applies to.
+        extension_days:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: >
+            The number of days agreed with the customer, counted from the
+            invoice's current due date.
+        terms_note:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: >
+            Plain-language record of what was agreed and why, for the owner and
+            for the audit log. Must reflect what the customer actually said.
+      required: [invoice_id, extension_days, terms_note]
+      additionalProperties: false
+
+  - name: record_inbound_payment
+    description: >
+      Record that money arrived from a customer against an invoice, and mark the
+      invoice paid. Side effect: it moves the ledger. The destination account is
+      NOT an argument — app configuration decides where inbound money lands, so
+      this tool cannot be used to send funds somewhere else.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        invoice_id:
+          type: string
+          minLength: 1
+          description: The invoice this payment settles.
+        amount_cents:
+          type: integer
+          minimum: 1
+          description: >
+            Integer cents actually received. Money is never a float. May not
+            exceed the recorded invoice amount, which is resolved from the ledger.
+        currency:
+          type: string
+          enum: [CNY, USD, EUR, GBP]
+        reference:
+          type: string
+          maxLength: 120
+          description: >
+            The bank reference or remittance advice the payment arrived with.
+            Include it verbatim; do not invent one.
+      required: [invoice_id, amount_cents, currency]
+      additionalProperties: false
+
+tasks:
+  collect.reminder:
+    description: >
+      Follow up with a customer about an invoice that is overdue, and offer a
+      short extension when they asked for more time.
+    allowed_tools: [list_overdue_invoices, lookup_invoice, send_email]
+    # A grant is authority to act now, not a standing capability.
+    ttl_seconds: 300
+
+  collect.negotiate_terms:
+    description: >
+      Agree revised payment terms with a customer who asked for more time, and
+      record them so the rest of the business forecasts against the real date.
+    allowed_tools: [lookup_invoice, send_email, record_agreed_extension]
+    ttl_seconds: 300
+
+  collect.apply_payment:
+    description: >
+      Apply an inbound payment to the invoice it settles and mark that invoice paid.
+    allowed_tools: [lookup_invoice, record_inbound_payment]
+    # Money movement gets the shortest lifetime: long enough to apply one
+    # payment, not long enough to sit around unused.
+    ttl_seconds: 120
+
+rules:
+  # ---------------------------------------------------------------------------
+  # Mandate 1: chasing. A customer may not be hounded, and an agent may not
+  # chase someone who is not late, or who is disputing the work.
+  # ---------------------------------------------------------------------------
+
+  # At most two contacts per customer in any rolling 7-day window, counted from
+  # trusted store history. An agent cannot lower this number by describing the
+  # customer as untouched: the count is resolved by the fact source, and an
+  # unresolvable count denies rather than defaulting to zero.
+  - id: app.contact_frequency
+    description: At most two contacts per customer in any 7-day window
+    task_types: [collect.reminder, collect.negotiate_terms]
+    tools: [send_email]
+    message: >
+      this customer has already been contacted twice in the last 7 days; stop and
+      tell the owner rather than chasing harder
+    max_contacts_in_days:
+      within_days: 7
+      max: 2
+    severity: warn
+
+  # Not due yet: DENY, not hold. Chasing a customer before an invoice falls due
+  # damages the relationship and no owner decision makes it appropriate. Due-ness
+  # is computed from the store's own clock, so an agent cannot claim an invoice is
+  # overdue when the ledger says it is not.
+  - id: app.not_yet_due
+    description: Never chase a customer about an invoice that is not due yet
+    task_types: [collect.reminder, collect.negotiate_terms]
+    tools: [send_email]
+    message: >
+      this invoice is not due yet; there is nothing to chase and contacting the
+      customer early would be inappropriate
+    deny_if_fact_true: [not_yet_due]
+    severity: critical
+
+  # Disputed work: DENY. A collections reminder sent into an open dispute makes
+  # the situation worse, and there is no version of it an owner should approve
+  # from a queue — the dispute has to be resolved first, out of band. This is the
+  # deny-vs-hold distinction BUILD.md asks you to decide deliberately.
+  - id: app.disputed_invoice
+    description: Never send a collections reminder on a disputed invoice
+    task_types: [collect.reminder, collect.negotiate_terms]
+    tools: [send_email]
+    message: >
+      this invoice is disputed; collections contact is refused until the owner
+      resolves the dispute
+    deny_if_fact_true: [invoice_disputed]
+    severity: critical
+
+  # Large invoices go to the owner even for a plain reminder. The amount is a
+  # FACT resolved from the store, so understating it in the email body cannot
+  # slip an invoice under the threshold — the rule never reads the body.
+  - id: app.large_invoice_approval
+    description: Owner approval before contacting a customer about an invoice over 10,000
+    task_types: [collect.reminder, collect.negotiate_terms]
+    tools: [send_email]
+    message: this invoice is over 10,000.00 and needs owner approval before contact
+    limits:
+      - fact: amount_due
+        max: "10000.00"
+        on_exceed: hold
+
+  # ---------------------------------------------------------------------------
+  # Mandate 2: negotiating terms. The agent may agree a short extension on its
+  # own authority. Anything longer, or anything that deepens an already
+  # over-exposed customer, is the owner's call.
+  # ---------------------------------------------------------------------------
+
+  # The agent's own authority, expressed twice on purpose: once on the offer and
+  # once on the record of what was agreed. Capping only the offer would let an
+  # agent promise 10 days by email and then record 60. Both sides are checked
+  # against the same ceiling.
+  #
+  # `on_exceed: hold`, not `clamp: true`. Clamping would silently send the
+  # customer a different number than the agent wrote in the email body, which is
+  # worse than asking a human. Note also that rules evaluate the agent's ORIGINAL
+  # request independently, so a clamp here would not reduce what the large-invoice
+  # rule sees — declaring both would be dead config, and AuditManifest refuses it.
+  - id: app.extension_offer_limit
+    description: Owner approval for any extension offered longer than 14 days
+    task_types: [collect.reminder, collect.negotiate_terms]
+    tools: [send_email]
+    message: an extension longer than 14 days needs owner approval
+    limits:
+      - argument: extension_offer_days
+        max: 14
+        on_exceed: hold
+
+  - id: app.extension_record_limit
+    description: Owner approval for any agreed extension longer than 14 days
+    task_types: [collect.negotiate_terms]
+    tools: [record_agreed_extension]
+    message: recording an extension longer than 14 days needs owner approval
+    limits:
+      - argument: extension_days
+        max: 14
+        on_exceed: hold
+
+  # Fact measured against another fact. Neither side of this comparison comes
+  # from the agent: total outstanding and the credit limit are both resolved from
+  # the store. Extending terms is extending credit, and agreeing to extend credit
+  # to a customer who is already over their limit is a credit decision, not a
+  # collections one. Units are integer cents on both sides, because comparing
+  # cents against a decimal ceiling would exceed on every single call.
+  - id: app.extension_over_credit_limit
+    description: Owner approval to extend terms for a customer over their credit limit
+    task_types: [collect.negotiate_terms]
+    tools: [record_agreed_extension]
+    message: >
+      this customer is already over their credit limit; extending their terms is a
+      credit decision and needs owner approval
+    limits:
+      - fact: outstanding_cents
+        max_from_fact: credit_limit_cents
+        on_exceed: hold
+    severity: warn
+
+  # A disputed invoice may not be re-termed either. Recording an extension
+  # implies the customer accepts the debt, which is exactly what is in dispute.
+  - id: app.disputed_extension
+    description: Never record agreed terms on a disputed invoice
+    task_types: [collect.negotiate_terms]
+    tools: [record_agreed_extension]
+    message: >
+      this invoice is disputed; recording agreed terms would imply the customer
+      accepts a debt they are contesting
+    deny_if_fact_true: [invoice_disputed]
+    severity: critical
+
+  # ---------------------------------------------------------------------------
+  # Mandate 3: directing money. The control that matters most in this app.
+  # ---------------------------------------------------------------------------
+
+  # The shape that matters most in finance: an argument measured against a fact
+  # ceiling. The agent chooses `amount_cents`; the ceiling
+  # (`invoice_amount_cents`) is resolved from the ledger. Neither side of the
+  # comparison is under the agent's control, so an agent cannot inflate what it
+  # claims arrived.
+  #
+  # Know which direction this guards, because it only guards one. A ceiling on an
+  # argument catches OVER-recording — claiming 20,000 arrived on a 12,500 invoice,
+  # which would wrongly mark the invoice paid and hide the shortfall. It does not
+  # catch under-recording: applying 1.00 against a 12,500 invoice is inside the
+  # ceiling and this rule allows it. That is not a defect, it is the wrong rule for
+  # that threat. Under-recording is handled by `apply_partial`, which leaves the
+  # invoice part-paid rather than settled, so a shortfall stays visible on the
+  # dashboard instead of being quietly closed. See tests/test_controls.py.
+  - id: app.payment_exceeds_amount_due
+    description: A recorded payment may not exceed the recorded invoice amount
+    task_types: [collect.apply_payment]
+    tools: [record_inbound_payment]
+    message: >
+      the payment exceeds the recorded invoice amount; check the reference before
+      applying it
+    limits:
+      - argument: amount_cents
+        max_from_fact: invoice_amount_cents
+        on_exceed: hold
+    severity: critical
+
+  # An inbound payment is only ever recorded against a real, known invoice. This
+  # is what makes the fact ceiling above resolvable at all: without `invoice_id`
+  # there is no subject, no fact, and every fact-bound rule fails closed. Making
+  # the requirement explicit turns that failure into a readable owner message.
+  - id: app.payment_requires_invoice
+    description: An inbound payment must name the invoice it settles
+    task_types: [collect.apply_payment]
+    tools: [record_inbound_payment]
+    message: a payment must be recorded against a specific invoice
+    required_arguments: [invoice_id, amount_cents, currency]
+    severity: critical
+
+  # A disputed invoice may not be marked settled by an agent. Whether a payment
+  # resolves a dispute is a judgement for the owner, not a ledger entry.
+  - id: app.disputed_payment
+    description: Owner approval to apply a payment against a disputed invoice
+    task_types: [collect.apply_payment]
+    tools: [record_inbound_payment]
+    message: >
+      this invoice is disputed; applying a payment to it may close a dispute the
+      owner has not resolved
+    approval_if_fact_true: [invoice_disputed]
+    severity: warn
+
+settings:
+  default_ttl_seconds: 300
+  contact_window_days: 7
+  log_path: helios-collect-audit-log.jsonl
+  # `heuristic` is deterministic and always available. `qwen` would append model
+  # commentary for a human reviewer and can never change a verdict; it is off
+  # here so the demo runs with no API key and no network.
+  advisory: [heuristic]
+  # Never ship this as true. A local run sets HELIOS_AUDIT_SIGNING_KEY; without
+  # one, agent_integration generates an ephemeral key so grants are still signed.
+  allow_unsigned_grants: false
