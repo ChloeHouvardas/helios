@@ -1,0 +1,1 @@
+YOU NEED TO ADD THE GLM-5.3 API KEY IN A .env INSIDE OF /platform
