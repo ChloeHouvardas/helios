@@ -1,0 +1,8 @@
+﻿invoice_id,customer,amount_cents,due_date,contact_email,status
+INV-1001,acme,250000,2026-10-10,ap@acme.example,open
+INV-1002,acme,120000,2026-10-24,ap@acme.example,open
+INV-1003,borealis,480000,2026-10-17,finance@borealis.example,open
+INV-1004,borealis,95000,2026-11-07,finance@borealis.example,open
+INV-1005,cinder,310000,2026-10-20,bills@cinder.example,open
+INV-1006,cinder,75000,2026-09-30,bills@cinder.example,overdue
+INV-1007,delta-mills,640000,2026-11-14,accounts@delta.example,open
