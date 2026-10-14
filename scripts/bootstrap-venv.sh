@@ -49,15 +49,17 @@ echo "== upgrading pip / setuptools / wheel"
 "$PY" -m pip install --upgrade pip setuptools wheel >/dev/null
 
 # --- first-party packages, editable ----------------------------------------
-# Order matters only for readability; pip resolves the graph. These four are the
+# Order matters only for readability; pip resolves the graph. These five are the
 # whole tracked platform: the action agent toolkit, the standalone audit agent,
-# the integration layer that imports both, and the financial tools.
+# the integration layer that imports both, the financial tools, and the
+# deployment engine.
 echo "== installing first-party packages (editable)"
 "$PY" -m pip install \
   -e platform/action-agent-builder \
   -e platform/audit-agent-builder \
   -e platform/agent-integration \
-  -e platform/financial-tools
+  -e platform/financial-tools \
+  -e platform/deployment
 
 # --- third-party, pinned ---------------------------------------------------
 echo "== installing pinned dependencies from requirements-dev.txt"
@@ -68,7 +70,16 @@ echo "== verifying imports"
 "$PY" - <<'EOF'
 import importlib
 
-for module in ("agent_toolkit", "audit_agent", "agent_integration", "fin_tools"):
+# `engine` is the deployment engine. Importing it creates
+# platform/deployment/.helios-run/tenants/ at module scope (see
+# engine/orchestrator.py), which is a gitignored runtime directory.
+for module in (
+    "agent_toolkit",
+    "audit_agent",
+    "agent_integration",
+    "fin_tools",
+    "engine",
+):
     importlib.import_module(module)
     print(f"   ok {module}")
 EOF
