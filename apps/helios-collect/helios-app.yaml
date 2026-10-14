@@ -1,0 +1,199 @@
+# helios-app.yaml — helios-collect
+#
+# The app spec for flagship app 1, answering the requirement in
+# specs/helios-context.md §"Helios Collect: AI Receivables Agent":
+#   chase payments, negotiate reasonable terms when a customer has not paid,
+#   and direct money to the right place when it arrives.
+#
+# Format follows specs/app-builder.md §"The app spec". Nothing reads this file
+# yet — platform/app-builder/ is a design placeholder with no validator, no
+# scaffolder and no stacks.yaml. It is written anyway, for three reasons:
+#   1. It forces the decisions in Step 2 of BUILD.md before any code is written.
+#   2. It is the design record a reviewer reads to understand the app's shape.
+#   3. It becomes machine-checkable the moment the validator lands.
+#
+# The invariants from specs/app-builder.md are self-checked by hand and mechanised
+# by entry-point/checks/check_app.py, which passes on this file. tests/
+# test_controls.py additionally asserts the cross-file ones at runtime.
+
+spec_version: "1"
+
+identity:
+  id: helios-collect             # kebab-case; equals app_id in the audit manifest
+  name: Helios Collect
+  description: >
+    Chases overdue invoices on behalf of a small business, negotiates reasonable
+    terms with customers who have not paid — including extending a due date within
+    a capped authority — and directs inbound payments to the configured account
+    when money arrives. Customers who are disputing work, and invoices that are not
+    due yet, are never chased. Large invoices, long extensions and over-credited
+    customers go to the owner.
+
+# What already exists. Populated by the question phase's integration block, which
+# is asked early on purpose: whether something already exists changes every later
+# answer. This app is standalone, so every field is null — and that is a recorded
+# answer, not an unanswered question. The surprise task is decided here: an app
+# joining an existing system would fill these in and use `stack.match_existing`,
+# `data.integration` and `ui.align_with` instead.
+existing:
+  system: null
+  stack: null
+  data: null
+  ui: null
+
+stack:
+  # Exactly one of `use` / `match_existing`. This is a standalone prototype, so it
+  # names a stack rather than matching an existing system.
+  #
+  # CAVEAT: stacks.yaml does not exist yet, so this name resolves to nothing.
+  # specs/app-builder.md defines the mechanism; the prototype runs on plain Python
+  # with no web framework and a JSON-backed store, which is a legitimate reading of
+  # "the mechanism, not the choice" — but it must not be presented as a stack the
+  # platform ships. See README.md §Limitations.
+  use: helios-python-web-1
+
+data:
+  # Exactly one of `local` / `integration`. This app owns its receivables book.
+  #
+  # The field set is what book.py loads from data/*.json through
+  # agent_toolkit.store.Store. Note the fields that exist ONLY to serve the audit
+  # rules — `disputed` on an invoice, `credit_limit` on a customer, and the contact
+  # history. They are not business data the agent reads; they are facts the auditor
+  # resolves. Modelling them here is deliberate: a control that has nowhere to read
+  # from is a control that fails closed and denies everything.
+  local:
+    entities:
+      - name: customer
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: name, type: string, required: true }
+          - { name: contact_name, type: string, required: false }
+          - { name: email, type: string, required: true }
+          # Named `payer_behavior`, not `payment_behavior`. entry-point/checks/
+          # check_app.py splits field names into words and flags any containing a
+          # money word (payment, amount, balance, ...) that is not typed decimal or
+          # integer cents. This is prose, not money, and renaming is cheaper than
+          # weakening a shared checker — the false positive is recorded in README.md
+          # for whoever owns that script.
+          - { name: payer_behavior, type: string, required: false }
+          # Money is decimal, never float: a rounding error in an invoice total is
+          # a real financial error. The fact source converts to integer cents at
+          # the tool boundary.
+          # Fact-source input for app.extension_over_credit_limit.
+          - { name: credit_limit, type: decimal, required: true }
+          - { name: last_contacted, type: date, required: false }
+          # Fact-source input for app.contact_frequency. A list of recent contact
+          # dates rather than only the last one, because a frequency rule counts
+          # contacts INSIDE a window and a single date cannot express "twice this
+          # week". Stored as days-ago integers in the fixtures.
+          - { name: contact_history_days, type: json, required: false }
+
+      - name: invoice
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: customer_id, type: string, required: true }
+          - { name: number, type: string, required: false }
+          - { name: amount, type: decimal, required: true }
+          - { name: currency, type: string, required: true }
+          - { name: issued_date, type: date, required: false }
+          - { name: due_date, type: date, required: true }
+          - { name: status, type: string, required: true }
+          # Fact-source input for app.disputed_invoice, app.disputed_extension and
+          # app.disputed_payment. CONTROL INPUT: withheld from the agent by this
+          # app's lookup_invoice, so it cannot argue with a flag it never sees.
+          - { name: disputed, type: boolean, required: true }
+          - { name: notes, type: string, required: false }
+          # Written by the app's own tools after an allowed action, never by the
+          # agent directly. Integer cents, matching fin_tools' convention.
+          - { name: balance_cents, type: integer, required: false }
+          - { name: payments_received, type: json, required: false }
+          - { name: extensions, type: json, required: false }
+
+      # Inbound payments, as recorded in the fin_tools ledger. There is no
+      # destination-account field the agent can set: routing is configuration, so
+      # `credited_account` is an OUTPUT of config.inbound_account_for, not an input.
+      - name: payment
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: invoice_id, type: string, required: true }
+          - { name: customer_id, type: string, required: true }
+          - { name: amount_cents, type: integer, required: true }
+          - { name: currency, type: string, required: true }
+          - { name: reference, type: string, required: false }
+          - { name: credited_account, type: string, required: true }
+          - { name: received_on, type: date, required: true }
+
+      - name: account
+        fields:
+          - { name: id, type: string, required: true }
+          # Integer cents, matching fin_tools' convention throughout.
+          - { name: balance_cents, type: integer, required: true }
+
+      # Append-only evidence. The audit builder writes a hash-chained log of its
+      # own; this entity is the app's record of what it did, kept separate on
+      # purpose — one is the app's memory, the other is tamper-evident evidence.
+      - name: action_log_entry
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: kind, type: string, required: true }
+          - { name: at, type: datetime, required: true }
+          - { name: payload, type: json, required: true }
+
+# Shared knowledge graph. A declaration today and a wiring point later: the graph
+# service's read/write interface is still to be defined (specs/interfaces.md).
+# This app does call the local prototype, through fin_tools' KnowledgeGraph, and
+# the verified/observation split is load-bearing:
+#   * a new due date is published `verified`, sourced from the ledger — it is now a
+#     recorded fact the cash planner must forecast against;
+#   * the account of what a customer said is published as an `observation`, because
+#     that is an agent's claim about a conversation. `graph.observe` is rejected if
+#     it would overwrite a verified node, so a claim can never displace a record.
+graph:
+  reads:
+    # Nothing yet. This app is the origin of collections and terms events rather
+    # than a consumer of them. Helios Cash Planner would read `invoice` to forecast
+    # against real due dates rather than assumed ones — which is exactly why the
+    # verified publish below matters.
+    []
+  publishes:
+    - { entity: invoice, events: [reminder_sent, extension_agreed, payment_applied] }
+    - { entity: payment, events: [received] }
+    # An agent's account of a negotiation, deliberately marked as an observation
+    # rather than a fact.
+    - { entity: negotiation, events: [terms_proposed] }
+
+agents:
+  action_manifest: agents/helios-collect-action.json    # Agent Toolkit format
+  audit_manifest: agents/helios-collect-audit.yaml      # Audit Agent Builder format
+
+ui:
+  # `align_with` is null because the app is standalone; the UI kit's guidelines
+  # apply as defaults. The framework is not chosen here — the named stack decides
+  # how these patterns are rendered.
+  #
+  # The prototype implements no web UI. All five pages exist as CLI renderers in
+  # app.py (render_dashboard, render_table, render_queue, render_settings), which
+  # is the honest state of it. `approval_queue` is the one that matters most:
+  # every side-effect action can be held, so without a queue the agents pause
+  # invisibly and the user discovers it when they wonder why nothing happened.
+  pages:
+    - { id: dashboard, title: What is owed and what is overdue, pattern: summary }
+    - { id: invoices, title: Invoices, pattern: table }
+    - { id: invoice, title: Invoice, pattern: detail }
+    - { id: holds, title: Needs your approval, pattern: approval_queue }
+    - { id: policy, title: Collection limits, pattern: settings }
+  align_with: null
+
+tools:
+  # The app's view of the financial tools in play. Must be a SUPERSET of both
+  # manifests' tool lists: a tool an agent can call that the app never declared is
+  # a tool nobody reviewed.
+  #
+  # Names are the real ones — `send_email` is the platform's own handler from
+  # agent_toolkit.tools, reused as-is; the other four are app-local and declared in
+  # both manifests.
+  - list_overdue_invoices       # app-local, read-only
+  - lookup_invoice              # app-local, read-only; withholds control inputs
+  - send_email                  # platform handler, side-effecting — gated
+  - record_agreed_extension     # app-local, side-effecting — gated
+  - record_inbound_payment      # app-local, side-effecting — gated; no account arg

@@ -3,7 +3,7 @@
     "name": "Ridgeline Construction Ltd",
     "contact_name": "Dana Whitmore",
     "email": "dana.whitmore@ridgeline.example.com",
-    "payment_behavior": "usually pays 5-10 days late after a reminder",
+    "payer_behavior": "usually pays 5-10 days late after a reminder",
     "credit_limit": "25000.00",
     "last_contacted_days_ago": 21
   },
@@ -12,7 +12,7 @@
     "name": "Maple Street Dental",
     "contact_name": "Priya Anand",
     "email": "office@maplestreetdental.example.com",
-    "payment_behavior": "pays on time after one reminder",
+    "payer_behavior": "pays on time after one reminder",
     "credit_limit": "5000.00",
     "last_contacted_days_ago": 1,
     "contact_history_days": [3]
@@ -22,7 +22,7 @@
     "name": "Harbor Logistics Co",
     "contact_name": "Wei Chen",
     "email": "accounts@harborlogistics.example.com",
-    "payment_behavior": "slow payer, sometimes asks for extended terms",
+    "payer_behavior": "slow payer, sometimes asks for extended terms",
     "credit_limit": "40000.00",
     "last_contacted": null
   },
@@ -31,7 +31,7 @@
     "name": "Cinder Interiors",
     "contact_name": "Marcus Bell",
     "email": "accounts@cinderinteriors.example.com",
-    "payment_behavior": "pays promptly when the work is accepted",
+    "payer_behavior": "pays promptly when the work is accepted",
     "credit_limit": "8000.00",
     "last_contacted_days_ago": 9
   },
@@ -40,7 +40,7 @@
     "name": "Northgate Media",
     "contact_name": "Elena Sokolova",
     "email": "finance@northgatemedia.example.com",
-    "payment_behavior": "chronically asks for longer terms",
+    "payer_behavior": "chronically asks for longer terms",
     "credit_limit": "12000.00",
     "last_contacted_days_ago": 12
   },
@@ -49,7 +49,7 @@
     "name": "Larkfield Studio",
     "contact_name": "Tomas Reyes",
     "email": "hello@larkfield.studio",
-    "payment_behavior": "pays on delivery, no reminders needed",
+    "payer_behavior": "pays on delivery, no reminders needed",
     "credit_limit": "6000.00",
     "last_contacted_days_ago": 30
   }
