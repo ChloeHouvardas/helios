@@ -1,4 +1,4 @@
-"""The model driver: GLM proposes, code still decides.
+"""The model driver: Qwen proposes, code still decides.
 
 Kept in its own module so importing the runtime never imports an HTTP client
 or a model SDK. Everything else in this package runs offline against
@@ -6,17 +6,23 @@ or a model SDK. Everything else in this package runs offline against
 
 Provider
 --------
-GLM-5.3 over the OpenAI-compatible Chat Completion protocol. Verified against
-the published contract, and three details there are load-bearing:
+Qwen over DashScope's OpenAI-compatible Chat Completion endpoint. Competition
+rule: Qwen is the only generative model allowed here. Three details of that
+contract are load-bearing:
 
-- Auth is a **plain Bearer token**. GLM-5.3 no longer accepts the legacy
-  JWT-shaped key, so nothing here signs or encodes the token — it is sent as
-  given.
-- ``thinking`` cannot be disabled on GLM-5.3. ``reasoning_effort`` picks the
-  depth (``low`` / ``high`` / ``max``, default ``max``). A request that sends
-  ``thinking.type: "disabled"`` fails outright.
-- ``tool_choice`` only accepts ``"auto"``, and ``temperature`` is capped at
-  ``1.0`` — not the ``2.0`` an OpenAI-shaped client would assume.
+- Auth is a **plain Bearer token**. Nothing here signs or encodes it; it is
+  sent exactly as given.
+- ``enable_thinking`` is a **DashScope extension**, not an OpenAI field. It is
+  sent as a top-level body parameter (what the OpenAI SDK calls
+  ``extra_body``), and only for hybrid reasoning models — identified here by a
+  ``qwen3`` model id. Those models default to thinking mode and reject a
+  non-streaming request while it is on, so it is turned off explicitly. A
+  non-hybrid model must not be sent the field at all: an endpoint that does not
+  know the parameter rejects an unknown one, and an endpoint that does would
+  change behaviour for a model that never had it.
+- ``tool_choice`` is sent as ``"auto"``, and ``stream`` stays ``False`` so one
+  request is one complete reply — the runtime adjudicates each side effect
+  before the next turn, which a streaming parse would complicate for no gain.
 
 Stdlib HTTP only, matching the house style of ``audit_agent.transport``: no
 SDK to install, no transitive dependency tree, and the request is visible in
@@ -51,21 +57,44 @@ from .runtime import ToolCall
 #: rather than a constant because a competition or enterprise gateway will
 #: issue its own endpoint, and a token shaped like a gateway token will not
 #: authenticate against the public one.
-DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
-DEFAULT_MODEL = "glm-5.3"
-DEFAULT_REASONING_EFFORT = "high"
+DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+DEFAULT_MODEL = "qwen3.8-max"
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
-#: Accepted names for the token, in priority order. ``LLM_API_TOKEN`` matches
-#: how the competition labels the credential.
+#: Accepted names for the token, in priority order. ``HELIOS_LLM_API_KEY`` is
+#: this repo's own name and always wins. ``DASHSCOPE_API_KEY`` is the vendor's
+#: name. ``OPENAI_API_KEY`` is last because Qwen Code sets ``OPENAI_API_KEY``
+#: and ``OPENAI_BASE_URL`` in the environment, and honouring them means a
+#: developer who has already configured Qwen Code needs no second setup — but
+#: an explicitly Helios or DashScope key must still take precedence.
 TOKEN_ENV_VARS: tuple[str, ...] = (
     "HELIOS_LLM_API_KEY",
-    "LLM_API_TOKEN",
-    "GLM_API_KEY",
-    "ZHIPUAI_API_KEY",
     "DASHSCOPE_API_KEY",
+    "OPENAI_API_KEY",
 )
+
+#: Environment fallbacks for the base URL, after ``HELIOS_LLM_BASE_URL``.
+#: ``OPENAI_BASE_URL`` is honoured for the same reason as ``OPENAI_API_KEY``.
+BASE_URL_ENV_VARS: tuple[str, ...] = (
+    "HELIOS_LLM_BASE_URL",
+    "OPENAI_BASE_URL",
+)
+
+#: Model ids that are hybrid reasoning models and therefore need
+#: ``enable_thinking`` sent explicitly. Matched as a substring of the model id,
+#: lowercased.
+HYBRID_THINKING_PREFIX = "qwen3"
+
+
+def _is_hybrid_thinking_model(model: str) -> bool:
+    """True for a model that has a thinking mode to switch off.
+
+    The qwen3 family are hybrid: thinking is on by default, and a non-streaming
+    request with it on is rejected. Everything else must not be sent the field
+    at all — see the module docstring.
+    """
+    return HYBRID_THINKING_PREFIX in model.lower()
 
 #: What the model is told about the gate. Worth including: an agent that
 #: understands its denials adjusts; one that does not just retries.
@@ -139,18 +168,21 @@ class ModelDriver:
         model: str | None = None,
         base_url: str | None = None,
         token: str | None = None,
-        reasoning_effort: str | None = None,
         max_tokens: int | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        self.model = model or _env("HELIOS_LLM_MODEL", DEFAULT_MODEL)
+        self.model = (
+            model
+            or _env("HELIOS_LLM_MODEL", "")
+            or _env("OPENAI_MODEL", "")
+            or DEFAULT_MODEL
+        )
         self.base_url = (
             base_url
-            or _env("HELIOS_LLM_BASE_URL", DEFAULT_BASE_URL)
+            or _env(BASE_URL_ENV_VARS[0], "")
+            or _env(BASE_URL_ENV_VARS[1], "")
+            or DEFAULT_BASE_URL
         ).rstrip("/")
-        self.reasoning_effort = reasoning_effort or _env(
-            "HELIOS_LLM_REASONING_EFFORT", DEFAULT_REASONING_EFFORT
-        )
         self.max_tokens = max_tokens or _env_int(
             "HELIOS_LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS
         )
@@ -183,16 +215,19 @@ class ModelDriver:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": self._messages(instructions, history),
-            # GLM-5.3 always thinks; the only knob is how hard.
-            "thinking": {"type": "enabled"},
-            "reasoning_effort": self.reasoning_effort,
             "max_tokens": self.max_tokens,
             "stream": False,
         }
+        if _is_hybrid_thinking_model(self.model):
+            # A qwen3 hybrid model defaults to thinking mode and refuses a
+            # non-streaming request while it is on, so turn it off explicitly.
+            # For any other model id, send neither thinking field: an endpoint
+            # that does not know the parameter rejects an unknown one.
+            payload["enable_thinking"] = False
         functions = [tool_function(tool) for tool in tools]
         if functions:
             payload["tools"] = functions
-            # The endpoint documents "auto" as the only supported value.
+            # "auto" is the only value this endpoint documents.
             payload["tool_choice"] = "auto"
 
         data = self._post("/chat/completions", payload)
@@ -418,8 +453,10 @@ def parse_arguments(arguments: Any) -> dict[str, Any]:
 def text_of(message: Mapping[str, Any]) -> str:
     """The visible answer, ignoring the reasoning trace.
 
-    GLM-5.3 returns ``reasoning_content`` alongside ``content``. The trace is
-    not the answer, so it is never treated as one.
+    A Qwen hybrid model returns ``reasoning_content`` alongside ``content``
+    when it thinks. The trace is not the answer, so it is never treated as one
+    — otherwise a run would end on the model's deliberation instead of its
+    reply.
     """
     content = message.get("content")
     if isinstance(content, str):
@@ -461,6 +498,7 @@ def _safe_error_body(exc: urllib.error.HTTPError) -> str:
 
 
 __all__ = [
+    "BASE_URL_ENV_VARS",
     "DEFAULT_BASE_URL",
     "DEFAULT_MODEL",
     "GATE_NOTICE",

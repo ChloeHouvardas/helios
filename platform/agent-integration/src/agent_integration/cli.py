@@ -2,14 +2,15 @@
 
     agent-integration doctor               # is the model reachable? run this first
     agent-integration demo                 # offline, all five scenarios
-    agent-integration run --task "..."     # GLM-5.3, interactive approvals
+    agent-integration run --task "..."     # Qwen via DashScope, interactive approvals
     agent-integration run --offline ...    # scripted, no token needed
     agent-integration inspect              # what does the auditor govern
     agent-integration manifest --out X     # generate the audit YAML
     agent-integration selfcheck            # do the two packages still agree
 
 Everything works with no token at all. ``run`` uses a scripted driver when
-``--offline`` is given or no token is configured, and GLM-5.3 otherwise.
+``--offline`` is given or no token is configured, and Qwen (DashScope's
+OpenAI-compatible endpoint) otherwise.
 
 Exit codes are meaningful for CI: 0 ran, 1 config or connectivity, 2 refused
 (the auditor granted no authority), 3 held with nobody to decide, 4 the run
@@ -383,7 +384,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     setting is wrong if it fails. No tools are offered, so it cannot trigger a
     side effect and never touches the auditor.
     """
-    from .model_driver import ModelDriver, ModelError, api_key_present, resolve_token, token_env_var_name
+    from .model_driver import (
+        TOKEN_ENV_VARS,
+        ModelDriver,
+        ModelError,
+        api_key_present,
+        resolve_token,
+        token_env_var_name,
+    )
 
     print("model connectivity check")
     print("-" * 60)
@@ -391,7 +399,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     driver = ModelDriver(
         model=args.model,
         base_url=base_url or None,
-        reasoning_effort="low",  # cheapest setting; this is a ping, not a task
+        # A ping, not a task: keep the reply short and cheap.
         max_tokens=64,
     )
     print(f"  model          : {driver.model}")
@@ -402,8 +410,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if not token:
         print(f"\nFAILED: no token is set.")
         print(
-            f"  Copy .env.example to .env and set one of HELIOS_LLM_API_KEY / "
-            f"LLM_API_TOKEN, then re-run this command."
+            f"  Copy .env.example to .env and set one of "
+            f"{' / '.join(TOKEN_ENV_VARS)}, then re-run this command."
         )
         return EXIT_USAGE
     # Show only the shape, never the value.
