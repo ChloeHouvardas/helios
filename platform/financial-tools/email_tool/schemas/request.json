@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EmailSenderRequest",
+  "description": "Request accepted by the email sender tool. Sending an email has side effects, so in Helios this tool is only invoked through the audit gate.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["template_id", "to", "variables", "invoice_ref", "tenant_id"],
+  "properties": {
+    "template_id": {
+      "type": "string",
+      "enum": [
+        "invoice_delivery",
+        "reminder_pre_due",
+        "notice_overdue",
+        "negotiation_offer",
+        "escalate_to_owner"
+      ],
+      "description": "Which email template to render and send."
+    },
+    "to": {
+      "type": "string",
+      "format": "email",
+      "description": "Email address of the recipient (the customer for invoice_delivery, reminder_pre_due, notice_overdue and negotiation_offer; the SME owner for escalate_to_owner)."
+    },
+    "variables": {
+      "type": "object",
+      "description": "Values for the template placeholders. Must include every required variable for the chosen template_id; variables used only in conditional blocks may be omitted."
+    },
+    "thread_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional: existing conversation thread to attach the message to (a Message-ID)."
+    },
+    "invoice_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Invoice reference, used for idempotency and audit."
+    },
+    "step": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optional: follow-up step number for this invoice. Part of the derived idempotency key when idempotency_key is omitted."
+    },
+    "idempotency_key": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Optional: explicit idempotency key. If omitted, the sender derives hash(invoice_ref + template_id + step)."
+    },
+    "tenant_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$",
+      "description": "Which SME's mailbox and credentials to use. Lowercase letters, digits, hyphens, and underscores only: the id selects the per-tenant SMTP environment variables and idempotency store."
+    }
+  }
+}

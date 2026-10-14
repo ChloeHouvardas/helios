@@ -1,10 +1,68 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "fin-tools"
 version = "0.1.0"
-description = "Helios Financial Tools Developer Interface — offline prototypes (payments, email, spreadsheets, simulation, intent verification, knowledge graph)"
+description = "Helios Financial Tools Developer Interface — one tool registry over payments, email, receivables, forecasting, spreadsheets, market data, intent verification and the knowledge graph"
 requires-python = ">=3.10"
-dependencies = []
+
+# Dependencies come from the teammate packages this registry now wraps. They are
+# pinned to the versions verified green in this repo's venv so a rebuild on
+# another machine (the Mac mini build host) resolves the same set.
+#
+#   numpy       helios_forecast seeded Monte Carlo
+#   jinja2      email_tool template rendering
+#   jsonschema  email_tool request/response validation (Draft 2020-12)
+#   pydantic    payments_collect models
+#   openpyxl    spreadsheets XLSX parsing and its tests
+#   PyYAML      audit_manifest.manifest_to_yaml
+#
+# fastapi/uvicorn/httpx are NOT required: spreadsheets/app.py is the only FastAPI
+# consumer and is imported lazily, and the Qwen client degrades when httpx is
+# absent. Keeping them out means the tool surface installs and tests offline.
+dependencies = [
+    "numpy==2.3.5",
+    "jinja2==3.1.6",
+    "jsonschema==4.25.0",
+    "pydantic==2.12.4",
+    "openpyxl==3.1.5",
+    "PyYAML==6.0.3",
+]
+
+[project.optional-dependencies]
+# Only needed to serve spreadsheets over HTTP, or to call Qwen for column-mapping
+# inference. Both paths are optional at runtime.
+http = ["fastapi>=0.115", "uvicorn>=0.32", "httpx>=0.28"]
+
+# Explicit discovery: this directory holds several sibling top-level packages
+# (fin_tools plus the imported teammate packages), so automatic flat-layout
+# discovery refuses to guess which ones belong in the distribution.
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "fin_tools*",
+    "email_tool*",
+    "payments_collect*",
+    "helios_forecast*",
+    "spreadsheets*",
+]
+exclude = ["tests*", "fixtures*", "research*", "docs*"]
+
+[tool.setuptools.package-data]
+email_tool = ["schemas/*.json", "templates/*.md", "templates/*.j2"]
+spreadsheets = ["*.md"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# tests/ holds this package's own suite. The three teammate test directories
+# came in with their packages and are collected too, so a rename or a broken
+# import inside an imported package fails the build here rather than silently
+# shipping untested code.
+testpaths = [
+    "tests",
+    "email_tool/tests",
+    "payments_collect/tests",
+    "helios_forecast/tests",
+]
 addopts = "-q"
