@@ -1,0 +1,78 @@
+{
+  "_comment": "Prototype data for the invoice-payer example. Mirrors the shape of platform/action-agent-builder/src/agent_toolkit/data/invoices.json but adds the fields this app's audit rules read as FACTS. In a generated app this lives in the app's own database; the fact source reads it from there, never from the agent's request.",
+  "suppliers": {
+    "sup-northwind": {
+      "name": "Northwind Components",
+      "email": "ap@northwind.example",
+      "bank_account": "NW-4471",
+      "payment_details_changed": false
+    },
+    "sup-cinder": {
+      "name": "Cinder Logistics",
+      "email": "billing@cinder.example",
+      "bank_account": "CD-9930",
+      "payment_details_changed": true
+    },
+    "sup-delta": {
+      "name": "Delta Mills",
+      "email": "accounts@deltamills.example",
+      "bank_account": "DM-2208",
+      "payment_details_changed": false
+    }
+  },
+  "invoices": [
+    {
+      "invoice_id": "INV-1001",
+      "supplier_id": "sup-northwind",
+      "amount": "1250.00",
+      "currency": "USD",
+      "due_date": "2026-10-10",
+      "status": "due",
+      "duplicate": false,
+      "reference": "PO-8841"
+    },
+    {
+      "invoice_id": "INV-1002",
+      "supplier_id": "sup-delta",
+      "amount": "48000.00",
+      "currency": "USD",
+      "due_date": "2026-10-12",
+      "status": "due",
+      "duplicate": false,
+      "reference": "PO-8856"
+    },
+    {
+      "invoice_id": "INV-1003",
+      "supplier_id": "sup-cinder",
+      "amount": "760.00",
+      "currency": "USD",
+      "due_date": "2026-10-11",
+      "status": "due",
+      "duplicate": false,
+      "reference": "PO-8860"
+    },
+    {
+      "invoice_id": "INV-1004",
+      "supplier_id": "sup-northwind",
+      "amount": "1250.00",
+      "currency": "USD",
+      "due_date": "2026-10-13",
+      "status": "due",
+      "duplicate": true,
+      "reference": "PO-8841"
+    },
+    {
+      "invoice_id": "INV-1005",
+      "supplier_id": "sup-northwind",
+      "amount": "310.50",
+      "currency": "USD",
+      "due_date": "2026-10-14",
+      "status": "due",
+      "duplicate": false,
+      "reference": "PO-8877"
+    }
+  ],
+  "opening_balances_cents": {
+    "acme-operating": 6000000
+  }
+}
