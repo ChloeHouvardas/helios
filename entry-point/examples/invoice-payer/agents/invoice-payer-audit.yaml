@@ -72,7 +72,15 @@ tools:
           enum: [USD, EUR, CNY, GBP]
         auth_code:
           type: string
-          minLength: 16
+          # No minLength here on purpose. `auth_code` is a payment credential,
+          # so the audit agent redacts its VALUE to ***REDACTED*** at request
+          # ingestion (audit_agent.contracts.REDACTED_KEYS) — it never sees the
+          # real code, and a length/pattern check could only ever validate the
+          # placeholder. Presence is what this gate enforces (required above +
+          # the critical app.requires_verified_intent rule); VALIDITY is checked
+          # by the payments.send tool at execution time, which receives the
+          # real argument. A format check on a secret the gate refuses to read
+          # is not a control, so it is not declared.
           description: Verified intent code bound to (amount, currency, payee)
         idempotency_key: { type: string, maxLength: 64 }
         memo: { type: string, maxLength: 200 }

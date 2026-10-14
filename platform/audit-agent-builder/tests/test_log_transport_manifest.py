@@ -118,6 +118,140 @@ class TestAuditLog:
         assert "***REDACTED***" in raw
         assert "10.00" in raw  # ordinary values are kept
 
+    def test_payment_auth_codes_are_redacted_like_every_other_credential(self) -> None:
+        """`auth_code` / `authorization_code` are payment credentials.
+
+        A PSD2-style dynamic-linking flow carries a one-time authorisation code
+        bound to (amount, currency, payee). It is exactly as sensitive as an
+        API key: whoever holds it can authorise the payment. It must never
+        reach the audit log in the clear.
+        """
+        from audit_agent.contracts import REDACTED, REDACTED_KEYS, redact
+
+        for key in ("auth_code", "authorization_code"):
+            assert key in REDACTED_KEYS, f"{key} is a credential and must be redacted"
+            assert redact({key: "OTP-9f3c-SECRET"})[key] == REDACTED
+
+        # Case-insensitive, like every other redacted key.
+        assert redact({"AUTH_CODE": "OTP-SECRET"})["AUTH_CODE"] == REDACTED
+        # Ordinary payment fields are untouched — redaction is not a blanket wipe.
+        kept = redact({"auth_code": "OTP-SECRET", "amount": "250.00", "payee": "Acme"})
+        assert kept["amount"] == "250.00"
+        assert kept["payee"] == "Acme"
+
+    def test_a_held_payment_credential_never_reaches_the_owner_question(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        """End-to-end: the leak the key-set fix closes.
+
+        `_owner_question` renders `request.arguments` into the plain-language
+        question shown to the owner AND written into the hash-chained log. If a
+        payment credential key is not in REDACTED_KEYS, its plaintext survives
+        the ActionRequest arguments validator and lands in both places.
+
+        This needs a payment tool whose schema legitimately ACCEPTS an
+        `auth_code` field — the code is a real part of a PSD2 dynamic-linking
+        request, so it passes schema validation; it is the *value* that must
+        never be logged. A large amount forces a HOLD so the owner_question is
+        actually populated. The collect fixtures cannot express this (their
+        reminder schema forbids extra properties), so the agent is built here.
+        """
+        from audit_agent import (
+            Keyring,
+            PolicyPack,
+            StaticFactSource,
+            ToolDescriptor,
+            ToolRegistry,
+        )
+
+        path = tmp_path / "audit.jsonl"
+        registry = ToolRegistry(
+            [
+                ToolDescriptor(
+                    name="send_payment",
+                    description="pay an invoice under a verified intent",
+                    side_effect=True,
+                    input_schema={
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["invoice_id", "auth_code"],
+                        "properties": {
+                            "invoice_id": {"type": "string", "minLength": 1},
+                            "auth_code": {"type": "string", "minLength": 1},
+                        },
+                    },
+                )
+            ]
+        )
+        pack = PolicyPack.from_yaml_text(
+            """
+name: pay
+source: app
+tasks:
+  pay.invoice:
+    description: pay an invoice
+    allowed_tools: [send_payment]
+    ttl_seconds: 300
+rules:
+  - id: app.large_payment_approval
+    tools: [send_payment]
+    message: a payment over 10000 needs owner approval
+    limits:
+      - fact: amount_due
+        max: "10000.00"
+        on_exceed: hold
+""",
+            origin="pay.yaml",
+        )
+        agent = AuditAgent.build(
+            registry,
+            app_packs=[pack],
+            fact_source=StaticFactSource(
+                amounts={"INV-BIG": "24500.00"}, contacts={"INV-BIG": 0}
+            ),
+            log_path=path,
+            keyring=Keyring(b"test-signing-key", "test-key"),
+        )
+
+        auth = agent.authorize(
+            AuthorizationRequest(
+                request_id="az1",
+                app_id="helios-pay",
+                agent_id="payer",
+                principal="owner",
+                task_type="pay.invoice",
+                task_summary="pay a large invoice",
+                requested_tools=["send_payment"],
+                context={"invoice_id": "INV-BIG"},
+            )
+        )
+        secret = "OTP-9f3c-LIVE-SECRET"
+        decision = agent.adjudicate(
+            ActionRequest(
+                request_id="c1",
+                app_id="helios-pay",
+                agent_id="payer",
+                principal="owner",
+                task_type="pay.invoice",
+                tool="send_payment",
+                arguments={"invoice_id": "INV-BIG", "auth_code": secret},
+                authorization=auth,
+            )
+        )
+        assert decision.decision is Decision.HOLD, decision.decision
+
+        # The rendered question the owner reads must not carry the credential.
+        assert decision.owner_question is not None
+        assert secret not in decision.owner_question
+
+        # Neither must the persisted, hash-chained evidence.
+        raw = path.read_text(encoding="utf-8")
+        assert secret not in raw
+        assert "***REDACTED***" in raw
+        # The chain still verifies — redaction happens before hashing, not after.
+        ok, problems = AuditLog(path).verify_chain()
+        assert ok is True, problems
+
 
 class TestAgentWritesEvidence:
     def test_every_step_is_logged(self, agent: AuditAgent, log_path: pathlib.Path) -> None:

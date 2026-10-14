@@ -51,6 +51,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 #: Fields that must never appear in a log line, a grant, or an error
 #: message. The audit agent sees a lot of financial context; credential
 #: hygiene is a competition rule, not a nicety.
+#:
+#: `auth_code` / `authorization_code` are PSD2-style dynamic-linking payment
+#: credentials: a one-time code bound to (amount, currency, payee) that
+#: authorises a payment. They travel as ordinary tool arguments (a payment
+#: request legitimately carries one), so they survive the schema check and would
+#: otherwise reach the hash-chained audit log in full via the rendered
+#: `owner_question`. Redacted by key, like every other credential here.
 REDACTED_KEYS: frozenset[str] = frozenset(
     {
         "api_key",
@@ -63,6 +70,8 @@ REDACTED_KEYS: frozenset[str] = frozenset(
         "password",
         "passwd",
         "authorization",
+        "auth_code",
+        "authorization_code",
         "cookie",
         "private_key",
         "client_secret",
