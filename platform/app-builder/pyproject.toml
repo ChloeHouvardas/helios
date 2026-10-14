@@ -22,13 +22,19 @@ dev = [
 helios-app = "app_builder.cli:main"
 
 [tool.hatch.build.targets.wheel]
-# Everything under src/app_builder ships in the wheel, including the kit's
-# Jinja2 templates, CSS tokens and the vendored htmx.min.js. No force-include is
-# needed: hatchling copies non-Python files from the declared package directory by
-# default. (An explicit force-include of `kit` was tried and removed — it fails the
-# build when that directory does not exist yet, which is exactly the state of a
-# fresh checkout between tasks.)
+# Everything under src/app_builder ships in the wheel, including the kit's Jinja2
+# templates, CSS tokens and the vendored htmx.min.js. Non-Python files inside the
+# declared package directory are copied by default.
 packages = ["src/app_builder"]
+
+# stacks.yaml deliberately lives at platform/app-builder/stacks.yaml in the repo —
+# outside the package, where a reader browsing the tree can find it. Copy it into
+# the wheel next to the module that reads it, so an INSTALLED (non-editable)
+# app-builder still works. An editable install hides this: the source tree is the
+# install, so a repo-relative path appears to work everywhere and breaks the moment
+# someone pip-installs the wheel.
+[tool.hatch.build.targets.wheel.force-include]
+"stacks.yaml" = "app_builder/stacks.yaml"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

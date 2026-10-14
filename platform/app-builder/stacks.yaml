@@ -1,0 +1,125 @@
+# Named stacks. `spec.stack.use` refers to one of these by name.
+#
+# Pinned, not floating: an app generated in week one must still build in week ten,
+# and "latest" is not a version. Every version below was read from an installed
+# distribution or a vendored file's own banner on 2026-10-15, not recalled.
+#
+# Adding a stack later means adding an entry here, not changing the spec format.
+# The default is one entry among them, not a special case.
+
+default: helios-python-web-1
+
+stacks:
+  helios-python-web-1:
+    description: >
+      Server-rendered Python web app. One process, one port, one origin: the API,
+      the pages, both agents, the audit gate and the holds all run inside the same
+      FastAPI application.
+    language:
+      name: python
+      version: "3.13"
+    web_framework:
+      name: fastapi
+      version: "0.143.1"
+    server:
+      name: uvicorn
+      version: "0.54.0"
+    database:
+      name: sqlite
+      driver: stdlib sqlite3
+      # No ORM. Generated SQL is a few dozen statements a model can read, debug
+      # and fix; an ORM layer is one more thing that can be subtly wrong in
+      # generated code, and it hides the parameterisation that stops SQL injection.
+      orm: none
+      version: "3.51.0"
+    templating:
+      name: jinja2
+      version: "3.1.6"
+    # HTMX is VENDORED, not fetched from a CDN at runtime. A generated app that
+    # reaches out to a CDN on page load breaks offline, breaks behind nginx when
+    # the host strips /apps/<slug>, and turns a demo into a network dependency.
+    # The file lives at app_builder/kit/static/htmx.min.js and is copied into each
+    # generated app, so the app is self-contained.
+    frontend:
+      name: htmx
+      version: "2.0.11"
+      vendored: static/htmx.min.js
+      sha256: d6fdc75f204e6bdefa99b69bf1e6d4ac69b8a364f77929f45c13476b4000f717
+      bytes: 52182
+      source: https://unpkg.com/htmx.org@2.0.11/dist/htmx.min.js
+    # Maps the spec's closed set of field types onto SQLite column types. The
+    # schema tool translates through this, so moving to another database later is
+    # a mapping change here rather than a spec-format change.
+    type_map:
+      string:
+        sql_type: TEXT
+      integer:
+        sql_type: INTEGER
+      decimal:
+        # Money as a decimal STRING, with a CHECK that it parses as one. Storing
+        # it as REAL would be a binary float in the database, and a rounding error
+        # in an invoice total is a real financial error rather than a display
+        # artefact. TEXT round-trips exactly through Python's Decimal.
+        sql_type: TEXT
+        check: decimal
+      date:
+        sql_type: TEXT
+        check: date
+      datetime:
+        sql_type: TEXT
+        check: datetime
+      boolean:
+        # INTEGER 0/1. SQLite has no boolean type; BOOLEAN affinity is INTEGER, so
+        # writing one is writing the other with extra steps.
+        sql_type: INTEGER
+        check: boolean
+      json:
+        sql_type: TEXT
+        check: json
+
+# The CHECK constraints referenced by `check:` above, as SQL fragments. Kept here
+# rather than in Python so a future stack can redefine them for its own database.
+#
+# GLOB is NOT regex, and the patterns below are written for its actual semantics:
+# `?` is exactly one character (never "optional"), `*` is any run of characters,
+# and `[a-b]` is one character from the class. A naive transcription of a regex
+# produces a CHECK that accepts 'abc', which is worse than no CHECK at all.
+#
+# Verified against SQLite 3.51.0: accepts 0, 12, 12.50, -3.25, 0.01, .5 and 12.;
+# rejects abc, 1e5, '1,234', '', 1.2.3, ., -, 3-2, '1 2', 0x10, NaN, Infinity,
+# --3 and 1.2-3.
+checks:
+  decimal: >-
+    typeof({col}) = 'text'
+    AND length({col}) > 0
+    AND {col} GLOB '*[0-9]*'
+    AND {col} NOT GLOB '*[^0-9.-]*'
+    AND {col} NOT GLOB '*.*.*'
+    AND {col} NOT GLOB '?*-*'
+  # Shape alone is not enough: GLOB '[0-9][0-9]-[0-9][0-9]' happily accepts a
+  # month of 13 and a day of 45, because those are digit-shaped. The range clauses
+  # below compare fixed-width zero-padded text, which sorts the same way the
+  # numbers do, so no cast is needed and no float is involved.
+  date: >-
+    typeof({col}) = 'text'
+    AND length({col}) = 10
+    AND {col} GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+    AND substr({col}, 6, 2) BETWEEN '01' AND '12'
+    AND substr({col}, 9, 2) BETWEEN '01' AND '31'
+  datetime: >-
+    typeof({col}) = 'text'
+    AND length({col}) >= 19
+    AND substr({col}, 5, 1) = '-'
+    AND substr({col}, 8, 1) = '-'
+    AND substr({col}, 11, 1) = 'T'
+    AND substr({col}, 14, 1) = ':'
+    AND substr({col}, 17, 1) = ':'
+    AND substr({col}, 6, 2) BETWEEN '01' AND '12'
+    AND substr({col}, 9, 2) BETWEEN '01' AND '31'
+    AND substr({col}, 12, 2) BETWEEN '00' AND '23'
+    AND substr({col}, 15, 2) BETWEEN '00' AND '59'
+    AND substr({col}, 18, 2) BETWEEN '00' AND '59'
+  boolean: >-
+    typeof({col}) = 'integer' AND {col} IN (0, 1)
+  json: >-
+    typeof({col}) = 'text' AND json_valid({col})
