@@ -1,9 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "fin-tools"
 version = "0.1.0"
 description = "Helios Financial Tools Developer Interface — offline prototypes (payments, email, spreadsheets, simulation, intent verification, knowledge graph)"
 requires-python = ">=3.10"
 dependencies = []
+
+# `fin_tools` is a flat-layout package with non-package siblings (`tests/`,
+# `fixtures/`, `research/`). Setuptools' automatic flat-layout discovery refuses
+# to guess in that situation, so the package list is stated explicitly.
+[tool.setuptools]
+packages = ["fin_tools"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

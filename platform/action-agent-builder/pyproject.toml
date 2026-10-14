@@ -5,7 +5,6 @@ description = "Helios Agent Toolkit runtime: agent loop, proposal interception, 
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "qwen-agent>=0.0.17",
     "jsonschema>=4.21",
 ]
 
@@ -16,8 +15,9 @@ dev = ["pytest>=8.0"]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[project.scripts]
-agent-toolkit = "agent_toolkit.cli:main"
+# No [project.scripts] entry: it declared `agent_toolkit.cli:main`, but the
+# package has no `cli.py` yet, so `pip install -e .` failed on the missing
+# module. P3 writes the CLI; the entry comes back with it.
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_toolkit"]
