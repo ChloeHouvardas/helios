@@ -1,24 +1,4 @@
 {
-  "_readme": [
-    "Invoice fixtures for helios-collect. Loaded by agent_toolkit.store.Store,",
-    "so the shape matches platform/action-agent-builder's own invoices.json.",
-    "",
-    "Each invoice exists to exercise exactly ONE control path. The demo runs all",
-    "of them; see README.md for the table. Do not add a second defect to an",
-    "invoice without saying which rule you intend to demonstrate, or the run",
-    "stops proving anything: two rules firing at once cannot be told apart.",
-    "",
-    "Money is a decimal STRING here, never a float. The platform's own fixture",
-    "uses floats (4200.0); this app does not, because a rounding error in an",
-    "invoice total is a real financial error. The fact source reads either.",
-    "",
-    "`disputed` is a CONTROL INPUT: it is read by the fact source and withheld",
-    "from the agent by lookup_invoice. An agent cannot talk its way past a flag",
-    "it was never given.",
-    "",
-    "A negative `due_date_days_ago` means the invoice is not due yet."
-  ],
-
   "INV-1001": {
     "customer_id": "CUST-001",
     "number": "RL-2026-047",
