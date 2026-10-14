@@ -628,7 +628,15 @@ class GatedAgentRuntime:
         result = raw if isinstance(raw, dict) else {"result": raw}
         # The contact happened. Tell the fact source AFTER execution, so the
         # next frequency check sees a count that reflects reality.
-        if name == "send_email":
+        #
+        # Driven by the tool's `records_contact` marker rather than by matching
+        # a hard-coded name. The name check meant only the platform's
+        # `send_email` participated in contact-frequency rules; any other tool
+        # that contacts a customer — a `fin_tools` `email.send`, the teammate
+        # email tool — was silently skipped, so the rule under-counted and an
+        # agent could message the same customer past the cap. A tool declares
+        # that it contacts someone; the runtime does not have to know its name.
+        if getattr(tool, "records_contact", False):
             customer_id = arguments.get("customer_id")
             if isinstance(customer_id, str):
                 self.fact_source.record_contact(customer_id, self.store.today)

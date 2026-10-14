@@ -26,6 +26,14 @@ class ToolDefinition:
     output_schema: Mapping[str, Any]
     side_effect: bool
     handler: ToolHandler
+    #: True when a successful call contacts a customer and must therefore be
+    #: counted by the fact source's contact-frequency rules. The runtime reads
+    #: this flag rather than matching a hard-coded tool name, so any tool that
+    #: contacts a customer — the platform's ``send_email``, a ``fin_tools``
+    #: ``email.send``, or the teammate email tool — can take part in the same
+    #: rule simply by declaring it. Default False: a tool that does not contact
+    #: anyone must not inflate a contact count.
+    records_contact: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name:
@@ -42,6 +50,8 @@ class ToolDefinition:
                 )
         if not isinstance(self.side_effect, bool):
             raise ValueError(f"tool {self.name}: side_effect must be a boolean")
+        if not isinstance(self.records_contact, bool):
+            raise ValueError(f"tool {self.name}: records_contact must be a boolean")
         if not callable(self.handler):
             raise ValueError(f"tool {self.name}: handler must be callable")
 

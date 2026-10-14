@@ -169,6 +169,11 @@ def make_send_email(store: Store) -> ToolDefinition:
         output_schema=_SEND_OUTPUT,
         side_effect=True,
         handler=handler,
+        # This tool contacts a customer, so the runtime must tell the fact
+        # source after a successful send. Declared here rather than keyed off
+        # the tool's name in the runtime, so contact-frequency rules work for
+        # any tool that sets the flag.
+        records_contact=True,
     )
 
 
