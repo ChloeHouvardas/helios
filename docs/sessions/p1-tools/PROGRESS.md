@@ -61,3 +61,36 @@ tests), audit-agent-builder 79, agent-integration 123, invoice-payer 41;
 636 across the four suites. `seam check: OK`; still 12 tools (no new families
 yet). Two worlds in one process verified to keep two ledgers, two outboxes and
 two payer-profile dicts.
+
+## 2. Email family
+
+**Did:** Added `fin_tools/email_delivery.py` — the seam to the imported
+`email_tool`. Free-form `email.send` delivers through `SmtpTransport` directly;
+`email.send_template` goes through `EmailSender` (rendering, schema validation,
+idempotency). Both default to `world.outbox` and go live only when
+`EMAILTOOL_<TENANT>_SMTP_HOST` is set for the bundle's tenant, recording the
+provider message id on the outbox entry. Added `email.send_template` (gated,
+nested JSON Schema built from the teammate's own template registry) and
+`email.templates` (read-only catalog of the five templates + required/optional
+fields). Both send tools carry `records_contact=True` and `tenant_scoped=True`.
+Idempotency store owned by the `EmailSender` instance so an offline replay is
+detectable across calls; a replay does not append a second outbox entry.
+`build_world()` now passes `tenant`/`data_dir` into the sender.
+
+**Learned:** `EmailSender.send()` validates against a JSON Schema that requires
+`template_id` (5-value enum) and `invoice_ref` and allows no unknown properties,
+so free-form sends CANNOT route through it — that forced the two-path split.
+The teammate's response carries no `replayed` flag, so the delivery layer
+computes the enforced idempotency key and checks the store BEFORE sending;
+finding out afterwards would already mean a second email. An offline in-memory
+store must be reused, not rebuilt per call, or every replay looks like a first
+send. Fixed two self-inflicted bugs: `resolved_tenant` used before assignment in
+`build_world`, and a Task 1 test fixture that collided with the now-real
+`email.send_template` name (renamed to `example.nested_schema`).
+
+**State:** green — financial-tools 410 passed + 1 skipped (the opt-in live SMTP
+test), 14 tools registered, `seam check: OK`. Verified the nested enum schema
+survives end-to-end into `build_validated()` (the auditor's strict validator
+accepts it, `additionalProperties: false` intact). Gated tools in the manifest:
+email.send, email.send_template, graph.observe/publish_verified,
+payments.receive/send, spreadsheet.save.

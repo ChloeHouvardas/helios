@@ -100,18 +100,21 @@ def build_world(*, registry: Optional[ToolRegistry] = None,
         data_dir: directory for durable state. Falls back to `HELIOS_DATA_DIR`.
     """
     reg = registry if registry is not None else ToolRegistry()
-    world = World()
-    intents = IntentService(secret=secret, **({"clock": clock} if clock else {}))
-    payments = Payments(world=world, intents=intents,
-                        **({"clock": clock} if clock else {}))
-    email = EmailSender(world=world)
-    graph = KnowledgeGraph()
-    profiles: Dict[str, PayerProfile] = {}
-
     resolved_tenant = tenant if tenant is not None else (
         os.environ.get(TENANT_ENV) or None)
     resolved_data_dir = data_dir if data_dir is not None else (
         os.environ.get(DATA_DIR_ENV) or None)
+
+    world = World()
+    intents = IntentService(secret=secret, **({"clock": clock} if clock else {}))
+    payments = Payments(world=world, intents=intents,
+                        **({"clock": clock} if clock else {}))
+    # The tenant selects this bundle's SMTP credentials and idempotency store,
+    # so it has to reach the sender rather than be looked up per call.
+    email = EmailSender(world=world, tenant=resolved_tenant,
+                        data_dir=resolved_data_dir)
+    graph = KnowledgeGraph()
+    profiles: Dict[str, PayerProfile] = {}
 
     _pay_mod.register(reg, payments)
     _email_mod.register(reg, email)

@@ -135,8 +135,11 @@ NESTED_SCHEMA = {
 
 
 def _nested_spec() -> ToolSpec:
+    # A deliberately fictitious name: this spec exists to carry a nested schema
+    # through the bridge, and reusing a real tool name would collide with the
+    # registry once that tool exists.
     return ToolSpec(
-        name="email.send_template",
+        name="example.nested_schema",
         description="Send a templated email. Side-effecting.",
         input_schema={"to": "str", "fields": "dict",
                       "idempotency_key": "str|None"},
@@ -202,7 +205,7 @@ def test_declare_emits_both_schemas_and_the_new_flags():
 def test_bridge_uses_the_declared_schema_for_a_registered_tool():
     reg_tools = as_tool_definitions(_bundle_with_nested())
     by_name = {t.name: t for t in reg_tools}
-    assert by_name["email.send_template"].input_schema == NESTED_SCHEMA
+    assert by_name["example.nested_schema"].input_schema == NESTED_SCHEMA
 
 
 def _bundle_with_nested():
@@ -215,7 +218,7 @@ def test_round_trip_through_the_bridge_keeps_the_schema_exact():
     """spec -> ToolDefinition -> ToolSpec: the JSON Schema is unchanged."""
     bundle = _bundle_with_nested()
     definitions = {t.name: t for t in as_tool_definitions(bundle)}
-    back = ToolSpec.from_definition(definitions["email.send_template"])
+    back = ToolSpec.from_definition(definitions["example.nested_schema"])
     assert back.input_json_schema == NESTED_SCHEMA
     assert back.effective_input_schema() == NESTED_SCHEMA
 
