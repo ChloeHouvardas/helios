@@ -1,0 +1,21 @@
+{
+  "meta": {
+    "api_name": "fina_indicator",
+    "params": {},
+    "fields": "ts_code,end_date,arturn_days",
+    "as_of": "2026-09-30",
+    "fetched_at": "2026-10-20T02:00:00+00:00",
+    "source_url": "https://api.tushare.pro",
+    "note": "SAMPLE DATA for offline tests and demos. arturn_days = accounts-receivable turnover in days. Fictional values."
+  },
+  "code": 0,
+  "msg": "",
+  "data": {
+    "fields": ["ts_code", "end_date", "arturn_days"],
+    "items": [
+      ["000001.SZ", "20260930", 30.0],
+      ["600519.SH", "20260930", 10.0],
+      ["000858.SZ", "20260930", 20.0]
+    ]
+  }
+}

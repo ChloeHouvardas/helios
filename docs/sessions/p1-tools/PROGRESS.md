@@ -181,3 +181,48 @@ percentile" with a proof that shortfall probability is strictly between 0 and 1.
 tools registered. `seam check: OK`. Verified all six forecast/behavior tools
 enter `build_validated()` as read-only (none gated), and `simulation.forecast`
 still registered and read-only. Full four-suite run green.
+
+## 5. Market data (`market.*`)
+
+**Did:** Added `fin_tools/market_data/` (`__init__.py`, `client.py`, `cache.py`,
+`rates.py`, `registry.py`, `tools.py`), stdlib only. Four read-only tools, tags
+`("market",)`: `market.rate` (series ∈ lpr_1y/lpr_5y/shibor_1m/shibor_3m; publishes
+a VERIFIED graph node `market_rate:<series>@<date>`; gated because it writes shared
+graph state), `market.borrowing_cost_compare` (four option kinds; returns each
+option's formula+inputs so the auditor recomputes; always carries the "not
+financial advice" disclaimer), `market.company_lookup` (name/USCC/ts_code →
+registry evidence; a miss is an empty list, never an invented match),
+`market.collection_period` (national average arturn_days + industry peer median
+via index_member_all; the prior for a new customer, stated as such in `basis`).
+One `MarketDataSource` protocol, four sources: `TushareSource` (HTTPS only, token
+from `TUSHARE_TOKEN`, redacted from every error, 40/min token bucket, retries with
+backoff), `CoreFileSource`, `FixtureSource`, `CachedSource` (SQLite TTL: 24 h rates,
+7 d registry). Mode via `HELIOS_MARKET_MODE` (fixture|live|auto). Every result
+carries `provenance{publisher, api_name, as_of, fetched_at, mode, stale, source_url}`;
+a cache/fixture/core hit reports its own mode, never `live`. Nothing found →
+`MarketDataUnavailable` naming the series and `TUSHARE_TOKEN`. Wrote labelled sample
+fixtures under `fixtures/market/<api>/<sha1>.json`. Wired into `build_world`.
+
+**Learned:** The brief's corrected Tushare facts (`shibor_lpr` fields `date,1y,5y`;
+`shibor` full tenor set) are implemented directly in my `client.py`/`rates.py` — I
+never imported the buggy teammate adapter (`services/financial-api/financial_api/
+market.py`, which uses `api_name="lpr"`, `TRADE_DATE/LPR1Y/ON`, plain http). That
+file is NOT in my worktree and NOT in my owned scope, so I did not edit it; the
+corrected implementation supersedes it. `specs/forecasting-research-claims.md` is
+absent, so T5/T6 cannot be marked there literally — recorded in the reference doc
+I own instead. Bug caught: I initially passed `as_of` into the fetch `params`,
+which changed the fixture/cache key and missed snapshots; fixed by fetching the
+series with no date param and filtering `as_of` locally (`_pick_row`). Another:
+`FixtureSource` default root used `parents[1]` (fin_tools/) not `parents[2]`
+(package root). `company_lookup` only attempts the direct `stock_company` lookup
+when the query looks like a ts_code or an 18-char USCC, so a plain name does not
+burn a live call. Verified arithmetic: 2/10 net 30 → 37.24%/yr; credit_line
+2.9%+150bps → 2411 cents over 20 days on ¥10,000; national collection period 20.0d.
+
+**State:** green — financial-tools 511 passed + 1 skipped (470 + 41 new), 29 tools.
+`seam check: OK`. `build_validated()` accepts the manifest with all four market
+tools; only `market.rate` is gated. NOTE for HANDOFF: the `fin.large_payment_approval`
+ceiling scopes to ANY tool declaring `amount_cents`, so the read-only
+`market.borrowing_cost_compare` (and `collect.add_receivable`/`create_payment_link`)
+are pulled into owner-approval. Fail-safe direction, not a hole; the manifest
+derivation is shared infra I don't own, so flagged not rescaled.

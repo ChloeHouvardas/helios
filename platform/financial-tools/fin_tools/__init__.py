@@ -36,6 +36,8 @@ from .simulation import PayerProfile, SimPolicy, simulate, what_if, sandbox_run
 from . import collect as _collect_mod
 from . import email_sender as _email_mod
 from . import forecast as _forecast_mod
+from .market_data import tools as _market_mod
+from .market_data import build_resolver as _build_market_resolver
 from . import payments as _pay_mod
 from . import spreadsheet_tools as _sheet_mod
 from . import knowledge_graph as _graph_mod
@@ -123,6 +125,9 @@ def build_world(*, registry: Optional[ToolRegistry] = None,
     # refund verifies an auth code through the same IntentService payments.send
     # uses, and captures/refunds mirror into the same world.ledger.
     collect = Collect(tenant=resolved_tenant, payments=payments, intents=intents)
+    # Market data resolves per this bundle's mode/data_dir; market.rate publishes
+    # into this bundle's graph, so the rate service gets the same `graph`.
+    market_resolver = _build_market_resolver(data_dir=resolved_data_dir)
 
     _pay_mod.register(reg, payments)
     _email_mod.register(reg, email)
@@ -131,6 +136,7 @@ def build_world(*, registry: Optional[ToolRegistry] = None,
     _sim_mod.register(reg, profiles)
     _collect_mod.register(reg, collect)
     _forecast_mod.register(reg)
+    _market_mod.register(reg, market_resolver, graph)
     return Bundle(world=world, registry=reg, intents=intents,
                   payments=payments, email=email, graph=graph, collect=collect,
                   tenant=resolved_tenant, data_dir=resolved_data_dir,

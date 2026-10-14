@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "api_name": "stock_company",
+    "params": {"com_id": "914403001922038216"},
+    "fields": "ts_code,com_id,chairman,province,city,website,email,main_business",
+    "as_of": "2026-10-20",
+    "fetched_at": "2026-10-20T02:00:00+00:00",
+    "source_url": "https://api.tushare.pro",
+    "note": "SAMPLE DATA for offline tests and demos. Fictional; not a live snapshot."
+  },
+  "code": 0,
+  "msg": "",
+  "data": {
+    "fields": ["ts_code", "com_id", "chairman", "province", "city", "website", "email", "main_business"],
+    "items": [
+      ["000001.SZ", "914403001922038216", "谢永林", "广东", "深圳", "http://bank.example", "ir@bank.example", "吸收公众存款、发放贷款"]
+    ]
+  }
+}
