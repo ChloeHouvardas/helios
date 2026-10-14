@@ -109,6 +109,35 @@ class Payments:
     def balance(self, account: str) -> int:
         return self.world.balances.get(account, 0)
 
+    # -- ungated mirrors for already-authorized collect movements -----------
+    def record_refund_mirror(self, *, payer: str, payee: str, amount_cents: int,
+                             currency: str, reference: str = "") -> Dict[str, Any]:
+        """Mirror an outbound refund into this ledger without re-checking intent.
+
+        Ungated on purpose, and NOT registered as a tool: the authorization
+        already happened in `collect.refund`, which verified and consumed the
+        intent auth code before calling the receivables store. This only keeps
+        the fin_tools balances truthful alongside the store's own dual-entry
+        journal, so a capture mirrored in as a receive is not left un-reversed
+        by its refund. Exposing it as an agent-callable tool would hand an agent
+        an ungated outbound payment, which is exactly what the intent gate
+        exists to prevent.
+        """
+        amount_cents = int(amount_cents)
+        if amount_cents <= 0:
+            raise VerificationError("amount must be positive integer cents")
+        pid = f"pay_{secrets.token_hex(6)}"
+        record = {
+            "payment_id": pid, "direction": "refund", "payer": payer, "payee": payee,
+            "amount_cents": amount_cents, "currency": currency.upper(),
+            "reference": reference, "state": PaymentState.SETTLED.value,
+            "t": self.clock(),
+        }
+        self.world.ledger[pid] = record
+        self.world.balances[payer] = self.world.balances.get(payer, 0) - amount_cents
+        self._log(pid, "refund_mirrored", reference)
+        return record
+
 
 # ---------------------------------------------------------------------------
 # Registered tool views (the developer interface surface)

@@ -94,3 +94,50 @@ survives end-to-end into `build_validated()` (the auditor's strict validator
 accepts it, `additionalProperties: false` intact). Gated tools in the manifest:
 email.send, email.send_template, graph.observe/publish_verified,
 payments.receive/send, spreadsheet.save.
+
+## 3. Receivables family (`collect.*`)
+
+**Did:** Added `fin_tools/collect.py` — a `Collect` facade over the imported
+`payments_collect.PaymentStore`, bound to the bundle's tenant, `Payments` and
+`IntentService`. Registered five tools: `collect.add_receivable` (gated),
+`collect.list_receivables` (read), `collect.create_payment_link` (gated, returns
+id + `https://pay.helios.test/l/<id>` + token), `collect.status` (read, with
+outstanding balance + links + attempts), `collect.refund` (gated). All
+`tenant_scoped=True` with real JSON Schemas (enums, nullable fields).
+`Collect.apply_provider_event(...)` is the webhook-only entry point — NOT
+registered, so an agent cannot confirm its own payment. A captured payment
+mirrors into the fin_tools ledger via `payments.receive`; a refund mirrors out
+via a new ungated `Payments.record_refund_mirror` (ungated because the auth
+already happened in the tool; exposing it as a tool would be an ungated outbound
+payment). Added `Payments.record_refund_mirror`. Wired `Collect` into `Bundle`
+and `build_world`.
+
+**Learned:** `PaymentStore.record_refund` has NO authorization parameter — it
+refunds whatever it's told — so `collect.refund` had to add the intent gate
+itself: verify an auth code bound to (amount, currency, customer) before
+calling, consume it only after the store accepts. The customer is derived from
+the attempt's receivable, so the human authorizes a refund to a specific party.
+The store's `record_payment_success` has no callback, but `subscribe()` exists;
+I did not need it — the webhook facade drives success directly and guards the
+ledger mirror with an `out_trade_no` set so a replayed event OR a second event id
+reporting one capture posts once. The store's clock is a `datetime` while
+fin_tools uses a float clock; they stay separate. One test I introduced
+(`test_collections_rules_are_absent`) had used a bare `"customer_id" not in
+manifest` substring check as a proxy for "no collections mandate leaked"; now
+that `collect.add_receivable` legitimately declares `customer_id`, I re-expressed
+the real intent (never a blanket requirement on a tool that lacks the field)
+rather than weakening it.
+
+**State:** green — financial-tools 437 passed + 1 skipped (410 + 27 new), audit
+79, agent-integration 123, invoice-payer 41; 680 across the four suites. 19 tools
+registered. `seam check: OK`. Verified `build_validated()` accepts the manifest
+with the collect tools; the three gated collect tools fall under the
+`fin.large_payment_approval` ceiling (they declare `amount_cents`) and get
+per-tool required-argument rules. NOTE for HANDOFF: that means creating a
+receivable ≥ ¥10,000 now needs owner approval — a consequence of the existing
+manifest derivation (ceiling scopes to any `amount_cents` tool), flagged for the
+audit owner rather than changed here. Also flagged: the cashier URL uses the
+enumerable link id per the p1-tools spec, not the unguessable token; a production
+cashier URL should use the token. And `simulation.sandbox_run` still has a branch
+for a tool named `email.send_template` that now collides with the real registered
+tool (different signature); no test exercises it, left for a follow-up.

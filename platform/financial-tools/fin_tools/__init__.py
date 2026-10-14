@@ -27,11 +27,13 @@ from .contracts import (
     problem_message,
     require_tenant,
 )
+from .collect import Collect
 from .email_sender import EmailSender
 from .intent_verification import IntentService, Intent, AuthCode, VerificationError
 from .knowledge_graph import KnowledgeGraph
 from .payments import Payments
 from .simulation import PayerProfile, SimPolicy, simulate, what_if, sandbox_run
+from . import collect as _collect_mod
 from . import email_sender as _email_mod
 from . import payments as _pay_mod
 from . import spreadsheet_tools as _sheet_mod
@@ -66,6 +68,7 @@ class Bundle:
     payments: Payments
     email: EmailSender
     graph: KnowledgeGraph
+    collect: Collect
     #: The tenant this bundle's data belongs to. `None` means "not multi-tenant
     #: yet": tenant-scoped tools refuse rather than silently defaulting, because
     #: a wrong default writes one tenant's money into another's books.
@@ -115,14 +118,19 @@ def build_world(*, registry: Optional[ToolRegistry] = None,
                         data_dir=resolved_data_dir)
     graph = KnowledgeGraph()
     profiles: Dict[str, PayerProfile] = {}
+    # Receivables share this bundle's tenant, ledger and intent service: a
+    # refund verifies an auth code through the same IntentService payments.send
+    # uses, and captures/refunds mirror into the same world.ledger.
+    collect = Collect(tenant=resolved_tenant, payments=payments, intents=intents)
 
     _pay_mod.register(reg, payments)
     _email_mod.register(reg, email)
     _sheet_mod.register(reg)
     _graph_mod.register(reg, graph)
     _sim_mod.register(reg, profiles)
+    _collect_mod.register(reg, collect)
     return Bundle(world=world, registry=reg, intents=intents,
-                  payments=payments, email=email, graph=graph,
+                  payments=payments, email=email, graph=graph, collect=collect,
                   tenant=resolved_tenant, data_dir=resolved_data_dir,
                   profiles=profiles)
 
@@ -131,7 +139,7 @@ __all__ = [
     "REGISTRY", "ToolRegistry", "ToolSpec", "World", "Bundle", "build_world",
     "TENANT_ENV", "DATA_DIR_ENV", "require_tenant",
     "IntentService", "Intent", "AuthCode", "VerificationError",
-    "Payments", "EmailSender", "KnowledgeGraph",
+    "Payments", "EmailSender", "KnowledgeGraph", "Collect",
     "PayerProfile", "SimPolicy", "simulate", "what_if", "sandbox_run",
     "ToolClient", "InProcessToolClient", "HttpToolClient", "ToolServer",
     "ServiceUnavailable", "SECRET_ENV", "free_port",
