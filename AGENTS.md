@@ -25,12 +25,55 @@ Refer to:
 
 ## Development Conventions
 
-- Use conventional commit messages (`feat:`, `fix:`, `docs:`, `chore:`, etc.).
+- Use conventional commit messages — see **Committing** below.
 - Prefer simple, modular implementations.
 - Follow existing patterns where practical.
 - Avoid unnecessary abstractions and unrelated changes.
 - Consider security and financial data integrity.
 - Add relevant tests when modifying behavior.
+
+## Committing
+
+Commit as you go, not as one lump at the end of a session. Every agent working in
+this repo follows this.
+
+**Conventional commits.** `<type>: <lowercase summary>`, imperative mood, no
+trailing period, ≤72 chars. Add a body when the *why* is not obvious from the
+diff — especially for security properties, constraint choices, and anything that
+looks like it could be simplified but must not be.
+
+| type | use for |
+|---|---|
+| `feat:` | new capability |
+| `fix:` | correcting behaviour that was wrong |
+| `test:` | adding or correcting tests |
+| `docs:` | prose only — no behaviour change |
+| `refactor:` | restructuring, behaviour unchanged |
+| `chore:` | packaging, deps, config, tooling |
+| `perf:` | same behaviour, faster |
+
+**Sequential and reasonable.** Split work so each commit is one coherent change
+and the history reads as a build-up. Order commits so each one leaves the repo
+importable and its own tests passing — dependencies before dependents, contracts
+before implementations, fixtures before the tests that consume them. A reviewer
+should be able to check out any commit and get something that works.
+
+Do not split by file count or by line budget; split by idea. Equally, do not
+bundle unrelated changes to save a commit — an unreviewable commit is worse than
+several small ones.
+
+**Scope discipline — this repo has several agents working at once.** Stage
+explicit paths, never `git add .` or `git add -A`. Before committing, check
+`git status` and confirm every staged path is yours. If a shared file
+(`AGENTS.md`, `README.md`, anything under `specs/`) already carries another
+agent's uncommitted edit, stage only your own hunk — `git apply --cached` with a
+filtered patch — and leave their change in the working tree for them to commit.
+Never commit another agent's work under your message, and never revert or
+"clean up" edits you do not recognize; they are probably someone's work in
+progress.
+
+**Do not** push, force-push, rebase, amend, or reset shared history unless the
+user asks. Do not use `--no-verify`. Commit locally and report.
 
 ## Architecture Changes
 
