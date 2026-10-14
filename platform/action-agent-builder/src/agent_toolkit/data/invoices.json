@@ -1,0 +1,40 @@
+{
+  "INV-1001": {
+    "customer_id": "CUST-001",
+    "number": "RL-2026-047",
+    "amount": 4200.0,
+    "currency": "CNY",
+    "issued_date_days_ago": 51,
+    "due_date_days_ago": 21,
+    "status": "unpaid",
+    "notes": "Stage 2 milestone billing"
+  },
+  "INV-1002": {
+    "customer_id": "CUST-002",
+    "number": "MS-2026-112",
+    "amount": 850.0,
+    "currency": "CNY",
+    "issued_date_days_ago": 40,
+    "due_date_days_ago": 10,
+    "status": "unpaid"
+  },
+  "INV-1003": {
+    "customer_id": "CUST-003",
+    "number": "HL-2026-078",
+    "amount": 12500.0,
+    "currency": "CNY",
+    "issued_date_days_ago": 35,
+    "due_date_days_ago": 5,
+    "status": "unpaid",
+    "notes": "Customer asked about extended terms on the phone"
+  },
+  "INV-1004": {
+    "customer_id": "CUST-001",
+    "number": "RL-2026-049",
+    "amount": 3100.0,
+    "currency": "CNY",
+    "issued_date_days_ago": 9,
+    "due_date_days_ago": -21,
+    "status": "unpaid"
+  }
+}

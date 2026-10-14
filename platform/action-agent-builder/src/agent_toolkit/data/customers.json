@@ -1,0 +1,23 @@
+{
+  "CUST-001": {
+    "name": "Ridgeline Construction Ltd",
+    "contact_name": "Dana Whitmore",
+    "email": "dana.whitmore@ridgeline.example.com",
+    "payment_behavior": "usually pays 5-10 days late after a reminder",
+    "last_contacted_days_ago": 21
+  },
+  "CUST-002": {
+    "name": "Maple Street Dental",
+    "contact_name": "Priya Anand",
+    "email": "office@maplestreetdental.example.com",
+    "payment_behavior": "pays on time after one reminder",
+    "last_contacted_days_ago": 1
+  },
+  "CUST-003": {
+    "name": "Harbor Logistics Co",
+    "contact_name": "Wei Chen",
+    "email": "accounts@harborlogistics.example.com",
+    "payment_behavior": "slow payer, sometimes asks for extended terms",
+    "last_contacted": null
+  }
+}

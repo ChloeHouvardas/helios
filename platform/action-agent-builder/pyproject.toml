@@ -1,0 +1,26 @@
+[project]
+name = "agent-toolkit"
+version = "0.1.0"
+description = "Helios Agent Toolkit runtime: agent loop, proposal interception, audit gate, action log, holds, agent manifests (Build 1)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "qwen-agent>=0.0.17",
+    "jsonschema>=4.21",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+agent-toolkit = "agent_toolkit.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_toolkit"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
