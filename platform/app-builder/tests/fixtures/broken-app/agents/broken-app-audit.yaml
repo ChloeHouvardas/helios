@@ -1,0 +1,143 @@
+# The broken app's audit manifest.
+#
+# It LOADS SUCCESSFULLY — that is deliberate. AuditManifest.self_check() already
+# refuses a task that allows an undeclared tool and a rule that targets one, so a
+# manifest that fails to load would be reported as a single "is invalid" error and
+# none of the cross-file checks would run. Every defect here is one the auditor's
+# own loader cannot see, because each is a disagreement with ANOTHER file.
+
+manifest_version: "1"
+
+# Defect: does not equal identity.id (broken-app) in helios-app.yaml.
+app_id: not-broken-app
+name: Broken App Audit Agent
+description: >
+  Governs an action agent for the broken-app fixture. Declares tools whose
+  side-effect flags disagree with tools.py, a tool with no input_schema, and rules
+  that bind an argument and a fact neither of which exists.
+
+tools:
+  - name: read_thing
+    description: Read one thing. Read-only, and correctly declared as such.
+    side_effect: false
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [invoice_id]
+      properties:
+        invoice_id: { type: string, minLength: 1 }
+
+  - name: write_thing
+    description: >
+      Write to the ledger. Correctly declared side-effecting, and correctly given
+      an input_schema — the rules that misfire on it are the rules' fault, not
+      this declaration's.
+    side_effect: true
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [invoice_id, amount_cents]
+      properties:
+        invoice_id: { type: string, minLength: 1 }
+        amount_cents: { type: integer, minimum: 1 }
+
+  # Defect: side_effect true here, false in tools.py. Safe direction — the app's
+  # read path is gated, so it is slow rather than dangerous.
+  - name: misflagged_read
+    description: A read that this manifest wrongly declares side-effecting.
+    side_effect: true
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        invoice_id: { type: string, minLength: 1 }
+
+  # Defect: side_effect false here, true in tools.py. This is the dangerous
+  # direction — the gate treats a real side effect as a read and runs it with no
+  # proposal, no hold and no owner.
+  - name: misflagged_write
+    description: A write that this manifest wrongly declares read-only.
+    side_effect: false
+
+  # NOT a defect, though it looks like one: a side-effecting tool with no
+  # input_schema is refused by AuditManifest.self_check() before this validator
+  # ever runs ("tool 'x' has side effects but declares no input_schema"). The
+  # validator's equivalent check in check_side_effect_tools is defence in depth
+  # for a manifest built in memory rather than loaded, so this tool has a schema
+  # and instead contributes a different defect: it is in the action mandate but
+  # in no task allowlist.
+  - name: ungated_write
+    description: A side-effecting tool the task allowlist does not permit.
+    side_effect: true
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [invoice_id]
+      properties:
+        invoice_id: { type: string, minLength: 1 }
+
+  # Correctly declared, but takes no subject key, so no fact can resolve for it.
+  - name: send_notice
+    description: Send a notice. Takes a recipient and a length, and no subject id.
+    side_effect: true
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [to, body_length]
+      properties:
+        to: { type: string, minLength: 3 }
+        body_length: { type: integer, minimum: 1, maximum: 4000 }
+
+tasks:
+  broken.operate:
+    description: >
+      The only task. Its allowlist deliberately excludes write_thing and
+      ungated_write, which the action manifest offers — so nothing the agent
+      offers is allowed by any task, and every call is denied at authorize() time.
+    allowed_tools: [read_thing, misflagged_read, misflagged_write, send_notice]
+    ttl_seconds: 120
+
+rules:
+  # Defect: binds `ghost_argument`, which write_thing's input_schema does not
+  # declare. A limit on an argument the tool does not take never matches, so the
+  # control silently does not apply.
+  - id: app.binds_unknown_argument
+    description: Requires an argument the tool's schema does not define
+    task_types: [broken.operate]
+    tools: [write_thing]
+    message: a write needs an amount and a ghost argument that does not exist
+    required_arguments: [amount_cents, ghost_argument]
+    severity: critical
+
+  # Defect: max_from_fact names `invoice_amount_cents`, which facts.py never
+  # produces. An unresolvable fact fails closed, so this rule denies every call
+  # it covers and the app looks broken rather than unsafe.
+  - id: app.needs_missing_fact
+    description: Caps the write at a fact the fact source does not supply
+    task_types: [broken.operate]
+    tools: [write_thing]
+    message: the write exceeds the recorded invoice amount
+    limits:
+      - argument: amount_cents
+        max_from_fact: invoice_amount_cents
+        on_exceed: hold
+    severity: critical
+
+  # Not a defect in itself — this is the rule that makes send_notice's missing
+  # subject key a warning rather than a hypothetical.
+  - id: app.notice_length
+    description: Caps the notice body length
+    task_types: [broken.operate]
+    tools: [send_notice]
+    message: the notice is too long
+    limits:
+      - argument: body_length
+        max: 4000
+        on_exceed: deny
+
+settings:
+  default_ttl_seconds: 120
+  contact_window_days: 7
+  log_path: broken-app-audit-log.jsonl
+  advisory: [none]
+  allow_unsigned_grants: false

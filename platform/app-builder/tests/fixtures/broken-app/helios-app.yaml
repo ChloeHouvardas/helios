@@ -1,0 +1,61 @@
+spec_version: "1"
+
+# A deliberately broken app. The SPEC ITSELF IS VALID ON PURPOSE: if the spec had
+# shape errors, validate_app would stop before the cross-file checks and only the
+# shape problems would be reported. Every error this fixture produces comes from a
+# disagreement between files, which is the class of bug the validator exists for.
+#
+# See ../README.md for the exact list of defects and which check catches each one.
+
+identity:
+  # Does NOT match the audit manifest's app_id (not-broken-app) on purpose.
+  id: broken-app
+  name: Broken App
+  description: >
+    A fixture app that is wrong in as many independent ways as the validator can
+    detect, so that every cross-file check has something to fire on.
+
+existing:
+  system: null
+  stack: null
+  data: null
+  ui: null
+
+stack:
+  use: helios-python-web-1
+
+data:
+  local:
+    entities:
+      - name: invoice
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: customer_id, type: string, required: true }
+          # Integer money not named *_cents: a warning, not an error.
+          - { name: total, type: integer, required: true }
+      # An entity with no fields generates an empty table: a warning.
+      - name: marker
+        fields: []
+
+graph:
+  reads: []
+  publishes:
+    # `ghost` is not declared in data.local: a warning.
+    - { entity: ghost, events: [appeared] }
+
+agents:
+  action_manifest: agents/broken-app-action.json
+  audit_manifest: agents/broken-app-audit.yaml
+
+ui:
+  # No approval_queue page: a warning. Every side-effect action can be held, so
+  # without one the agents pause invisibly.
+  pages:
+    - { id: dashboard, title: Overview, pattern: summary }
+  align_with: null
+
+tools:
+  # Deliberately NOT a superset of what the manifests declare. write_thing,
+  # ungated_write, misflagged_read, misflagged_write, send_notice and
+  # undeclared_tool are all missing from this list.
+  - read_thing
