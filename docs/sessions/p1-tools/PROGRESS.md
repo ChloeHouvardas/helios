@@ -226,3 +226,41 @@ ceiling scopes to ANY tool declaring `amount_cents`, so the read-only
 `market.borrowing_cost_compare` (and `collect.add_receivable`/`create_payment_link`)
 are pulled into owner-approval. Fail-safe direction, not a hole; the manifest
 derivation is shared infra I don't own, so flagged not rescaled.
+
+## 6. Service hardening (bearer auth + persistence) — objective §E
+
+**Did:** The objective names "one bearer-authenticated HTTP service with
+persistence that the deployment engine's core container will run", but
+`service.py` exposed `payments.send` over HTTP with no auth and all state
+in-memory. Closed both gaps in files I own. `service.py`: `ToolServer` now takes
+an `execution_secret` (or reads `HELIOS_EXECUTION_SECRET`); every route except
+`GET /health` requires `Authorization: Bearer <secret>`, compared with
+`hmac.compare_digest`; wrong/missing token → 401. Added `GET /health`
+(`{status, role, tool_count}`) and `GET /kg/nodes` (lists published verified
+facts) so the deployment core's routes are satisfiable. `HttpToolClient` gained
+`execution_secret=` and now distinguishes 401/403 (`PermissionError`) from
+network failure (`ServiceUnavailable`). New `persistence.py`: `SqlitePersistence`
+saves/restores the `World` snapshot (ledger, balances, outbox, graph) to
+`world_state.sqlite3` under the data dir; no data dir → disabled no-op.
+`__main__.py` wires the secret + persistence and saves on shutdown.
+
+**Learned:** Open mode is fully preserved — with no secret configured the service
+behaves exactly as before, so all pre-existing service/boundary tests (27) still
+pass untouched. Key security property tested explicitly: the bearer token
+authenticates the HTTP caller but is NOT the intent signing secret, so an
+authenticated caller still cannot forge an `auth_code` — `payments.send` with a
+guessed code is rejected, and only a genuine owner confirmation settles.
+Authenticating the caller does not authorize the action (decision B.7 held).
+Verified the real container entry point boots end-to-end: `/health` 200 without
+a token, `/tools` 401 without / 200 with, authenticated `/call` returns, and
+`world_state.sqlite3` is created.
+
+**Did NOT do (cross-boundary, logged in HANDOFF-TO-P2-P3.md):** the deployment
+core's execution routes `POST /tools/{payments|email|knowledge-graph}` carry a
+float `amount` and NO auth code, with the bearer token as the sole gate. That
+directly contradicts the intent-verification control (B.7 / B.2), so I did not
+silently adopt it. Recorded as a request for P2/P3 to decide, rather than
+weakening the gate to match a mock.
+
+**State:** green — financial-tools 527 passed + 1 skipped (511 + 16 new). Full
+`scripts/test-all.sh` exit 0, `seam check: OK`. 29 tools.

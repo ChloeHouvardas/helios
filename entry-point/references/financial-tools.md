@@ -4,26 +4,56 @@ The tools an app's agents may call. Generated with the commands at the bottom of
 this file — re-run them rather than trusting this snapshot, because the tool set
 is still growing.
 
-**Everything here is an offline prototype.** `fin_tools` touches no network, no
-database, and no real money. Its `World` is an in-memory dataclass. That is
-deliberate: it lets a generated app be built, tested and demoed without
-credentials, and any implementation following the tool contract can be swapped in
-without changing the agent runtime.
+**29 tools**, in eight families. The set grew from 12 to 29 in session `p1-tools`,
+which wrapped four teammate packages (`email_tool`, `payments_collect`,
+`helios_forecast`, `spreadsheets`) into this registry and added a market-data
+family.
+
+**Mostly offline, and deliberately so.** Without any environment variables set,
+`fin_tools` touches no network and no database: its `World` is an in-memory
+dataclass, and the market family serves labelled sample fixtures. That lets a
+generated app be built, tested and demoed without credentials. Three things opt
+into real infrastructure *only* when you set the matching env var:
+
+| Env var | What goes live |
+| --- | --- |
+| `EMAILTOOL_<TENANT>_SMTP_*` | real SMTP delivery through `email_tool` |
+| `TUSHARE_TOKEN` | live LPR/SHIBOR and company-registry lookups |
+| `HELIOS_DATA_DIR` | SQLite persistence for the world snapshot, plus the email idempotency store |
+
+Unset, each of those falls back to a local no-op — never to a network call, and
+never to an invented value.
+
+Money is **integer cents everywhere**. Never a float. The imported
+`helios_forecast` engine uses floats internally; the `forecast.*` wrapper converts
+at that boundary only and rounds half-even back to cents.
 
 ## Entry point
 
 ```python
 from fin_tools import build_world
 
-bundle = build_world()
-bundle.registry.catalog()                                   # what an agent sees
-bundle.registry.call("payments.balance", account="acme")    # dispatch by name
-bundle.world                                                # the in-memory state
-bundle.intents                                              # Intent Verification service
+bundle = build_world(tenant="acme")            # tenant optional but recommended
+bundle.registry.catalog()                      # what an agent sees
+bundle.registry.call("payments.balance", account="acme")   # dispatch by name
+bundle.world                                   # the in-memory state
+bundle.intents                                 # Intent Verification service
+bundle.collect                                 # the receivables facade
+bundle.tenant                                  # resolved tenant (or None)
 ```
 
-`build_world()` returns a `Bundle(world, registry, intents, payments, email,
-graph)` and registers all 12 tools onto a fresh `ToolRegistry`.
+`build_world(registry=None, secret=..., clock=None, tenant=None, data_dir=None)`
+returns a `Bundle(world, registry, intents, payments, email, graph, collect)` and
+registers all 29 tools onto a fresh `ToolRegistry`.
+
+`tenant` resolves from the argument, else `HELIOS_TENANT`, else `None`.
+`data_dir` resolves from the argument, else `HELIOS_DATA_DIR`, else `None`.
+
+**Two worlds in one process now work correctly.** `build_world()` used to bind
+module-level singletons (`payments.bind`, `email_sender.bind`,
+`simulation.set_profiles`), so the *last* call in a process won dispatch for every
+registry — a real trap for tests and for a multi-tenant app. It now registers
+closures bound to its own `Bundle`. `bind()` remains as a deprecated shim.
 
 ## Catalog
 
@@ -44,20 +74,226 @@ the one tool where a control is enforced by the implementation as well as by
 policy — worth knowing, because it means an app can get this wrong twice and
 still not lose money.
 
-Money is **integer cents everywhere**. Never a float. A rounding error in an
-invoice total is a real financial error.
-
 `state` values observed: `settled`, `rejected`.
+
+### collect — receivables over `payments_collect.PaymentStore`
+
+| Tool | Side effect | Tenant-scoped | Arguments | Returns |
+|---|---|---|---|---|
+| `collect.add_receivable` | **yes** | yes | `customer_id: str`; `amount_cents: int`; `currency: str`; `invoice_no: str\|None`; `due_date: str\|None`; `meta: dict\|None` | `{receivable_id, status, ...}` |
+| `collect.list_receivables` | no | yes | `status: str\|None` | `{receivables: list}` |
+| `collect.create_payment_link` | **yes** | yes | `receivable_id: str`; `amount_cents: int\|None`; `expires_at: str\|None`; `one_time: bool`; `idempotency_key: str\|None` | `{link_id, url, amount_cents, ...}` |
+| `collect.status` | no | yes | `receivable_id: str` | `{receivable: dict\|None}` |
+| `collect.refund` | **yes** | yes | `attempt_id: str`; `amount_cents: int`; `reason: str`; `auth_code: str\|None` | `{attempt_id, state, refunded_amount_cents, ...}` |
+
+`collect.refund` requires an intent `auth_code` exactly like `payments.send` does —
+the teammate store's `record_refund` has **no** authorization parameter, so the
+gate is added here. Without a valid code it is refused, not executed.
+
+`create_payment_link` returns a **simulated** URL, `https://pay.helios.test/l/<id>`.
+There are no real payment rails anywhere in this system (decision B.4). Pass an
+`idempotency_key` to make link creation repeatable; the store caches the first
+result per `(tenant, key)` and never caches a failure, so a retry after an error
+re-runs.
+
+**Tenancy is never defaulted.** The teammate models default `business_id="dev"`.
+That default is not used here: every call passes the bundle's tenant explicitly,
+and a tool that needs one raises rather than silently mixing two SMEs' books.
+
+#### Webhooks are not tools
+
+`record_payment_success` and provider events are **not** registered as tools — an
+agent must not be able to declare that a customer paid. They are reachable only
+through the facade, for an app's webhook handler:
+
+```python
+bundle.collect.apply_provider_event(provider="alipay", event_id="evt_1",
+                                    payload={...})          # append-only
+bundle.collect.record_payment_success(attempt_id, provider_order_ref=...)
+```
+
+A successful capture **also posts to the `fin_tools` ledger** via
+`payments.receive`, so one ledger holds the truth instead of two disagreeing.
+The mirror is guarded against double-posting: a replayed webhook (identical
+payload, same `event_id`) and a duplicate capture both leave the ledger unchanged.
+Note that the append-only event log rejects a *different* payload for an
+already-seen `event_id` (`event_conflict`) — that is the store protecting its
+audit trail, not a bug.
+
+`apply_provider_event` is deliberately not in the registry, and stays out of
+`NOT_AGENT_CALLABLE`'s way because it is never registered at all.
 
 ### email
 
-| Tool | Side effect | Arguments | Returns |
-|---|---|---|---|
-| `email.send` | **yes** | `to, subject, body: str`; `template: str\|None` | `{message_id, to, subject}` |
-| `email.outbox` | no | *(none)* | `{messages: list}` |
+| Tool | Side effect | Tenant-scoped | Arguments | Returns |
+|---|---|---|---|---|
+| `email.send` | **yes** | yes | `to, subject, body: str`; `template: str\|None` | `{message_id, to, subject, delivered, transport}` |
+| `email.send_template` | **yes** | yes | `to: str`; `template: str`; `fields: dict`; `idempotency_key: str\|None` | `{message_id, template, to, delivered, replayed, ...}` |
+| `email.templates` | no | — | *(none)* | `{templates: [{name, required_fields, optional_fields}]}` |
+| `email.outbox` | no | — | *(none)* | `{messages: list}` |
 
 Side-effecting because it is visible to a human outside the system — the
 threshold that matters for gating is *external visibility*, not persistence.
+
+Two send paths, deliberately different, because the imported `email_tool` forces
+the split:
+
+- `email.send` is free-form. It writes to `world.outbox`. When
+  `EMAILTOOL_<TENANT>_SMTP_HOST` is set for the bundle's tenant it *also* delivers
+  through the teammate's `SmtpTransport` and records the provider message id in
+  `transport`. It cannot route through `EmailSender.send()`, because that method's
+  schema requires a `template_id` from its five-template enum and rejects a
+  free-form request outright.
+- `email.send_template` routes through `EmailSender` and the five templates:
+  `invoice_delivery`, `reminder_pre_due`, `notice_overdue`, `negotiation_offer`,
+  `escalate_to_owner`. Call `email.templates` first to get each template's
+  required fields — every one of them needs several, and `escalate_to_owner`
+  needs ten.
+
+Idempotency uses the teammate's JSONL store under `HELIOS_DATA_DIR`. A repeated
+`idempotency_key` replays the original response and does not send a second email;
+the result carries `replayed: true` so a UI can say "already sent" rather than
+implying a fresh send. Replays do not even need a working transport.
+
+Both send tools carry the `records_contact` marker, so an app can tell which
+tools write to the customer-contact history.
+
+### forecast — over `helios_forecast`
+
+| Tool | Side effect | Arguments | Returns |
+|---|---|---|---|
+| `forecast.project` | no | `opening: list[dict]`; `flows: list[dict]`; `start: str`; `days: int` | `{days, final_balance_cents, min_balance_cents, min_balance_date, first_shortfall, expected_inflows_cents, expected_outflows_cents, total_cents, inflows_cents, outflows_cents, inputs_hash}` |
+| `forecast.simulate` | no | the above + `n_paths: int`; `seed: int`; `threshold_cents: int`; `common_shock: dict\|None` | `{days, n_paths, seed, percentiles, min_balance_percentiles, probability_below, first_shortfall_probability, first_shortfall_median_date, inputs_hash}` |
+| `forecast.scenario` | no | the project args + `delta: dict` | `{baseline_final_balance_cents, scenario_final_balance_cents, final_balance_change_cents, ..., scenario_resolves_baseline_shortfall}` |
+| `forecast.query` | no | the project args + `query: str`; `on: str\|None`; `window: list\|None`; `threshold_cents: int\|None`; `direction: str\|None` | `{query, value}` (shape depends on `query`) |
+
+`forecast.query` folds five read queries into one tool behind a `query` argument:
+`balance_at`, `min_balance`, `first_shortfall`, `probability_below`,
+`expected_total`. The first three run on the deterministic projection; the last
+two need a Monte Carlo run, which the tool performs internally.
+
+**Cents in, cents out.** The engine is float-based; the wrapper divides by 100 on
+the way in and rounds half-even on the way out. Conversion is field-by-field and
+explicit — never a blind walk over numbers — because a flow mixes money (`amount`,
+`amount_distribution[i][0]`) with non-money (`offset_days` day counts,
+`probability`, resize factors). Getting that wrong would silently turn a
+probability into a payment.
+
+`common_shock` carries a caveat worth repeating to any user who sees it, from the
+teammates' own decision record (D12): it draws **one** timing offset per simulated
+path and shifts **all** flows in that path by the same amount — inflows *and*
+outflows together. It models correlated timing, not a one-sided shock. It can
+therefore *lower* measured shortfall risk as easily as raise it. It is not a
+stress test.
+
+`inputs_hash` is on every result, so a forecast can be tied to the exact inputs
+that produced it — which is what lets a user ask "why did this change?" and get an
+answer.
+
+### behavior — over `helios_forecast.behavior`
+
+| Tool | Side effect | Arguments | Returns |
+|---|---|---|---|
+| `behavior.profile` | no | `records: list[dict]`; `customer_id: str`; `segment: str`; `prior_strength: float` | `{offset_days, n, level}` |
+| `behavior.promise_rate` | no | `records: list[dict]`; `customer_id: str`; `segment: str`; `prior_strength: float` | `{promise_kept, n, kept, segment, level}` |
+
+Empirical-Bayes payment timing and Beta-Binomial promise rates. `records` are
+`{customer_id, segment, due, paid}` for the profile and
+`{customer_id, segment, kept}` for the promise rate.
+
+Read `level` before trusting the number: it reports where the estimate actually
+came from — `customer`, `segment`, `global`, or `default`. **`default` means there
+was no evidence at all** and the value is the built-in prior
+(`[[0, 0.5], [30, 0.5]]`), not a measurement of this customer. A UI that shows a
+`default` profile as if it were learned is misleading its user.
+
+`behavior.profile`'s `offset_days` output is directly consumable as a flow's
+`date.offset_days` input, so a learned profile can drive `forecast.simulate`
+without reshaping.
+
+### market — public reference rates and registry evidence
+
+| Tool | Side effect | Arguments | Returns |
+|---|---|---|---|
+| `market.rate` | **yes** | `series: str`; `as_of: str\|None` | `{series, as_of, value_pct, value_bps, provenance, node_id}` |
+| `market.borrowing_cost_compare` | no | `amount_cents: int`; `days: int`; `options: list[dict]` | `{options, cheapest, rate_used, disclaimer}` |
+| `market.company_lookup` | no | `query: str` | `{matches: list, provenance}` |
+| `market.collection_period` | no | `industry: str\|None`; `ts_code: str\|None` | `{national_avg_days, industry_median_days, basis, provenance}` |
+
+`series` ∈ `lpr_1y`, `lpr_5y`, `shibor_1m`, `shibor_3m`.
+
+`market.rate` is the one side-effecting tool in this family, and the reason is
+worth stating: it **publishes a verified graph node**
+`market_rate:<series>@<date>` carrying `source` and `stale`. That writes shared
+state other apps read, so it is gated — not because reading a rate is dangerous.
+
+This is deliberately *not* a general market-data catalog. There is no FX, no
+CPI/PPI/PMI, no yield curves, no credit-score tiers, no calendars. Four tools,
+each tied to a decision an owner already faces:
+
+1. **"Can I make payroll on the 25th?"** → `forecast.query(first_shortfall)` for
+   the gap, then `market.borrowing_cost_compare` to price the real options: draw
+   the credit line, take a supplier's early-payment discount, delay a bill, or
+   chase a customer for free.
+2. **"funds are short for this bill"** → the same comparison, `delay_supplier` vs
+   `credit_line`. **"supplier announced a new bank account"** →
+   `market.company_lookup` adds registry evidence to the hold: does the supplier on
+   file match the sender of the change?
+3. **"new customer, no payment history"** → `market.collection_period` gives the
+   national average collection period as the prior, and says so in `basis`.
+
+`market.borrowing_cost_compare` accepts four option kinds —
+`credit_line {base: lpr_1y|shibor_3m, spread_bps}`,
+`early_payment_discount {discount_pct, discount_days, net_days}`,
+`delay_supplier {late_fee_pct|None}`,
+`chase_customer {customer_id, expected_days}` — and returns each option's
+`formula` and `inputs` alongside its `annualised_pct` and `cost_cents`, plus a
+`cheapest`. **The arithmetic is returned so the auditor can recompute it** rather
+than take the number on faith. Discount cost is
+`(d/(100−d)) × (365/(net−disc))` (2/10 net 30 ≈ 37%/yr); loan cost is
+`amount × (base+spread) × days/365`. The disclaimer — "Indicative cost from public
+reference rates; not financial advice" — is always present, on every call.
+
+#### Provenance is not optional
+
+Every market result carries:
+
+```python
+{"publisher": ..., "api_name": ..., "as_of": ..., "fetched_at": ...,
+ "mode": "live"|"cache"|"core"|"fixture", "stale": bool, "source_url": ...}
+```
+
+**Surface `mode` and `stale` in the UI.** A fallback is never presented as live.
+If the demo is running on fixtures, the page should say so — showing sample data
+as today's LPR is exactly the failure this field exists to prevent.
+
+Resolution is by `HELIOS_MARKET_MODE` = `fixture | live | auto`. Default `auto`:
+live when `TUSHARE_TOKEN` is set, else the organizers' core files under
+`data/core/`, else fixtures; and on any live error it falls back to the newest
+cache/core/fixture rather than failing the call.
+
+When nothing is found anywhere, the tool raises `MarketDataUnavailable` with a
+message naming the series and the env var to set. These tools are read-only, so
+that is an honest **"unknown"** — never an invented number. An app should render
+it as unavailable, not as zero.
+
+The Tushare token comes only from `TUSHARE_TOKEN`, is never logged, and is
+redacted from every error string. Transport is HTTPS only, with a 40 calls/min
+token bucket and retries with backoff.
+
+Two endpoints the teammate adapter got wrong are implemented correctly here:
+`shibor_lpr` with fields `date, 1y, 5y`, and `shibor` with
+`date, on, 1w, 2w, 1m, 3m, 6m, 9m, 1y`. The stale adapter
+(`api_name="lpr"`, fields `TRADE_DATE/LPR1Y/ON`, plain `http://`) lives at
+`services/financial-api/financial_api/market.py`, is **not** imported by this
+package, and should be deleted or redirected by whoever owns that tree. This file
+is the corrected record of those claims (T5/T6); `specs/forecasting-research-claims.md`
+does not exist in this repo.
+
+`market.company_lookup` accepts a name, an 18-character Unified Social Credit
+Code, or a `ts_code`. A miss returns an empty `matches` list — never a fuzzy
+substitute. It only attempts the direct company lookup when the query looks like a
+`ts_code` or a USCC, so a plain company name does not burn a live API call.
 
 ### spreadsheet
 
@@ -69,6 +305,9 @@ threshold that matters for gating is *external visibility*, not persistence.
 
 `spreadsheet.save` is side-effecting because it touches the filesystem. A
 generated app that lets an agent write files should gate it and constrain `path`.
+
+The imported `spreadsheets` package also ships live Feishu and WPS engines behind
+credentials; only the offline file engine is wired into these tools.
 
 ### knowledge graph
 
@@ -93,15 +332,22 @@ lists the cross-app graph read/write interface as to be defined.
 |---|---|---|---|
 | `simulation.forecast` | no | `invoices: list[dict]`; `policy: dict\|None`; `n_runs: int`; `seed: int` | `{summary: dict, curve: dict}` |
 
-Monte-Carlo cash-in forecast over an invoice book using `PayerProfile` payer
-behaviour. Read-only and seeded, so it is reproducible — important for an app
-that shows a forecast to a user who will ask why it changed.
+**Re-boded in session `p1-tools`.** Signature and return shape are unchanged, but
+the body now delegates to `forecast.simulate` over the `helios_forecast` engine
+instead of running its own persona-based Monte Carlo. The persona invoice book is
+translated into engine flows with expected value preserved exactly, so a given
+invoice book produces the same expected cash-in as before — what changed is which
+engine does the arithmetic. One consequence: the payment-timing distribution is
+discretised into day buckets, and buckets whose weight rounds to zero are dropped
+(the engine rejects a zero-weight bucket).
 
 Also importable directly, not only via the registry:
 
 ```python
 from fin_tools import simulate, what_if, sandbox_run, PayerProfile, SimPolicy
 ```
+
+These module-level functions are unchanged and still back their own tests.
 
 `sandbox_run(world, intents, tool, **kwargs)` executes a tool against a **shadow
 world** and reports the diff (`ShadowReport(tool, executed, result, effects)`).
@@ -111,6 +357,12 @@ useful for the `approval_queue` UI, because the owner can see what would happen.
 `what_if(invoices, profiles, baseline=SimPolicy(...), variant=SimPolicy(...))`
 compares two policies. This is the capability behind Helios Cash Planner's
 plain-language what-ifs.
+
+> Naming trap: `sandbox_run` has a branch for a tool literally named
+> `email.send_template`, which is now *also* a real registered tool with a
+> different signature and a different template system. Nothing is broken — no
+> test exercises that branch and the class method it calls still exists — but the
+> two should not share a name.
 
 ### Intent Verification — not in the registry
 
@@ -146,6 +398,48 @@ three invalidates it, so an authorization for $1,250 to Northwind cannot be
 replayed as $48,000 to Delta. `VerificationError` is raised on a bad, expired, or
 already-consumed code. `python3 -m fin_tools.demo` exercises all four rejections.
 
+Two tools enforce this in their implementation, not just in policy:
+`payments.send` and `collect.refund`. Both refuse without a valid code.
+
+## The HTTP service
+
+```python
+from fin_tools import ToolServer, HttpToolClient, free_port
+
+srv = ToolServer(bundle, port=free_port(), execution_secret="...").start()
+client = HttpToolClient(srv.base_url, execution_secret="...")
+client.catalog()                                  # GET /tools
+client.call("payments.balance", account="acme")   # POST /call
+srv.stop()
+```
+
+Routes: `GET /health` (open), `GET /tools`, `POST /call {"tool","args"}` →
+`{"ok","tool","result"}` or `{"ok":false,"rejected":true,"error"}`, and
+`GET /kg/nodes`. Run it with `python -m fin_tools --host --port` (default 8080).
+
+**Bearer auth.** When `HELIOS_EXECUTION_SECRET` is set (or `execution_secret` is
+passed), every route except `GET /health` requires
+`Authorization: Bearer <secret>`, compared with `hmac.compare_digest`. A missing
+or wrong token is a 401. When no secret is configured the service keeps its
+historical open behaviour, so existing local callers are unaffected.
+
+`HttpToolClient` distinguishes the two failure modes: 401/403 raises
+`PermissionError`, and a network failure raises `ServiceUnavailable` — it **fails
+closed** rather than pretending the call succeeded.
+
+**The bearer token is not the signing secret.** It authenticates the HTTP caller;
+it does not authorize any particular action. An authenticated caller that guesses
+an `auth_code` is still refused by `payments.send`. Authenticating the caller does
+not authorize the action. This is tested in
+`tests/test_service_auth_persistence.py`.
+
+**Persistence.** `SqlitePersistence(data_dir=...)` saves and restores the `World`
+snapshot — ledger, balances, outbox, graph — to `world_state.sqlite3`. With no
+data dir it is a disabled no-op. `python -m fin_tools` wires it up from
+`HELIOS_DATA_DIR` and saves on shutdown, so a container restart does not forget
+payments or verified facts. Note that if you deploy this, `HELIOS_DATA_DIR` must
+be a real volume; `/tmp` loses state on restart.
+
 ## Adding a tool
 
 An app may add its own tools (like the example's `lookup_invoice`, which reads
@@ -169,15 +463,41 @@ spec = ToolSpec(
     side_effects=False,
     handler=lambda contract_id: {"contract": ...},
     tags=("myapp",),
+    # optional, all added in session p1-tools:
+    input_json_schema=None,   # full JSON Schema; wins over the flat map
+    tenant_scoped=False,      # True => the tool operates on one tenant's data
+    records_contact=False,    # True => writes customer-contact history
 )
 bundle.registry.register(spec)
 ```
 
-Note the **contract mismatch** between packages: `fin_tools.ToolSpec` uses
-`side_effects` (plural) and a flat `{name: "type"}` schema with
-`handler(**kwargs)`, while `agent_toolkit.ToolDefinition` uses `side_effect`
-(singular), a JSON Schema object, and `handler(args: Mapping)`. They are not
-interchangeable. See `platform-status.md` §4.
+### The contract mismatch is now bridged
+
+`fin_tools.ToolSpec` uses `side_effects` (plural), a flat `{name: "type"}` schema
+and `handler(**kwargs)`. `agent_toolkit.ToolDefinition` uses `side_effect`
+(singular), a JSON Schema object and `handler(args: Mapping)`. The imported
+teammate packages use *both* spellings.
+
+They are still not interchangeable by hand, but they now convert:
+
+```python
+from fin_tools.contracts import ToolSpec
+
+ToolSpec.from_definition(tool_definition)   # agent_toolkit -> ToolSpec
+ToolSpec.from_teammate({"name": ..., "side_effect": True, ...})
+                                             # teammate dict -> ToolSpec
+```
+
+Both accept either `side_effect` or `side_effects`. And `input_json_schema` lets a
+tool declare a **full JSON Schema** — including nested objects, which the flat
+`{name: "type"}` map cannot express. `toolkit_bridge` passes a JSON Schema
+through untouched and still converts flat maps, so `email.send_template`'s nested
+`fields: dict` and `forecast.*`'s nested `flows` survive the round trip to the
+agent runtime.
+
+See `platform-status.md` §4 for the remaining drift (tenancy naming, cents vs
+floats) and `docs/sessions/p1-tools/HANDOFF-TO-P2-P3.md` for open cross-boundary
+requests.
 
 ## Regenerate this table
 
@@ -185,10 +505,10 @@ interchangeable. See `platform-status.md` §4.
 cd platform/financial-tools
 python3 -c "
 from fin_tools import build_world
-b = build_world()
-print('%-24s %-12s %s' % ('TOOL','SIDE_EFFECT','TAGS'))
-for t in b.registry.list():
-    print('%-24s %-12s %s' % (t.name, t.side_effects, list(t.tags)))
+b = build_world(tenant='acme')
+print('%-34s %-12s %-8s %s' % ('TOOL','SIDE_EFFECT','TENANT','TAGS'))
+for t in sorted(b.registry.list(), key=lambda s: s.name):
+    print('%-34s %-12s %-8s %s' % (t.name, t.side_effects, t.tenant_scoped, list(t.tags)))
 print('total:', len(b.registry.list()))
 "
 python3 -m fin_tools.demo     # end-to-end: simulate -> intent -> shadow -> pay -> email -> graph
@@ -196,3 +516,13 @@ python3 -m fin_tools.demo     # end-to-end: simulate -> intent -> shadow -> pay 
 
 `python3 -m fin_tools.demo` is the fastest way to see every family used
 correctly together. Read it before writing an app that moves money.
+
+To exercise the market family offline without a token:
+
+```bash
+HELIOS_MARKET_MODE=fixture python3 -c "
+from fin_tools import build_world
+b = build_world(tenant='acme')
+print(b.registry.call('market.rate', series='lpr_1y'))
+"
+```
