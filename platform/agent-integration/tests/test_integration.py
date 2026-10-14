@@ -1128,6 +1128,61 @@ def test_summary_is_json_serializable(integration: Integration) -> None:
     assert summary["side_effects_executed"] == 1
 
 
+def test_summary_counts_only_side_effects_not_read_only_calls(
+    integration: Integration,
+) -> None:
+    """Defect 2: read-only calls are appended to `actions` too.
+
+    `_execute_direct` records a successful read as an action entry with
+    `executed: True` (runtime.py:248-261), so `len(self.actions)` and the
+    `executed` property both over-count whenever a run reads before it acts.
+    `side_effects_attempted` / `side_effects_executed` are what an operator
+    reads to know how many gated actions a run took; inflating them with
+    lookups makes the number meaningless.
+
+    The discriminator is `proposal_id`: only a side-effect call is turned into
+    a Proposal and adjudicated, so only those entries carry one. A read-only
+    entry has `proposal_id is None`.
+
+    This run does one lookup then one send, so the correct counts are 1 and 1.
+    Before the fix, `attempted` was 2 (both actions) and `executed` was 2 (both
+    had `executed: True`).
+    """
+    lookup = ToolCall(name="lookup_invoice", arguments={"invoice_id": "INV-1001"})
+    result = integration.runtime.run(
+        driver=ScriptedDriver([lookup, _send()], final_text="done"),
+        task=SUMMARY,
+        task_type=TASK,
+    )
+    summary = result.summary()
+    assert summary["status"] == COMPLETED
+
+    # Both calls happened; only one is a side effect.
+    assert len(result.actions) == 2, "sanity: a read and a send were recorded"
+    assert summary["side_effects_attempted"] == 1
+    assert summary["side_effects_executed"] == 1
+
+
+def test_summary_attempted_counts_gated_calls_that_did_not_execute(
+    integration: Integration,
+) -> None:
+    """A denied/held side effect was still *attempted*, just not executed.
+
+    `attempted` must count every adjudicated side-effect call regardless of
+    verdict, while `executed` counts only those that ran. A denied call has a
+    `proposal_id` but `executed: False`.
+    """
+    denied = _send(invoice_id="INV-1003")  # large invoice -> held, not executed
+    result = integration.runtime.run(
+        driver=ScriptedDriver([denied], final_text="done"),
+        task=SUMMARY,
+        task_type=TASK,
+    )
+    summary = result.summary()
+    assert summary["side_effects_attempted"] == 1
+    assert summary["side_effects_executed"] == 0
+
+
 # ---------------------------------------------------------------------------
 # Wiring and transport equivalence
 # ---------------------------------------------------------------------------

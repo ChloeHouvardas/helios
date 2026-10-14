@@ -108,7 +108,10 @@ class RunResult:
     status: str
     #: The task session, when one was established.
     session: TaskSession | None = None
-    #: (proposal, gate result, executed result-or-error) per side effect.
+    #: Every recorded call: side effects AND read-only calls. A side-effect
+    #: entry carries a `proposal_id` and a `verdict`; a read-only entry has
+    #: both as None (it is never adjudicated — see specs/interfaces.md §3).
+    #: Filter with `side_effects` when you mean "the gated calls".
     actions: list[dict[str, Any]] = field(default_factory=list)
     #: Text the agent finished with, if any.
     final_text: str = ""
@@ -119,16 +122,33 @@ class RunResult:
     action_log_path: str = ""
 
     @property
+    def side_effects(self) -> list[dict[str, Any]]:
+        """Only the adjudicated calls.
+
+        Read-only calls are appended to `actions` too, so `actions` cannot be
+        used to count side effects. A proposal_id is the discriminator: it is
+        set exactly when a call was turned into a Proposal and sent to the
+        auditor, which is the definition of a side effect here.
+        """
+        return [a for a in self.actions if a.get("proposal_id") is not None]
+
+    @property
     def executed(self) -> list[dict[str, Any]]:
-        return [a for a in self.actions if a.get("executed")]
+        """Side effects that actually ran.
+
+        Restricted to side effects: a read-only call has `executed: True` on
+        success, but it is not a side effect and must not be counted as one.
+        """
+        return [a for a in self.side_effects if a.get("executed")]
 
     def summary(self) -> dict[str, Any]:
+        side_effects = self.side_effects
         return {
             "run_id": self.run_id,
             "status": self.status,
             "authorized": bool(self.session and self.session.authorized),
             "granted_tools": list(self.session.allowed_tools) if self.session else [],
-            "side_effects_attempted": len(self.actions),
+            "side_effects_attempted": len(side_effects),
             "side_effects_executed": len(self.executed),
             "holds": [h["hold_id"] for h in self.holds],
             "action_log_path": self.action_log_path,
