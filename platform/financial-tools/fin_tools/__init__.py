@@ -35,6 +35,12 @@ from .service import (
     ToolServer,
     free_port,
 )
+from .toolkit_bridge import (
+    NOT_AGENT_CALLABLE,
+    agent_tool_definitions,
+    as_tool_definitions,
+    to_json_schema,
+)
 
 
 @dataclass
@@ -78,4 +84,6 @@ __all__ = [
     "PayerProfile", "SimPolicy", "simulate", "what_if", "sandbox_run",
     "ToolClient", "InProcessToolClient", "HttpToolClient", "ToolServer",
     "ServiceUnavailable", "SECRET_ENV", "free_port",
+    "to_json_schema", "as_tool_definitions", "agent_tool_definitions",
+    "NOT_AGENT_CALLABLE",
 ]
