@@ -10,7 +10,25 @@ requires-python = ">=3.10"
 dependencies = [
     # helios_forecast projects cash-flow paths with Monte Carlo simulation.
     "numpy>=1.26",
+    # spreadsheets reads and writes .xlsx workbooks (engine.py, parsing.py).
+    "openpyxl>=3.1",
+    # spreadsheets/app.py is a FastAPI service; the tests build workbooks and
+    # drive the engine directly, but importing the package pulls app.py in.
+    "fastapi>=0.115",
+    "pydantic>=2.8",
+    "python-multipart>=0.0.9",
 ]
+
+[project.optional-dependencies]
+# The upstream branch declared pandas + rapidfuzz here for `import_sheet` and
+# `reconcile`. Neither is imported by any file in this package as imported, so
+# they are not pulled into the base install. Kept as an extra so the upstream
+# intent is recorded rather than silently dropped.
+import = [
+    "pandas>=2.2",
+    "rapidfuzz>=3.6",
+]
+dev = ["pytest>=8"]
 
 # `fin_tools` is a flat-layout package with non-package siblings (`tests/`,
 # `fixtures/`, `research/`). Setuptools' automatic flat-layout discovery refuses
@@ -18,9 +36,10 @@ dependencies = [
 #
 # The sibling tool packages imported from teammates' work live alongside
 # `fin_tools` in this same directory and are installed by the same pyproject,
-# so they are listed here too.
+# so they are listed here too. `spreadsheets` is a package with a `dev/`
+# subpackage, so both are named.
 [tool.setuptools]
-packages = ["fin_tools", "helios_forecast"]
+packages = ["fin_tools", "helios_forecast", "spreadsheets", "spreadsheets.dev"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
