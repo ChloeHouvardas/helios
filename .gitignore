@@ -1,1 +1,12 @@
-dev-resources
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Runtime artifacts
+.runs/
+
+# Local environment
+.env
