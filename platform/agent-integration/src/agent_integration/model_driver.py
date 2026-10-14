@@ -245,16 +245,15 @@ class ModelDriver:
     def _messages(
         self, instructions: str, history: Sequence[Mapping[str, Any]]
     ) -> list[dict[str, Any]]:
+        # GATE_NOTICE is always present, so there is always a system turn.
         system = "\n\n".join(
             part for part in (instructions.strip(), GATE_NOTICE) if part
         )
-        messages: list[dict[str, Any]] = []
-        if system:
-            messages.append({"role": "system", "content": system})
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
         messages.extend(as_chat_messages(history))
-        if not messages:
-            raise ModelError("the model was given no messages to work from")
-        # The endpoint rejects a conversation of only system/assistant turns.
+        # The endpoint refuses a thread of only system/assistant turns, and
+        # that is reachable: history is empty on the very first turn if the
+        # caller passes no task text. Add a user turn rather than fail.
         if all(m["role"] in {"system", "assistant"} for m in messages):
             messages.append({"role": "user", "content": "Continue the task."})
         return messages
