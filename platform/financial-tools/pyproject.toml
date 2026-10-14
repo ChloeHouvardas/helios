@@ -5,15 +5,22 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fin-tools"
 version = "0.1.0"
-description = "Helios Financial Tools Developer Interface — offline prototypes (payments, email, spreadsheets, simulation, intent verification, knowledge graph)"
+description = "Helios Financial Tools Developer Interface — offline prototypes (payments, email, spreadsheets, simulation, intent verification, knowledge graph, forecasting)"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    # helios_forecast projects cash-flow paths with Monte Carlo simulation.
+    "numpy>=1.26",
+]
 
 # `fin_tools` is a flat-layout package with non-package siblings (`tests/`,
 # `fixtures/`, `research/`). Setuptools' automatic flat-layout discovery refuses
 # to guess in that situation, so the package list is stated explicitly.
+#
+# The sibling tool packages imported from teammates' work live alongside
+# `fin_tools` in this same directory and are installed by the same pyproject,
+# so they are listed here too.
 [tool.setuptools]
-packages = ["fin_tools"]
+packages = ["fin_tools", "helios_forecast"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
