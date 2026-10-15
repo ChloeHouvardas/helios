@@ -81,9 +81,9 @@ def test_diagnostics_reports_the_real_readiness(client):
     c, server = client
     payload = c.get("/diagnostics").json()
     assert payload["status"] == "ok"
-    assert payload["rules_loaded"] == 17
+    assert payload["rules_loaded"] == 18
     assert payload["tools_declared"] == 10
-    assert payload["bills"] == 15
+    assert payload["bills"] == 16
     assert payload["suppliers"] == 8
     assert server.STATE.built is True
 

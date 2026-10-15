@@ -197,6 +197,16 @@ class PayablesFactSource:
                 paid_so_far + int(bill_amount or 0))
             facts["run_total_cap_cents"] = config.RUN_TOTAL_CAP_CENTS
 
+            # The forecaster inside the gate: if this bill is paid today, can the
+            # account still make the next payroll? Asked of the platform's own
+            # projection, so "there will be enough" is not something the agent
+            # can assert. Held, not denied: the owner may know money is coming.
+            projected = self.book.projected_min_balance_before_payroll_after(subject_id)
+            facts["projected_min_balance_before_payroll_cents"] = projected
+            facts["creates_payroll_shortfall"] = (projected is not None and projected < 0)
+            facts["payroll_due_date"] = self.book.next_payroll_date().isoformat()
+            facts["payroll_cents"] = config.PAYROLL_CENTS
+
             # Credit-line facility. The headroom is the ceiling a draw is measured
             # against, resolved from configuration minus what is already drawn, so
             # an agent cannot enlarge its own facility by asking for more.

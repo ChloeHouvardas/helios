@@ -415,6 +415,26 @@ rules:
         on_exceed: hold
     severity: critical
 
+  # 2b. The forecaster inside the gate: HOLD a payment that leaves the account
+  # unable to make the next payroll. The fact is the platform forecaster's
+  # projected minimum balance through payroll after this payment; the agent
+  # cannot assert that funds are coming. Held rather than denied because the
+  # owner may know a receipt is due that the book does not. Listed before the
+  # large-payment hold so that, when both fire, the owner is shown THIS question:
+  # payroll at risk is the thing to read.
+  - id: app.creates_payroll_shortfall
+    description: Owner approval for a payment that leaves the account short for the next payroll
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: >
+      paying this bill now leaves the account unable to make the next payroll on
+      the 25th according to the cash projection; the owner must decide whether to
+      pay now or wait for receipts
+    approval_if_fact_true: [creates_payroll_shortfall]
+    # Critical among holds, so when the large-payment hold fires on the same
+    # call the owner is shown THIS question: payroll at risk is the thing to read.
+    severity: critical
+
   # 3. Owner approval above 25,000.00 — bound on the FACT, not the argument. This
   # is the rule that makes "facts are not claims" observable. An agent that
   # understates `amount_cents` to slip under the threshold is still held, because

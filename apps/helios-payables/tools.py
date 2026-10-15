@@ -60,6 +60,7 @@ from agent_toolkit.store import Store
 
 from book import Book
 import config
+import tenant_events
 import funding
 
 # Tool names. Both manifests must agree with these, and tests assert that they do.
@@ -677,6 +678,9 @@ def make_pay_bill(book: Book, bundle: Any) -> ToolDefinition:
                  "reference": book.reference(bill_id)},
                 source=config.GRAPH_SOURCE)
             out["graph_node_id"] = node["node_id"]
+        out["event"] = tenant_events.publish(
+            "bill.paid", bill=bill_id, supplier=supplier_id,
+            amount_cents=int(recorded_cents), paid_at=book.today.isoformat())
         return out
 
     return ToolDefinition(
@@ -752,6 +756,9 @@ def make_reschedule_bill(book: Book, bundle: Any) -> ToolDefinition:
             "status": str(updated.get("status")),
             "reason": reason,
             "graph_node_id": node_id,
+            "event": tenant_events.publish("bill.rescheduled", bill=bill_id,
+                                           new_date=new_date.isoformat(),
+                                           previous_date=previous.isoformat() if previous else None),
         }
 
     return ToolDefinition(

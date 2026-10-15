@@ -544,7 +544,10 @@ def test_funding_scenario_draws_under_its_own_gate_and_shows_provenance(app):
     assert evidence["provenance"]["mode"] == "fixture"
     assert isinstance(evidence["provenance"]["stale"], bool)
     assert "not financial advice" in evidence["disclaimer"]
-    assert "app.large_payment_approval" in _rules_that_fired(outcome)
+    # Two holds fire on the payment: the large-payment rule and, because paying
+    # 195,000.00 leaves nothing for payroll, the forecaster's. Either may be the
+    # one the owner is shown; both are controls working.
+    assert {"app.large_payment_approval", "app.creates_payroll_shortfall"} & _rules_that_fired(outcome)
 
 
 def test_credit_line_draw_is_capped_by_trusted_headroom(app):
@@ -1092,3 +1095,59 @@ def test_no_scenario_leaks_a_credential_into_stdout(app, capsys):
     _run(app, _scenario("BILL-2010"))
     captured = capsys.readouterr()
     assert not _CREDENTIAL_RUN.search(captured.out + captured.err)
+
+
+# ---------------------------------------------------------------------------
+# 14. The forecaster inside the gate
+# ---------------------------------------------------------------------------
+
+def test_the_payroll_shortfall_fact_comes_from_the_platform_forecaster(app):
+    """`creates_payroll_shortfall` is the forecaster's projected minimum through
+    payroll after the payment, not a number the agent can assert."""
+    facts = PayablesFactSource(app.book)
+    short = facts.extra_facts_for("BILL-2016")
+    assert short["creates_payroll_shortfall"] is True
+    assert short["projected_min_balance_before_payroll_cents"] < 0
+    assert short["payroll_due_date"] == app.book.next_payroll_date().isoformat()
+    fine = facts.extra_facts_for("BILL-2001")
+    assert fine["creates_payroll_shortfall"] is False
+    assert fine["projected_min_balance_before_payroll_cents"] > 0
+
+
+def test_a_payment_that_endangers_payroll_is_held_for_the_owner(app):
+    owner = ScriptedOwner(verbose=False)
+    outcome = run_scenario(app, _scenario("BILL-2016"), owner)
+    assert outcome.status == "done"
+    assert "app.creates_payroll_shortfall" in _rules_that_fired(outcome)
+    assert owner.decisions and owner.decisions[0]["approved"] is True
+    assert "payroll" in owner.decisions[0]["question"]
+
+
+def test_a_payment_that_leaves_payroll_covered_is_not_held_for_it(app):
+    outcome = _run(app, _scenario("BILL-2001", control_contains="normal path"))
+    assert "app.creates_payroll_shortfall" not in _rules_that_fired(outcome)
+    assert not outcome.owner_decisions
+
+
+def test_verified_changes_are_announced_on_the_bus_when_one_is_configured(app, monkeypatch):
+    """Offline there is no bus and the tool says so; with one, the SDK is called."""
+    import sys
+    import types
+
+    tool = next(t for t in app_tools.build_tools(app.book, app.bundle)
+                if t.name == "reschedule_bill")
+    future = (app.book.today + timedelta(days=30)).isoformat()
+    monkeypatch.delenv("HELIOS_REDIS_URL", raising=False)
+    out = tool.handler({"bill_id": "BILL-2009", "new_date": future,
+                        "reason": "Funds expected in three weeks after the Acme receipt lands."})
+    assert out["event"] == {"status": "no_bus", "event": "bill.rescheduled"}
+
+    published: list[tuple[str, dict]] = []
+    fake = types.ModuleType("helios_sdk")
+    fake.publish_event = lambda event, **data: published.append((event, data)) or {"status": "published"}
+    monkeypatch.setitem(sys.modules, "helios_sdk", fake)
+    monkeypatch.setenv("HELIOS_REDIS_URL", "redis://helios-redis:6379/0")
+    out = tool.handler({"bill_id": "BILL-2009", "new_date": (app.book.today + timedelta(days=40)).isoformat(),
+                        "reason": "Funds expected in four weeks after the Acme receipt lands."})
+    assert out["event"] == {"status": "published"}
+    assert published[0][0] == "bill.rescheduled" and published[0][1]["bill"] == "BILL-2009"

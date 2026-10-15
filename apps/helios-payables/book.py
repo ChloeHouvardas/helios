@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from agent_toolkit.store import Store
+from fin_tools.forecast import forecast_query
 
 # Flat module, matching `apps/helios-collect`: this app is imported with its own
 # directory on `sys.path` (see `app.py`), not as a package. A relative import
@@ -567,6 +568,44 @@ class Book:
     def contact_count(self, supplier_id: str, within_days: int) -> int:
         cutoff = self.today - timedelta(days=int(within_days))
         return sum(1 for when in self.contact_dates(supplier_id) if when >= cutoff)
+
+    # -- the forecaster, as a fact ------------------------------------------
+
+    def next_payroll_date(self) -> date:
+        """The next occurrence of the payroll day, today included."""
+        import calendar
+        cursor = self.today
+        for _ in range(3):
+            last = calendar.monthrange(cursor.year, cursor.month)[1]
+            due = cursor.replace(day=min(config.PAYROLL_DAY_OF_MONTH, last))
+            if due >= self.today:
+                return due
+            year, month = (cursor.year + cursor.month // 12, cursor.month % 12 + 1)
+            cursor = date(year, month, 1)
+        return self.today
+
+    def projected_min_balance_before_payroll_after(self, bill_id: str) -> int | None:
+        """If this bill is paid today, the lowest projected balance through payroll.
+
+        Asked of the platform's forecaster (`forecast.query min_balance`) over the
+        balance after the payment and the payroll outflow on its date, in cents.
+        Negative means paying now leaves the account unable to make payroll. `None`
+        for an unknown bill, so the rule bound on it fails closed.
+        """
+        amount = self.amount_cents(bill_id)
+        if amount is None:
+            return None
+        payroll_on = self.next_payroll_date()
+        days = (payroll_on - self.today).days + 1
+        result = forecast_query(
+            query="min_balance",
+            opening=[{"account": config.OPERATING_ACCOUNT,
+                      "balance_cents": self.balance_cents() - int(amount)}],
+            flows=[{"id": "payroll", "account": config.OPERATING_ACCOUNT,
+                    "direction": "outflow", "amount_cents": config.PAYROLL_CENTS,
+                    "date": payroll_on.isoformat()}],
+            start=self.today.isoformat(), days=days)
+        return int(result["min_balance_cents"])
 
     def record_supplier_contact(self, supplier_id: str, when: date | None = None) -> None:
         """Record that this supplier was contacted.

@@ -167,5 +167,16 @@
     "status": "unpaid",
     "duplicate_of": "",
     "notes": "Scenario: IDEMPOTENCY REPLAY. Clean on every policy rule, so the only thing that can stop it is the ledger. The first attempt carries an auth_code bound to the wrong amount and is rejected by payments.send; the retry reuses the same idempotency_key and gets the CACHED rejection back even though its code is now correct."
+  },
+  "BILL-2016": {
+    "supplier_id": "SUP-008",
+    "amount_cents": 15000000,
+    "currency": "CNY",
+    "reference": "SP-2026-2301",
+    "issue_date_days_ago": 20,
+    "due_date_days_ago": -3,
+    "status": "unpaid",
+    "duplicate_of": "",
+    "notes": "Scenario: PAYROLL SHORTFALL, HELD. 150,000.00 is inside every other limit for Stonepine (average 120,000.00, ceiling 240,000.00) but paying it leaves 30,000.00 against a 40,000.00 payroll on the 25th. The platform forecaster says so as a fact; the owner decides."
   }
 }

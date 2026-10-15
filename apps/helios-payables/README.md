@@ -72,7 +72,8 @@ expectation, and `tests/test_controls.py` asserts each one.
 | BILL-2011 | pay_bills | **declined_by_owner** | `app.large_payment_approval` | Same control, other direction: nothing is paid |
 | BILL-2012 | pay_bills | **done** | `app.large_payment_approval` | **DEMO 2** — the lying agent is still held |
 | BILL-2013 | pay_bills | **done** | — | Pays, then emails remittance advice (also gated) |
-| BILL-2014 | pay_bills | **done** | `app.large_payment_approval` | Funding: draw under its own gate, then pay from real money |
+| BILL-2014 | pay_bills | **done** | `app.creates_payroll_shortfall`, `app.large_payment_approval` | Funding: draw under its own gate, then pay from real money; paying leaves nothing for payroll, so the owner is asked |
+| BILL-2016 | pay_bills | **done** | `app.creates_payroll_shortfall` | **THE FORECASTER INSIDE THE GATE** — inside every other limit, but the platform's projection says payroll on the 25th is then short; held, owner approves |
 | BILL-2015 | pay_bills | **rejected_by_ledger** | — | The gate allowed it; the ledger refused it. Two layers |
 | BILL-2001 | pay_bills | **done** | `app.run_total_cap` | Three clean 22,000.00 bills total 66,000.00 > the 60,000.00 cap |
 
@@ -82,7 +83,7 @@ two would hide the fact that they check different things.
 
 ---
 
-## The policy: 17 rules in one YAML file
+## The policy: 18 rules in one YAML file
 
 `agents/helios-payables-audit.yaml` is the audit agent. There is no Python policy in
 this app. Every control is data the auditor compiles.
@@ -261,7 +262,7 @@ apps/helios-payables/
 ├── app.py                             # composition, scenarios, CLI pages
 ├── server.py                          # FastAPI + Jinja2 web UI; lazy build, constant /health
 ├── agents/
-│   ├── helios-payables-audit.yaml     # THE POLICY — 17 rules, written first
+│   ├── helios-payables-audit.yaml     # THE POLICY — 18 rules, written first
 │   └── helios-payables-action.json    # the agent's operating contract
 ├── data/{suppliers,bills,accounts}.json
 ├── templates/*.html                   # the five declared pages

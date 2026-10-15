@@ -107,6 +107,13 @@ CREDIT_LINE_SPREAD_BPS = 180
 #: points of the bill amount.
 SUPPLIER_LATE_FEE_BPS = 50
 
+#: Payroll, due on this day of the month, in cents (40,000.00). The forecast
+#: fact `creates_payroll_shortfall` asks the platform's forecaster whether the
+#: account can still make the next payroll after a payment. Manifest:
+#: `app.creates_payroll_shortfall`.
+PAYROLL_CENTS = 4_000_000
+PAYROLL_DAY_OF_MONTH = 25
+
 # --------------------------------------------------------------------------
 # Graph identity
 # --------------------------------------------------------------------------
@@ -151,6 +158,8 @@ def describe() -> dict[str, Any]:
         "due_soon_window_days": DUE_SOON_WINDOW_DAYS,
         "credit_line_limit": money(CREDIT_LINE_LIMIT_CENTS),
         "credit_line_spread_bps": CREDIT_LINE_SPREAD_BPS,
+        "payroll": money(PAYROLL_CENTS),
+        "payroll_day_of_month": PAYROLL_DAY_OF_MONTH,
     }
 
 
