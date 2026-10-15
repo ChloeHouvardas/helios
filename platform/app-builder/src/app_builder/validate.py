@@ -510,12 +510,32 @@ def probe_fact_keys(facts_path: Path) -> tuple[set[str], set[str], str | None]:
     except (OSError, SyntaxError) as exc:
         return keys, methods, f"{' '.join(str(exc).split())}"
 
+    functions: dict[str, ast.FunctionDef] = {}
     for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "extra_facts_for":
-            keys |= _fact_keys_in(node)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            functions.setdefault(node.name, node)
             if node.name in _FACT_SOURCE_METHODS:
                 methods.add(node.name)
+
+    # extra_facts_for plus every module-level function or method it calls,
+    # transitively. A fact source that builds `{"supplier_ceiling": ...}` in a
+    # `_supplier_facts` helper and merges it produces that key just as surely as
+    # one that writes it inline, and reporting it as missing would send the
+    # author inlining code to satisfy a probe.
+    entry = functions.get("extra_facts_for")
+    if entry is not None:
+        seen: set[str] = set()
+        pending = [entry]
+        while pending:
+            fn = pending.pop()
+            if fn.name in seen:
+                continue
+            seen.add(fn.name)
+            keys |= _fact_keys_in(fn)
+            for callee in _called_names(fn):
+                target = functions.get(callee)
+                if target is not None and callee not in seen:
+                    pending.append(target)
 
     # Importing is a smoke test. If it fails, the AST result is still usable and
     # more informative than nothing, so the error is returned alongside rather
@@ -528,6 +548,20 @@ _FACT_SOURCE_METHODS = frozenset({
     "amount_for", "contact_count_for", "counterparty_for",
     "payment_details_changed_for", "extra_facts_for", "record_contact",
 })
+
+
+def _called_names(fn: ast.FunctionDef) -> set[str]:
+    """Names of functions and methods called inside `fn` (`f(...)`, `self.f(...)`)."""
+    names: set[str] = set()
+    for node in ast.walk(fn):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name):
+            names.add(func.id)
+        elif isinstance(func, ast.Attribute):
+            names.add(func.attr)
+    return names
 
 
 def _fact_keys_in(fn: ast.FunctionDef) -> set[str]:
