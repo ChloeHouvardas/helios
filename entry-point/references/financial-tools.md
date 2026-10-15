@@ -4,7 +4,7 @@ The tools an app's agents may call. Generated with the commands at the bottom of
 this file — re-run them rather than trusting this snapshot, because the tool set
 is still growing.
 
-**29 tools**, in eight families. The set grew from 12 to 29 in session `p1-tools`,
+**38 tools**, in nine families. The set grew from 12 to 38 in session `p1-tools`,
 which wrapped four teammate packages (`email_tool`, `payments_collect`,
 `helios_forecast`, `spreadsheets`) into this registry and added a market-data
 family.
@@ -44,7 +44,7 @@ bundle.tenant                                  # resolved tenant (or None)
 
 `build_world(registry=None, secret=..., clock=None, tenant=None, data_dir=None)`
 returns a `Bundle(world, registry, intents, payments, email, graph, collect)` and
-registers all 29 tools onto a fresh `ToolRegistry`.
+registers all 38 tools onto a fresh `ToolRegistry`.
 
 `tenant` resolves from the argument, else `HELIOS_TENANT`, else `None`.
 `data_dir` resolves from the argument, else `HELIOS_DATA_DIR`, else `None`.
@@ -306,8 +306,96 @@ substitute. It only attempts the direct company lookup when the query looks like
 `spreadsheet.save` is side-effecting because it touches the filesystem. A
 generated app that lets an agent write files should gate it and constrain `path`.
 
-The imported `spreadsheets` package also ships live Feishu and WPS engines behind
-credentials; only the offline file engine is wired into these tools.
+These three are standalone stdlib CSV helpers. They are **not** the imported
+`spreadsheets` package — that is the `sheets.*` family below.
+
+### sheets — statement reconciliation over the imported `spreadsheets` package
+
+The "which payment settles which invoice?" question a bookkeeper does by hand:
+import a bank or wallet statement, match its transactions against known
+obligations, and render the result.
+
+| Tool | Side effect | Tenant-scoped | Arguments | Returns |
+|---|---|---|---|---|
+| `sheets.records` | no | yes | `record_type: str`; `limit: int` | `{record_type, count, items: list, cursor}` |
+| `sheets.list_proposals` | no | yes | `view_id: str\|None`; `status: str\|None` | `{count, items: list}` |
+| `sheets.upload` | **yes** | yes | `filename, content: str`; `encoding: str` | `{file_id, filename, size, sha}` |
+| `sheets.import_sheet` | **yes** | yes | `file_id, record_type: str`; `column_map: dict\|None`; `dry_run: bool`; `archive_password: str\|None`; `idempotency_key: str\|None` | `{imported, mapping, record_type, rejected_rows}` (+`preview` when `dry_run`) |
+| `sheets.reconcile` | **yes** | yes | `max_step: int`; `amount_drift: int`; `date_window_days: int`; `dry_run: bool`; `scope: dict\|None`; `idempotency_key: str\|None` | `{applied, suggested, unmatched_transactions, unmatched_obligations, dry_run}` |
+| `sheets.resolve_match` | **yes** | yes | `match_id: str`; `decision: str`; `actor: str` | `{match_id, decision, method, rejected}` |
+| `sheets.render_sheet` | **yes** | yes | `query: dict`; `columns: list`; `target: str`; `editable_columns: list\|None`; `protected_columns: list\|None`; `group_by`, `sort`, `view_id`, `idempotency_key` | `{view_id, target, file_id, rows, columns}` |
+| `sheets.write_cell` | **yes** | yes | `view_id, record_id, field: str`; `new_value`; `actor: str`; `actor_kind: str`; `reason: str` | `{applied, proposal_id?, record_id?, status?}` |
+| `sheets.resolve_proposal` | **yes** | yes | `proposal_id: str`; `decision: str`; `resolved_by: str`; `resolved_by_kind: str` | proposal payload incl. `status` |
+
+**Money is integer fen, with no conversion.** Unlike `forecast.*` there is no
+float boundary: the package already stores minor units, so `1000.00` in a CSV
+becomes `100000` and passes through unchanged. `record_type` is one of
+`Obligation`, `Transaction`, `Counterparty`.
+
+**Model-free by default.** The package can call a model in three places. This
+facade injects `NullQwen` unconditionally, so no `sheets.*` tool reaches a model
+or reads `QWEN_API_KEY`. Column mapping is resolved deterministically; when the
+headers cannot be mapped the tool fails with `mapping_ambiguous` rather than
+guessing. Pass an explicit `column_map` (`{"金额": "amount", ...}`) to resolve it.
+`dry_run=True` shows the inferred mapping and a preview before writing anything.
+
+**`target` defaults to `"csv"`, not the package's own `"feishu"`**, because a live
+target needs credentials the offline path does not have. `"xlsx"` also works
+without credentials. Note that `rows` in the result is a **count**, not the row
+data — the rows go to the view or exported file, addressed by `view_id` and
+`file_id`.
+
+**`query` filters records**, e.g. `{"type": "Obligation", "status": ["open",
+"overdue"]}`. `record_type` is accepted as an alias for `type` so this family
+speaks one vocabulary. Any other key must be a real record field; an unknown key
+raises rather than silently rendering an empty sheet, because zero rows otherwise
+reads as "this tenant has no obligations" instead of "your query was misspelled".
+Omit `type` to search every record type.
+
+**Protected columns are the human checkpoint.** A rendered view is read-only
+unless `editable_columns` names a column. A column listed in `protected_columns`
+(money, dates and payee details should be) cannot be written directly: the edit is
+queued as a pending proposal and `write_cell` returns `applied: false`. That is
+the whole propose→approve loop, and all three steps are tools:
+
+```python
+view = call("sheets.render_sheet", query={"type": "Obligation"}, columns=["amount"],
+            editable_columns=["amount"], protected_columns=["amount"])
+w = call("sheets.write_cell", view_id=view["view_id"], record_id=rid,
+         field="amount", new_value=99900, actor="agent", actor_kind="agent")
+# w == {"applied": False, "proposal_id": "prop_...", "status": "pending"}
+p = call("sheets.list_proposals")["items"][0]     # needs_human is True
+call("sheets.resolve_proposal", proposal_id=p["proposal_id"], decision="approve",
+     resolved_by="owner", resolved_by_kind="user")
+# only now is the value written
+```
+
+**`resolved_by_kind` defaults to `"agent"`.** That is deliberate and it matters:
+the engine refuses to let an agent approve a proposal that `needs_human`, so a
+caller must assert human authority explicitly. Defaulting the other way would let
+an agent approve its own edit to an invoice amount.
+
+Decisions accept either tense — `confirm`/`confirmed`, `approve`/`approved`,
+`reject`/`rejected` — because rejecting a correct decision on grammar alone looks
+like a real refusal.
+
+`reconcile`'s ladder is deterministic and ordered (exact reference, then
+counterparty/alias, then amount and date proximity, then partial, then
+combinations). `applied` matches settle obligations immediately, which is why the
+tool is gated; `suggested` matches do not, and are settled by
+`sheets.resolve_match`. With `NullQwen` the model-assisted step never fires — a
+deliberate loss of recall in exchange for identical behaviour with and without
+credentials.
+
+> Two upstream bugs were fixed while wiring this family, both of which produced
+> silently wrong financial answers rather than errors: a scoped `reconcile` used
+> to drop every transaction, and an approved proposal used to record "approved"
+> without writing the value. See the commit messages and
+> `docs/sessions/p1-tools/PROGRESS.md` §7.
+
+Uploaded files and imported records live in the package's in-memory store, so
+they do **not** survive a restart even with `SqlitePersistence` on — only the
+`fin_tools` `World` is snapshotted. Recorded in `HANDOFF-TO-P2-P3.md`.
 
 ### knowledge graph
 

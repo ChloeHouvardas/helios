@@ -1,8 +1,10 @@
 # HANDOFF — from `p1-tools` to P2 (deployment) and P3 (app-builder)
 
 Status of this session: Tasks 1–5 complete and committed, plus bearer auth and
-persistence on the tool service. `scripts/test-all.sh` exit 0, all suites green,
-`seam check: OK`. **29 tools** registered. Baseline at session start was 12 tools.
+persistence on the tool service, plus the `sheets.*` reconciliation family that
+closes §E's "spreadsheet work" gap. `scripts/test-all.sh` exit 0, all suites
+green, `seam check: OK`. **38 tools** registered (financial-tools 566 passed + 1
+skipped). Baseline at session start was 12 tools / 61 tests.
 
 I own `platform/financial-tools/` and `entry-point/references/financial-tools.md`.
 I did not edit `platform/deployment/` or `platform/app-builder/`. The requests
@@ -67,6 +69,26 @@ Also note for P2: replacing the core image with my service requires
 `SqlitePersistence` writes `world_state.sqlite3` there and is a no-op when the
 variable is unset. The core mock used `/tmp`, which loses state on restart.
 
+**Coverage limit worth knowing before you rely on it.** `SqlitePersistence`
+snapshots the `fin_tools` `World` only — ledger, balances, outbox, graph. It does
+**not** persist:
+
+- the `sheets.*` reconciliation state (uploaded statement files, imported
+  `Transaction`/`Obligation`/`Counterparty` records, matches and proposals),
+  because the imported package keeps those in an in-memory `FileStore` and
+  per-tenant `KnowledgeGraph`;
+- the `payments_collect` receivables store's richer in-memory state (attempt state
+  machines, provider events, its own idempotency map).
+
+So after a restart a payment and a verified graph fact survive, but an imported
+statement and a receivable do not. For a demo that is fine — the pages rebuild
+from source files. For a deployed app it is a real gap: a receivable or a
+reconciliation that disappears on redeploy is lost work. Fixing it properly means
+either giving those two stores a durable backend or extending the snapshot to
+serialise them, and it should not be done by a half-restore that could resurrect a
+partially-applied payment. Flagging rather than shipping something that looks
+durable and is not.
+
 ---
 
 ## 2. For P2/P3: `amount_cents` pulls read-only tools into owner-approval
@@ -103,6 +125,13 @@ Read-only, safe to call from a page without a gate:
   `market.borrowing_cost_compare`, `market.company_lookup`,
   `market.collection_period`.
 - `email.templates`, `collect.list_receivables`, `collect.status`.
+- `sheets.records`, `sheets.list_proposals` — read-only views of the
+  reconciliation state. The rest of the `sheets.*` family (`upload`,
+  `import_sheet`, `reconcile`, `resolve_match`, `render_sheet`, `write_cell`,
+  `resolve_proposal`) is gated because it writes records or settles obligations.
+  Full detail is in `entry-point/references/financial-tools.md` § sheets; the
+  propose→approve loop and the `resolved_by_kind` default are the two things a
+  page must get right.
 
 The three moments the market family exists for (§E) map to tools as follows, so
 P4 can build the pages without re-deriving this:
@@ -221,10 +250,13 @@ own worktree only:
   added and pinned — I deliberately did not add a dependency for a module I don't
   use.
 - I imported four teammate packages as siblings of `fin_tools`: `email_tool`,
-  `payments_collect`, `helios_forecast`, `spreadsheets`. **211 of their tests came
-  with them and pass** (38 payments_collect, 105 email_tool, 68 helios_forecast,
-  plus spreadsheets). `platform/financial-tools/pyproject.toml` now uses explicit
-  package discovery, because seven top-level packages broke flat-layout detection.
+  `payments_collect`, `helios_forecast`, `spreadsheets`. **278 of their tests came
+  with them and pass**: `email_tool` 105, `payments_collect` 38, `helios_forecast`
+  68 (each in its own `tests/` dir), plus `spreadsheets` 67 in
+  `platform/financial-tools/tests/test_spreadsheets.py`, which arrived with the
+  package from `origin/payments`. `platform/financial-tools/pyproject.toml` now
+  uses explicit package discovery, because seven top-level packages broke
+  flat-layout detection.
 - **A concurrent agent is working in this repo.** `.qwen/worktrees/p0-foundation`
   and `.qwen/worktrees/p3-builder` both exist with uncommitted changes, including
   their own `bootstrap-venv.sh`. I stayed entirely inside my worktree and did not
