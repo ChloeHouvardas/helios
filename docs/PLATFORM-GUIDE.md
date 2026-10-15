@@ -28,7 +28,9 @@ scripts/bootstrap-venv.sh        # one venv, every package editable, pinned deps
 scripts/test-all.sh              # every suite, per-suite counts
 ```
 
-Secrets are read from the environment only: `DASHSCOPE_API_KEY` for the model,
+Secrets are read from the environment only: `DASHSCOPE_API_KEY` for the model
+(the driver also accepts `HELIOS_LLM_API_KEY` or `OPENAI_API_KEY`, in that order;
+`agent_integration.cli doctor` checks the wiring without spending quota),
 `TUSHARE_TOKEN` for live market data, `HELIOS_INTENT_SECRET` /
 `HELIOS_EXECUTION_SECRET` for the tool service. None is needed to run the tests
 or the demos; market data answers from fixtures (`HELIOS_MARKET_MODE=fixture`).

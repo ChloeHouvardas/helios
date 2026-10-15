@@ -8,7 +8,7 @@ prose, code comments, docstrings, commit messages or generated files.
 ## 2. Environment and tests
 
 ```bash
-scripts/bootstrap-venv.sh    # once: .venv on Python 3.13, five packages editable
+scripts/bootstrap-venv.sh    # once: .venv on Python 3.13, six packages editable
 scripts/test-all.sh          # every suite, offline; one line per suite
 ```
 
