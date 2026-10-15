@@ -18,7 +18,7 @@ cd apps/helios-payables
 ../../.venv/bin/python -m uvicorn server:app --port 8000
 
 # The controls, as tests
-../../.venv/bin/python -m pytest tests -q          # 60 passed
+../../.venv/bin/python -m pytest tests -q          # 70 passed
 
 # The app spec, validated
 ../../.venv/bin/python ../../entry-point/checks/check_app.py .   # 0 errors
@@ -157,8 +157,12 @@ The **holds** page has two sections and the second is the point: *Needs your app
 and *Refused in code, without asking you*. The refused section is what shows controls
 firing with no human in the loop at all.
 
-`/health` returns whether the auditor loaded its rules and the book is readable — not
-merely that the process answered.
+`GET /health` is **constant**: it never builds the app. That is a deployment
+requirement, not a stylistic one — the engine's smoke test runs the container on an
+isolated network with no Redis, no audit sidecar, no model key and no data volume, and
+an app built at import time or inside `/health` fails that check. The honest readiness
+probe lives at `GET /diagnostics`, which does build the app and reports rules loaded,
+tools declared, bills and suppliers.
 
 The web owner is a `ScriptedOwner` whose stance you choose (approve everything / decline
 everything), because resuming a held action needs the live runtime, which `app.py
@@ -185,13 +189,33 @@ smallest version needed inside the app:
 - **It never decides anything.** Ranking an option does not authorise it, and every
   result carries the "not financial advice" disclaimer (which is also the licence
   position: no unlicensed investment advice).
-- `funding.py` is the **only** file to delete if `market.*` lands later.
+- `funding.py` is quarantined so the swap is small, but it is **partial**, not a
+  delete. `market_data.py` now exists on `chloe-dev` (`7ff4b74`) and its
+  `RATE_SERIES` already pins `lpr_1y` and `shibor_3m`, so `funding.rate()` is
+  replaceable by `market.reference_rate`. But there is no upstream
+  `borrowing_cost_compare`, so the option ranking stays; and `market.company_basic`
+  is a company *lookup*, not a change-request comparison, so `registry_evidence`
+  stays too. Two traps for whoever does the swap: `reference_rate` returns
+  `value_pct` as a **float** (convert with `Decimal(str(...))`, never
+  `Decimal(float)`), and there is **no `stale` field** upstream — derive it from
+  `as_of` vs `requested_as_of`. Full detail in `worktree.md` §4.
 
-**No deployment engine.** `platform/deployment/` does not exist, there is no `helios`
-CLI, the Docker daemon is not running and `HELIOS_ENGINE_URL` is unset — so
-`helios deploy` is **BLOCKED**, not skipped. `helios.yaml` is written anyway so the app
-is deploy-ready the moment the engine lands, and `GET /health` is implemented against
-that contract.
+**Not deployed.** `helios deploy` was never run here: the engine did not exist at this
+branch's base commit, the Docker daemon is not running and `HELIOS_ENGINE_URL` is
+unset. The engine *does* now exist in the `p2-deploy` worktree, so the app was made
+deploy-ready and verified against the engine's real contract rather than deployed.
+`helios.yaml` passes the engine's `load_manifest()` and `lint()` with 0 problems, and
+`GET /health` passes in ~1s under a simulated smoke-test environment with no Redis, no
+audit sidecar, no model key and no data volume. Every dependency this app needs is
+already in the golden base image, and the app layer is a single `COPY` with no pip
+install. All of it is asserted by `tests/test_server.py`.
+
+Three gaps remain before this deploys for real, in rough order of size: nothing reads
+`HELIOS_DATA_DIR` yet (run logs land in `runs/`); holds are in-memory only, so pending
+approvals do not survive a restart even though the named volume is mounted; and the app
+calls `bundle.payments` / `.email` / `.graph` **in-process** rather than proposing through
+`helios_sdk.propose_action`, so the sidecar that holds `HELIOS_EXECUTION_SECRET` is not
+yet the second gate. See `worktree.md` §1.
 
 **Money is simulated end to end.** No real payment rails. The `fin_tools` ledger would
 happily drive a balance negative — it has no overdraft check — so
@@ -233,21 +257,23 @@ place to change if the platform grows a public mutator.
 ```
 apps/helios-payables/
 ├── README.md                          # this file
-├── helios-app.yaml                    # the app spec — check_app.py: 0 errors
-├── helios.yaml                        # deployment contract (engine absent)
+├── helios-app.yaml                    # the app-builder spec — check_app.py: 0 errors
+├── helios.yaml                        # DEPLOYMENT manifest — passes the engine validator
 ├── config.py                          # thresholds mirrored from the manifest
 ├── book.py                            # the data layer over the platform store
 ├── facts.py                           # THE fact source — "facts are not claims"
 ├── funding.py                         # local stand-in for the missing market.* family
 ├── tools.py                           # the 10 tools, 5 read-only + 5 gated
 ├── app.py                             # composition, scenarios, CLI pages
-├── server.py                          # FastAPI + Jinja2 web UI, GET /health
+├── server.py                          # FastAPI + Jinja2 web UI; lazy build, constant /health
 ├── agents/
 │   ├── helios-payables-audit.yaml     # THE POLICY — 17 rules, written first
 │   └── helios-payables-action.json    # the agent's operating contract
 ├── data/{suppliers,bills,accounts}.json
 ├── templates/*.html                   # the five declared pages
-└── tests/test_controls.py             # 60 tests, one per control, all offline
+└── tests/
+    ├── test_controls.py               # 60 tests, one per control
+    └── test_server.py                 # 10 tests, the deployment contract
 ```
 
 ## Requirements
