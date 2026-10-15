@@ -31,8 +31,57 @@ Every tool follows a shared contract: name, input schema, output schema, and a s
 ### App-specific agent behavior is data
 What differs between agents (instructions, tool list, mandate) is defined as data in an agent manifest, separate from the runtime. Qwen generates the manifest rather than writing agent logic from scratch.
 
-### Agent loop built on Qwen-Agent
-The agent runtime builds on Qwen-Agent's function-calling agent, with interception added at the tool-execution step.
+### Agent loop is an OpenAI-compatible tool-calling loop driven by Qwen
+The runtime is its own loop, not a Qwen-Agent subclass: `model_driver.py` posts
+one chat completion over stdlib `urllib`, parses a single tool call per turn, and
+hands the proposal to the audit bridge before anything executes. No file in the
+repo imports `qwen_agent`, so "built on Qwen-Agent" was never true of the code.
+Interception is structural — the driver returns a proposal and stops — rather
+than a hook into someone else's loop, which is what keeps the gate unavoidable.
+
+### The standalone audit agent is the authoritative in-app gate
+The YAML-driven `audit_agent` (policy packs, deterministic rules, signed grants,
+hash-chained evidence) decides what an app's agents may do.
+`agent_toolkit.audit.AuditGate` is retired from the loop: the class stays
+importable and is marked legacy in its docstring, so existing references do not
+break, but no run path consults it. Two gates that can disagree is worse than
+one. The engine's audit sidecar (`platform/deployment`) is a separate,
+fact-free second gate holding the execution secret — it is not a substitute for
+the in-app auditor, and the two are not interchangeable.
+
+### Deployment contract is `platform/deployment`'s `helios.yaml`
+One engine, imported from the Mac-mini build: a manifest plus an ASGI entry plus
+`GET /health`, built and routed through the Docker Engine API. Apps adopt the
+contract; where an app cannot, the engine is adapted rather than forked. This
+answers "where are generated applications hosted" and "what is the deployment
+artifact format" below.
+
+### Qwen via DashScope for everything, legacy vendor removed
+Qwen is the only generative model allowed, for coding and for in-app agents. The
+driver targets DashScope's OpenAI-compatible endpoint (default model
+`qwen3.8-max`), with `enable_thinking: false` sent only for `qwen3` hybrid ids.
+All references to the previous vendor — its endpoints, model ids and vendor
+env-var names — are removed wherever a file is touched.
+
+### Money is simulated end to end
+No real payment rails, anywhere. `fin_tools` runs a mock ledger with integer
+cents; the payment tools imported from teammates ship with no provider. This is
+a deliberate competition and safety constraint, not a placeholder to be filled in
+later.
+
+### Default app stack is FastAPI + SQLite + Jinja2/HTMX
+Server-rendered pages over HTMX, not a Vite-built React bundle. Holds and
+approvals live in-process with the agent runtime, so a single process on a single
+origin keeps the approval flow same-origin with no CORS boundary — the property
+the React choice was made for, achieved with less machinery. Money is integer
+cents or decimal strings, never float, converted at boundaries only.
+
+### Held state and replay guards persist to SQLite under the app's data dir
+A hold survives a restart, and so does the guard that stops a spent grant being
+replayed; both live in the app's own SQLite database rather than in memory or in
+a shared platform service. Keeps an app independently deployable, which is what
+"applications run independently" requires. **P2 implements this** — decided here
+so the storage shape is not re-litigated then.
 
 ### Knowledge graph is shared
 Helios hosts a central knowledge graph that applications can use to exchange relevant state and context.
@@ -56,16 +105,29 @@ The local audit gate checks each action against the app's mandate. Sensitive ope
 A shared ledger may store verified financial events and records used across applications.
 
 ### Append-only action log
-Every tool call, proposal, decision, and result is recorded in an append-only log. Hash-chaining entries for tamper evidence is a likely addition.
+Every tool call, proposal, decision, and result is recorded in an append-only
+log. **Decided in practice:** the audit side is hash-chained and verified
+(`AuditLog.verify_chain`), so tampering or deletion is detectable. What remains
+tentative is retention — how long logs are kept and who may read them.
 
 ### Holds and resumption
-When an action is held, the agent's state (conversation history and the proposal) is saved. Once the owner decides, the agent resumes from where it stopped. An approval applies only to the exact action that was held.
+When an action is held, the agent's state (conversation history and the
+proposal) is saved. Once the owner decides, the agent resumes from where it
+stopped. An approval applies only to the exact action that was held.
+**Decided in practice:** `GatedAgentRuntime.resume` implements this, and
+`selfcheck` asserts the two packages agree. What remains is where the held state
+lives across a restart — see *Held state and replay guards persist to SQLite*
+above (P2).
 
 ## Open Questions
 
-- Where will generated applications be hosted?
-- What is the deployment artifact format?
-- Where is held-agent state stored (in the app, or a shared Helios service)?
+- Where is held-agent state stored — **answered**: SQLite under the app's data
+  dir (P2 implements).
+- Where will generated applications be hosted — **answered**: the
+  `platform/deployment` engine, containers via the Docker Engine API.
+- What is the deployment artifact format — **answered**: a bundle with
+  `helios.yaml`, an ASGI entry and `GET /health`; the engine injects the
+  Dockerfile.
 - How will the knowledge graph distinguish authoritative records from agent observations?
 - How will applications subscribe to cross-app updates?
 - Which financial operations should be managed APIs versus packaged SDK tools?

@@ -62,7 +62,27 @@ def _approve() -> Verdict:
 
 
 class AuditGate:
-    """Deterministic mandate check over one tool registry and data store."""
+    """Deterministic mandate check over one tool registry and data store.
+
+    .. deprecated::
+        **Legacy — not in the run path.** The authoritative in-app gate is the
+        standalone YAML-driven audit agent in ``platform/audit-agent-builder``:
+        signed, scoped, time-boxed grants plus per-call adjudication against
+        policy packs, with hash-chained evidence. See ``specs/decisions.md``,
+        "The standalone audit agent is the authoritative in-app gate".
+
+        This class stays importable so existing references and Build 1's own
+        tests keep working, but nothing routes a proposal through it:
+        ``agent_integration.bridge`` adjudicates every side effect against the
+        audit agent, and that verdict is the only one that counts. Two gates
+        that can disagree is worse than one.
+
+        Its mandate is also too narrow to be the gate anyway — it accepts four
+        receivables-shaped keys and its rule logic is hard-coded to
+        ``send_email``, so a payables app cannot express its policy here at all.
+
+        Do not add new rules here. Do not wire it into a run path.
+    """
 
     def __init__(self, tools: ToolRegistry, store: Store):
         self._tools = tools
