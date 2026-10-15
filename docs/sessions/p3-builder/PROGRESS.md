@@ -388,7 +388,8 @@ test-all: all suites green
 EXIT CODE = 0
 ```
 
-784 tests total. Baseline at the start of the session was 362 across 5 suites.
+784 tests total at the end of Task 8; **822** after §9 added `tests/test_boot.py`.
+Baseline at the start of the session was 362 across 5 suites.
 
 **2. `helios-app validate`**
 
@@ -447,9 +448,65 @@ repointed — verified by attempting the import, not inferred from the dependenc
 ids anywhere in the repo to check against. Documented as open in
 `specs/app-builder.md`.
 
-**No generated app has been served end to end.** `server.py` is generated with all five
-routes and a lazy `build_app` import, but `platform/deployment/` does not exist in the
-repo, so there is nothing to deploy against. `POST /holds/decide` is generated as a
-`NotImplementedError` rather than a stub returning 200: a decision endpoint that
-silently does nothing is worse than one that errors, because the owner believes they
-approved.
+**No generated app has been deployed through the engine.** `platform/deployment/` does
+not exist in the repo, so there is nothing to deploy against. Everything short of that
+has now been exercised locally — see §9: the generated server boots, serves every
+route, and runs scenarios through the gate.
+
+## 9. Continuation — make it actually run
+
+The first eight tasks produced a generator whose output compiled and validated but had
+never been started. Four defects were found by running it rather than by reading it.
+
+**`server.py` could not be imported at all.** `app.mount("static", ...)` — Starlette
+requires a mount path to begin with `/`, so every generated app raised
+`AssertionError: Routed paths must start with '/'` at import time and would have failed
+the engine's smoke test instantly. This passed 386 green tests, because every existing
+test treated generated output as TEXT: it grepped for strings or compiled a module, and
+none imported the module into a running app. `tests/test_boot.py` (25 tests) closes that
+gap — it scaffolds, imports `server`, wraps it in Starlette's `TestClient` in-process,
+and requests every route for both reference apps. Verified it can fail: reintroducing
+the mount bug makes 16 of 21 fail.
+
+**`POST /holds/decide` raised `NotImplementedError`.** Now wired through the audit
+bridge, which owns the decision on the file and HTTP transports too. Returns 409 with
+the auditor's own message for an unknown or already-decided hold, never a 200 — an
+endpoint that reports success for a decision it did not record leaves the owner
+believing they approved. It parses the body with `urllib.parse` rather than
+`request.form()`, because Starlette asserts `python-multipart` is installed for ANY
+form, urlencoded included, and that package is not a Helios dependency.
+
+**`python app.py` demonstrated nothing.** It declared `ScriptedOwner`, `Scenario` and
+`Outcome` but had no driver and no runner, so it printed a TODO and returned 0 — a
+prototype that exits successfully having shown nothing. Added `ScriptedDriver`,
+`run_scenario`, `_summarize` and the two page renderers, mirroring
+`apps/helios-collect/app.py`. `_summarize` derives the outcome from the recorded
+actions rather than the loop's status, because a run whose only side effect was REFUSED
+still reports COMPLETED — a denial goes back to the model as an observation and the loop
+finishes normally. Reporting the loop's status would call a blocked payment a success.
+
+The runner is a PLAIN string concatenated into `app_module`, not part of its f-string,
+so its braces stay literal. Doubling braces is the easiest way to corrupt generated
+code silently: a missed brace is interpolated by the generator instead of the generated
+module, and the failure surfaces as a NameError in `scaffold.py` while the real fault is
+in text nothing ever compiled. Two such bugs were hit this session.
+
+**`Outcome` carried two fields for one idea.** `expects` (set from the Scenario) and
+`decided` (never set, so always `"unknown"`), and `main()` compared against `decided`.
+The CI exit code therefore reported `got done, expected unknown` and only failed by
+accident — the comparison could never match a declared expectation. One field now.
+
+Verified against a real run, not only unit tests: seeded the generated store, gave the
+gated tool a handler, drove `payments.send` through the gate. Allowed -> `done`,
+executed exactly once. Undeclared tool -> refused with the auditor's message. Mismatch
+against a declared expectation -> exit 1. `--json` and `--dashboard` both render.
+Booted under uvicorn: `/health`, `/`, `/holds`, `/runs`, `/audit`, `/static/*` all 200,
+and the decide endpoint returns 400/409 with named fields on the error paths.
+
+The verdict vocabulary in the runner is the RUNTIME's (`approve`/`reject`/`hold`), not
+the auditor's `Decision` enum (`allow`/`deny`). Two vocabularies at two layers; my first
+test asserted the wrong one and failed on correct code.
+
+Suite: 822 tests, exit 0. `fastapi`/`httpx`/`uvicorn` were installed but declared
+nowhere in the repo, so they are now in the `dev` extra — the boot test would otherwise
+pass here and fail on a fresh checkout.
