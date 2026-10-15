@@ -69,7 +69,7 @@ platform `src/` dirs, because the repo venv did not exist yet.
       (`OTHER-TEAMMATE-STUFF/email-tool/sender/`), `payments_collect`
       (`OTHER-TEAMMATE-STUFF/payments-tool/collect/`). One commit each, body
       credits the source. Expect roughly +68/+105/+38 plus spreadsheets.
-- [ ] **T4** fix defects 1–6, one commit each, each with a test that fails
+- [x] **T4** fix defects 1–6, one commit each, each with a test that fails
       before and passes after:
       1. `contracts.py:54` `REDACTED_KEYS` missing `auth_code`,
          `authorization_code` — a payment credential reaches the hash-chained
@@ -91,13 +91,13 @@ platform `src/` dirs, because the repo venv did not exist yet.
          the code does not perform → implement it.
       6. `fixtures/invoices.csv` UTF-8 BOM → read with `utf-8-sig` in
          `spreadsheet_tools.load_csv`, strip the BOM from the file.
-- [ ] **T5** record decisions (a)–(f) in `specs/decisions.md`, sync
+- [x] **T5** record decisions (a)–(f) in `specs/decisions.md`, sync
       `specs/tech-stack.md`, list `platform/agent-integration` and
       `platform/deployment` as real components in
       `specs/architecture-mermaid.md` prose.
-- [ ] **T6** correct the stale docs listed in prompt section E; rewrite
+- [x] **T6** correct the stale docs listed in prompt section E; rewrite
       `HANDOFF.md` §2, §4, §7 only.
-- [ ] **T7** `QWEN.md` at repo root, ≤80 lines.
+- [x] **T7** `QWEN.md` at repo root, ≤80 lines.
 
 ## Rules that bind every commit
 

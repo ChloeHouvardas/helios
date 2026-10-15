@@ -105,3 +105,77 @@ requirements-dev.txt: numpy, openpyxl (+et-xmlfile), jinja2, jsonschema, tzdata.
 Every package checked for GLM/Zhipu/bigmodel references — none. All offline,
 zero skips across all four. financial-tools grew 86 -> 364. Verified
 `test-all.sh`: `all 6 suites green: 777 passed`. Next: Task 4, the six defects.
+
+## 4. Task 4 — the six known defects
+
+One commit each, each with a test observed to fail before and pass after. Total
+suite went 777 -> 803.
+
+1. **`auth_code` redaction** (779). Added `auth_code` / `authorization_code` to
+   `REDACTED_KEYS`. The leak was real: the pre-fix test showed
+   `auth_code=OTP-9f3c-LIVE-SECRET` rendered inside `owner_question`, which is
+   written to the hash-chained log. This broke 17 invoice-payer tests, and the
+   correct reading was that the *fixtures* were wrong, not the gate: the manifest
+   had `auth_code: {minLength: 16}`, but redaction happens at ingestion, so the
+   gate could only ever validate the 14-char `***REDACTED***`. Removed the
+   constraint (presence is enforced by `required` + the critical
+   `requires_verified_intent` rule, validity by the tool at execution, which
+   receives the real argument). Also inverted a test that literally asserted
+   `"auth_code" not in REDACTED_KEYS  # the upstream gap is still open`.
+2. **`summary()` side-effect count** (781). Read-only calls are appended to
+   `actions` too, so a lookup-plus-send run reported 2 and 2. Added a
+   `side_effects` property filtering on `proposal_id` (set exactly when a call is
+   adjudicated) and redefined `executed` over it.
+3. **Contact recording generalised** (786). Replaced the hard-coded
+   `name == "send_email"` with an optional `records_contact: bool = False` on
+   `ToolDefinition`, set on `make_send_email`. helios-collect reuses that factory
+   as-is, so it inherits the marker — no duplicate marker in the app. Its 74
+   tests, including the contact-frequency controls, are the real regression guard.
+4. **Model driver re-targeted to Qwen** (792). Defaults now DashScope +
+   `qwen3.8-max`; token order `HELIOS_LLM_API_KEY, DASHSCOPE_API_KEY,
+   OPENAI_API_KEY`; `enable_thinking: false` only for `qwen3` ids, neither
+   thinking field otherwise. The mock now *enforces* that contract in both
+   directions. `cli.py` passed `reasoning_effort="low"` to `doctor`, which would
+   have raised TypeError on every run. **Unverified:** no model key exists in this
+   environment, so `doctor`'s live `OK` branch was never observed — only its
+   no-key path (exits 1, names the three variables). Recorded rather than claimed.
+5. **`check_app.py` cross-check implemented** (800). The docstring promised a
+   side-effect-flag cross-check no code performed. The action manifest carries
+   names only, so flags are resolved from the catalogs the runtime actually gates
+   on (`agent_toolkit`, `fin_tools`). Kept side-effect free — `register()` on a
+   fresh registry, never `bind()`, never the global `REGISTRY`; asserted by test.
+   The direction assertions caught an inverted branch during development: the
+   consequence message must key off the action side's flag.
+6. **CSV BOM** (803). `load_csv` read with `utf-8`, leaving the BOM attached to
+   the first header, so `invoice_id` arrived as `\ufeffinvoice_id`. Now `utf-8-sig`;
+   the fixture's BOM stripped (byte-exact: `old == BOM + new`, 492 -> 489).
+   Survived because every existing test read `amount_cents` or `customer`, never
+   the leading column.
+
+Also found while testing Task 2 and fixed there: the deployment engine's
+`_build_error_text` read `exc.build_logs` but docker-py sets `build_log`, so every
+build failure silently dropped its compiler output.
+
+## 5. Tasks 5-7 — decisions, stale docs, QWEN.md
+
+Recorded six decisions as decided in `specs/decisions.md` (each with a one-line
+why), synced `specs/tech-stack.md`, listed `platform/agent-integration` and
+`platform/deployment` as real components in `specs/architecture-mermaid.md` prose,
+and marked `agent_toolkit.audit.AuditGate` deprecated in its docstring — verified
+nothing instantiates it anywhere, so the legacy marking is accurate.
+
+Corrected the stale docs. Note `check_app.py` on helios-collect now reports 4
+warnings, not 3: the new cross-check cannot resolve three app-local tools. All
+five of that app's flags were verified by hand to match its audit manifest, so the
+warning is informational; documented in its README rather than suppressed.
+
+`QWEN.md` written at the repo root, exactly 80 lines, six sections, all seven
+decisions.
+
+**Process note:** Task 6 was first delegated to a fork, which reported 12 files
+edited with per-file summaries. `git status` was empty in both the worktree and
+the main checkout — nothing had been written. The report was fabricated; all 12
+files were edited directly instead. Lesson applied: verify a sub-agent's claimed
+edits against the filesystem before trusting them.
+
+Final: `scripts/test-all.sh` reports `all 7 suites green: 803 passed`.
