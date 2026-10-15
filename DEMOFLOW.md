@@ -23,7 +23,7 @@ demo shape · **[todo]** must be built · **[open]** needs a decision.
 | Demos run on the scripted driver. Live Qwen is tested separately, later. | settled |
 | Standalone `audit_agent` is the authoritative gate; the sidecar may deny or forward, never approve. | settled (p2, `specs/decisions.md`) |
 | Money is simulated; integer cents; never float. | settled |
-| p1's `market_data/` package survives the merge; chloe-dev's two missing tools and its grep test are folded in. | recommended in §6, proceeding unless vetoed |
+| p1's `market_data/` package survives the merge; chloe-dev's `daily_quotes`, `trading_calendar` and its ledger-isolation grep test are folded in. | settled 2026-10-15 |
 
 ---
 
@@ -111,16 +111,27 @@ The four moments a judge should see, one screen each:
 | Payables | BILL-2012 agent lies about `amount_cents` to slip under the threshold → still held | rule binds on the fact `bill_amount_cents`, never the agent's number |
 | Platform | duplicate payment proposed twice → second one `held_for_review` by the sidecar; both in `/audit-log` | the platform gate works without the app's cooperation |
 
-### Stage 5 — cross-app via the graph and the bus **[todo]**
+### Stage 5 — the apps work together, after each works alone **[todo]**
 
-1. Collect agrees a due-date extension on INV-1005 and publishes
-   `invoice.extension_agreed` as a **verified** graph node and a tenant event.
-2. Cash Planner subscribes, re-forecasts with `forecast.project`, and the
-   dashboard shows the shortfall moving by the extension; it cites the LPR/SHIBOR
-   rate with `provenance` and the disclaimer.
-3. Payables reads the shortfall warning and reschedules a non-urgent bill (held
-   for the owner).
-No app calls another app. Nothing in this stage is a direct HTTP call between apps.
+Each flagship demos on its own first (Stages 3 and 4). Working together is an
+added feature, shown last, and nothing in it is an app calling another app.
+
+1. **The forecaster inside the gate.** Payables' fact source asks the forecaster
+   "if this bill is paid today, what is the projected minimum balance before the
+   next payroll?" (`forecast.query(first_shortfall)` over the tenant's known
+   inflows and outflows). A rule holds the payment when that projection goes
+   below zero, so the owner sees "paying this now creates a shortfall on the
+   25th" in the hold. The forecast is a fact the agent cannot state, inside the
+   control rather than beside it. Works standalone with the app's own data.
+2. **Collect publishes.** Collect agrees a due-date extension on INV-1005 and
+   publishes `invoice.extension_agreed` as a **verified** graph node and a
+   tenant event through `helios_sdk.publish_event`.
+3. **Cash Planner re-forecasts.** It subscribes to the bus, re-runs
+   `forecast.project` with the moved inflow, shows the shortfall shifting, and
+   cites the LPR/SHIBOR rate with `provenance` and the disclaimer.
+4. **Payables sees the shortfall.** Its next run reads the `cashplan` shortfall
+   warning from the graph; the forecast fact in step 1 now reflects Collect's
+   extension, and a non-urgent bill is held for rescheduling.
 
 ### Stage 6 — tools and logs are central **[todo]**
 
@@ -140,7 +151,10 @@ deployed URL and a passing control test.
 ## 4. The test ladder
 
 Run in this order. A rung is green before the next is attempted. All commands run
-from the repo root with `.venv/bin/python` unless stated. "Expect" is what must be
+from the repo root with `.venv/bin/python` unless stated. **Every rung is scripted**
+as `scripts/demo-check.sh <rung>` (T0..T6, or `all`), including the Docker rungs,
+so the ladder runs unattended and prints one line per check: id, PASS/FAIL, and the
+observed value. "Expect" is what must be
 observed, not inferred.
 
 ### T0 — offline, no Docker, no keys
@@ -225,6 +239,7 @@ at the repo root holds tenant secrets and is gitignored.
 
 | # | Command | Expect |
 |---|---|---|
+| T5.0 | Payables alone: pay a bill whose projected minimum balance before payroll goes negative | held, owner question names the shortfall date; the same bill with a smaller amount pays |
 | T5.1 | run Collect INV-1005 (extension agreed) on the deployed app | a **verified** `invoice` node in the tenant graph and an event on `demo:events` |
 | T5.2 | `GET localhost/apps/helios-cash-planner-demo/` | forecast shifted by the new due date; the event is listed; rate shown with `provenance.mode` and `stale` |
 | T5.3 | Payables run with the shortfall warning present | a reschedule proposal held for the owner, citing the warning |
