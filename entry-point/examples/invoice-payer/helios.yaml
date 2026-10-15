@@ -1,0 +1,34 @@
+# Deployment manifest for invoice-payer (the entry-point worked example).
+#
+# This is NOT helios-app.yaml. That file is the app-builder manifest describing
+# the agents; this one is the deployment contract the engine reads. Different
+# schemas, both kept.
+
+name: invoice-payer
+tenant: ""
+entry: server:app
+port: 3000
+
+# Tool families the audit sidecar may forward to the tenant core. The app's own
+# authority is narrower and comes from agents/invoice-payer-audit.yaml.
+permissions:
+  - payments
+  - email
+
+# NAMES only; the engine resolves each from its own environment at container
+# creation. Values never appear here, in a deploy response, or in a log line.
+env:
+  - HELIOS_LLM_API_KEY
+  - DASHSCOPE_API_KEY
+  - HELIOS_LLM_MODEL
+  - HELIOS_LLM_BASE_URL
+  - HELIOS_AUDIT_SIGNING_KEY
+  - HELIOS_AUDIT_SIGNING_KEY_ID
+
+# Copied by the engine into the audit sidecar at /policy/audit.yaml before the
+# sidecar starts; the app cannot modify its own policy afterwards.
+audit_manifest: agents/invoice-payer-audit.yaml
+
+# Named volume helios-data-<tenant>-invoice-payer, mounted in both containers so
+# action logs and the hash-chained audit log survive a redeploy.
+data_dir: /data

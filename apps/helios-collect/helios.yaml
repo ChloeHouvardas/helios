@@ -1,0 +1,50 @@
+# Deployment manifest for helios-collect.
+#
+# This is NOT helios-app.yaml. That file is the app-builder manifest describing
+# the agents; this one is the deployment contract the engine reads. They have
+# different schemas and both are kept.
+#
+# `entry: server:app` points at the FastAPI object in server.py. The container
+# runs `uvicorn server:app --host 0.0.0.0 --port 3000`, so the deploy smoke test
+# polls GET /health on port 3000 with no Redis, no audit sidecar and no model key
+# available -- which is why /health must not build the app.
+
+name: helios-collect
+tenant: ""
+entry: server:app
+port: 3000
+
+# Tool families the audit sidecar may forward to the tenant core. The app's own
+# authority is narrower and comes from agents/helios-collect-audit.yaml, which
+# is the reviewed policy; this list only says which platform families are
+# reachable at all.
+permissions:
+  - email
+  - collect
+  - knowledge-graph
+
+# NAMES only. The engine resolves each from its own environment at container
+# creation; values never appear in this file, in a deploy response, or in a log
+# line. A name the engine does not have is simply not passed, so the app can
+# distinguish "not configured" from "configured as empty".
+#
+# With no key present, server.py runs scenarios through the scripted driver and
+# POST /runs?driver=model is refused with an actionable error rather than
+# silently falling back to a script and reporting it as a model run.
+env:
+  - HELIOS_LLM_API_KEY
+  - DASHSCOPE_API_KEY
+  - HELIOS_LLM_MODEL
+  - HELIOS_LLM_BASE_URL
+  - HELIOS_AUDIT_SIGNING_KEY
+  - HELIOS_AUDIT_SIGNING_KEY_ID
+
+# The engine copies this file into the audit sidecar at /policy/audit.yaml
+# BEFORE the sidecar starts. The app has no volume and no exec access to that
+# path, so it cannot rewrite its own policy after deploy.
+audit_manifest: agents/helios-collect-audit.yaml
+
+# Named volume helios-data-<tenant>-helios-collect is mounted here in both the
+# app and the audit sidecar, so action logs, the hash-chained audit log, holds
+# and replay state survive a redeploy. Must be absolute.
+data_dir: /data

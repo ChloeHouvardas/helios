@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Run a scenario — helios-collect{% endblock %}
+{% block content %}
+
+<h2>Run one scenario through the gated loop</h2>
+
+<div class="panel">
+  <form method="post" action="{{ prefix }}/runs">
+    <div class="field">
+      <label for="invoice_id">Scenario (invoice)</label>
+      <select name="invoice_id" id="invoice_id">
+        <option value="">— choose a scenario —</option>
+        {% for s in scenarios %}
+        <option value="{{ s.invoice_id }}">{{ s.invoice_id }} · {{ s.task_type }} · expects {{ s.expects }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="task">Task text (optional)</label>
+      <input name="task" id="task" type="text"
+             placeholder="Follow up on overdue invoice INV-1001">
+      <p class="note">The auditor requires a task summary of at least 12 characters,
+      or the whole grant is denied. Leave blank to use the scenario's default.</p>
+    </div>
+    <div class="field">
+      <label for="task_type">Task type (optional)</label>
+      <select name="task_type" id="task_type">
+        <option value="">— from the scenario —</option>
+        {% for t in task_types %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="driver">Driver</label>
+      <select name="driver" id="driver">
+        <option value="scripted">scripted — proves the gate, not the model</option>
+        {% if model_available %}
+        <option value="model">model — a real Qwen drives the loop</option>
+        {% else %}
+        <option value="model" disabled>model — unavailable (no HELIOS_LLM_API_KEY)</option>
+        {% endif %}
+      </select>
+      <p class="note">The gate underneath is identical either way. That
+      separability is the point: swapping the driver changes who proposes, never
+      what code allows.</p>
+    </div>
+    <button class="primary" type="submit">Run</button>
+  </form>
+</div>
+
+<h2>The control each scenario exercises</h2>
+<table>
+  <thead><tr><th>Invoice</th><th>Task type</th><th>Control</th><th>Expects</th><th>Why it matters</th></tr></thead>
+  <tbody>
+  {% for s in scenarios %}
+    <tr>
+      <td class="mono">{{ s.invoice_id }}</td>
+      <td class="mono">{{ s.task_type }}</td>
+      <td class="mono">{{ s.control }}</td>
+      <td>
+        {% if s.expects == 'done' %}<span class="badge b-ok">done</span>
+        {% elif s.expects == 'refused' %}<span class="badge b-bad">refused</span>
+        {% else %}<span class="badge b-warn">{{ s.expects }}</span>{% endif %}
+      </td>
+      <td>{{ s.note }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if recent %}
+<h2 style="margin-top:26px;">Recent runs</h2>
+<ul>{% for r in recent %}<li><a class="mono" href="{{ prefix }}/runs/{{ r.name }}">{{ r.name }}</a></li>{% endfor %}</ul>
+{% endif %}
+
+{% endblock %}

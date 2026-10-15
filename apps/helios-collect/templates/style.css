@@ -1,0 +1,72 @@
+/* helios-collect UI. ~60 lines, deliberately plain.
+   P3 (the scaffolder) lifts this file and templates/ into the generator. */
+:root {
+  --bg: #f6f7f9; --card: #fff; --ink: #16202c; --muted: #5b6b7d;
+  --line: #dde3ea; --ok: #1c7c46; --warn: #9a6b00; --bad: #b3261e;
+  --accent: #1f4f8b;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+header {
+  background: var(--card); border-bottom: 1px solid var(--line);
+  padding: 14px 24px; display: flex; gap: 22px; align-items: baseline;
+}
+header h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; }
+header nav { display: flex; gap: 16px; }
+header nav a { color: var(--muted); text-decoration: none; font-size: 14px; }
+header nav a:hover { color: var(--accent); }
+main { padding: 22px 24px; max-width: 1080px; margin: 0 auto; }
+h2 { font-size: 15px; margin: 0 0 10px; color: var(--muted); font-weight: 600;
+     text-transform: uppercase; letter-spacing: 0.05em; }
+.cards { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 24px; }
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+  padding: 14px 18px; min-width: 150px; flex: 1;
+}
+.card .n { font-size: 26px; font-weight: 600; letter-spacing: -0.02em; }
+.card .l { font-size: 12px; color: var(--muted); text-transform: uppercase;
+           letter-spacing: 0.05em; }
+table { width: 100%; border-collapse: collapse; background: var(--card);
+        border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line);
+         font-size: 14px; vertical-align: top; }
+th { background: #fafbfc; color: var(--muted); font-weight: 600; font-size: 12px;
+     text-transform: uppercase; letter-spacing: 0.04em; }
+tr:last-child td { border-bottom: none; }
+.badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+.b-ok   { background: #e4f3ea; color: var(--ok); }
+.b-warn { background: #fdf3dc; color: var(--warn); }
+.b-bad  { background: #fbe6e4; color: var(--bad); }
+.hold { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn);
+        border-radius: 8px; padding: 16px 18px; margin-bottom: 14px; }
+.hold .q { font-size: 15px; margin: 8px 0; font-weight: 500; }
+.hold .meta { font-size: 12px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+.hold pre { background: #fafbfc; border: 1px solid var(--line); border-radius: 6px;
+            padding: 8px 10px; font-size: 12px; overflow-x: auto; margin: 10px 0; }
+.actions { display: flex; gap: 8px; }
+button, .btn {
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+  padding: 7px 16px; border-radius: 6px; font-size: 14px; cursor: pointer;
+  font-family: inherit;
+}
+button.primary, .btn.primary { background: var(--ok); border-color: var(--ok); color: #fff; }
+button.danger { background: var(--card); border-color: var(--bad); color: var(--bad); }
+button:hover { filter: brightness(0.97); }
+form.inline { display: inline; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px;
+               text-transform: uppercase; letter-spacing: 0.04em; }
+.field input, .field select {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  font: inherit; background: var(--card);
+}
+.panel { background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+         padding: 18px; margin-bottom: 22px; }
+.note { color: var(--muted); font-size: 13px; margin: 6px 0 0; }
+.empty { color: var(--muted); font-style: italic; padding: 18px 0; }
+code, .mono { font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+.log-entry { border-bottom: 1px solid var(--line); padding: 8px 0; font-size: 13px; }
+.log-entry:last-child { border-bottom: none; }

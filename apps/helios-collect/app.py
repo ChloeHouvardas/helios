@@ -74,17 +74,24 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
+# Repo root for source-on-path runs. Derived defensively, NOT as parents[1]:
+# in a deployed container this file is at /app/app.py, where Path("/app") has
+# only one parent, so parents[1] raises IndexError at IMPORT time. That kills
+# the process before uvicorn can serve /health, and the deploy smoke test fails
+# with an opaque traceback instead of a readable missing-route error.
+REPO = HERE.parents[1] if len(HERE.parents) > 1 else HERE
 
 # The four platform packages. A generated app would declare these as dependencies;
-# this one imports them in place so it runs with no install step.
+# this one imports them in place so it runs with no install step. Each entry is
+# guarded by is_dir() because inside the golden base image the packages are
+# pip-installed and these directories do not exist at all.
 for _p in (
     REPO / "platform" / "audit-agent-builder" / "src",
     REPO / "platform" / "action-agent-builder" / "src",
     REPO / "platform" / "agent-integration" / "src",
     REPO / "platform" / "financial-tools",
 ):
-    if str(_p) not in sys.path:
+    if _p.is_dir() and str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))

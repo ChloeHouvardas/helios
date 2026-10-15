@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Approval queue — helios-collect{% endblock %}
+{% block content %}
+
+<h2>Awaiting your decision</h2>
+
+{% if not holds %}
+<p class="empty">Nothing is held. Every action the agent proposed was either
+allowed by policy or refused outright.</p>
+<p class="note">A refusal never reaches this queue: the control does not depend on
+you noticing. Run <code>INV-1006</code> (a disputed invoice) to see a refusal, and
+<code>INV-1004</code> (a 45-day extension) to see a hold land here.</p>
+{% endif %}
+
+{% for h in holds %}
+<div class="hold">
+  <div class="meta">
+    hold <strong>{{ h.hold_id }}</strong> · tool <strong>{{ h.tool }}</strong>
+    {% if h.rule %} · rule <code>{{ h.rule }}</code>{% endif %}
+  </div>
+
+  {# The auditor's own question. Never a summary the agent wrote about itself:
+     an agent describing its own over-limit payment is exactly the party whose
+     framing must not be the one the owner reads. #}
+  <p class="q">{{ h.owner_question or h.reason or 'The auditor held this action without a question.' }}</p>
+
+  {% if h.arguments %}
+  <pre>{{ h.arguments | tojson(indent=2) }}</pre>
+  {% endif %}
+
+  {% if h.resumable %}
+  <div class="actions">
+    <form class="inline" method="post" action="{{ prefix }}/holds/{{ h.hold_id }}/approve">
+      <button class="primary" type="submit">Approve &amp; execute this exact action</button>
+    </form>
+    <form class="inline" method="post" action="{{ prefix }}/holds/{{ h.hold_id }}/decline">
+      <button class="danger" type="submit">Decline</button>
+    </form>
+  </div>
+  <p class="note">Approving executes exactly this call and nothing else. The
+  auditor is not asked again — the fact that triggered the hold has not changed;
+  what changed is that you approved it.</p>
+  {% else %}
+  <p class="note" style="color: var(--bad);">This hold can no longer be resumed:
+  the bridge no longer holds the exact action (it is single-use, and holds live in
+  memory unless the data volume is mounted). Re-run the scenario.</p>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% endblock %}

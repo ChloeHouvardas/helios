@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ run_id }} — invoice-payer{% endblock %}
+{% block content %}
+
+<h2>Action log</h2>
+<p class="note mono">{{ run_id }}</p>
+
+{% if outcome and outcome.status %}
+<div class="panel">
+  <strong>{{ outcome.status }}</strong>
+  {% if outcome.reason %}<div class="note">{{ outcome.reason }}</div>{% endif %}
+</div>
+{% endif %}
+
+<div class="panel">
+{% if entries %}
+  {% for e in entries %}
+  <div class="log-entry">
+    {% set ev = e.kind or '' %}
+    {% if ev %}
+      {% if ev == 'held_executed' %}<span class="badge b-ok">executed</span>
+      {% elif ev == 'verdict' %}<span class="badge b-warn">verdict</span>
+      {% elif ev == 'hold_resolved' %}<span class="badge b-warn">owner decision</span>
+      {% else %}<span class="badge b-ok">{{ ev }}</span>{% endif %}
+    {% endif %}
+    {% if e.tool %}<code>{{ e.tool }}</code>{% endif %}
+    {% if e.decision %}
+      {% if e.decision == 'allow' %}<span class="badge b-ok">allow</span>
+      {% elif e.decision == 'deny' %}<span class="badge b-bad">deny</span>
+      {% else %}<span class="badge b-warn">{{ e.decision }}</span>{% endif %}
+    {% endif %}
+    {% if e.hold_id %}<span class="meta">hold <code>{{ e.hold_id }}</code></span>{% endif %}
+    {% if e.reason %}<div class="note">{{ e.reason }}</div>{% endif %}
+    <pre>{{ e | tojson(indent=2) }}</pre>
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="empty">No log entries mention this invoice yet. Run it first.</p>
+{% endif %}
+</div>
+
+<p><a href="{{ prefix }}/runs">← back to runs</a></p>
+
+{% endblock %}

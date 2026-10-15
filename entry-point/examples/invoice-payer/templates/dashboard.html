@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — invoice-payer{% endblock %}
+{% block content %}
+
+<div class="cards">
+  <div class="card"><div class="n">{{ invoices | length }}</div><div class="l">Invoices</div></div>
+  <div class="card">
+    <div class="n">{% if balance_cents is not none %}{{ '%.2f' | format(balance_cents / 100) }}{% else %}—{% endif %}</div>
+    <div class="l">Operating balance</div>
+  </div>
+  <div class="card"><div class="n">{{ holds_open }}</div><div class="l">Awaiting you</div></div>
+</div>
+
+{% if holds_open %}
+<div class="panel" style="border-left: 4px solid var(--warn);">
+  <strong>{{ holds_open }} payment{{ '' if holds_open == 1 else 's' }} held for your decision.</strong>
+  <p class="note">Nothing held has been paid. The auditor will not proceed without you.</p>
+  <a class="btn primary" href="{{ prefix }}/holds">Open the approval queue</a>
+</div>
+{% endif %}
+
+<h2>Invoices</h2>
+<table>
+  <thead><tr><th>Invoice</th><th>Reference</th><th>Supplier</th><th>Amount</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {% for i in invoices %}
+    <tr>
+      <td class="mono">{{ i.invoice_id }}</td>
+      <td class="mono">{{ i.reference }}</td>
+      <td>{{ i.supplier }}</td>
+      <td class="mono">{{ i.amount }} {{ i.currency }}</td>
+      <td>
+        {% if i.status == 'paid' or i.status == 'paid_after_approval' %}<span class="badge b-ok">{{ i.status }}</span>
+        {% elif i.status == 'refused' %}<span class="badge b-bad">refused</span>
+        {% elif i.status == 'held' %}<span class="badge b-warn">held</span>
+        {% elif i.status == 'declined_by_owner' %}<span class="badge b-warn">declined</span>
+        {% else %}<span class="badge">{{ i.status }}</span>{% endif %}
+      </td>
+      <td><a href="{{ prefix }}/runs/{{ i.invoice_id }}">log</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<div class="panel" style="margin-top:22px;">
+  <h2>The demo worth showing</h2>
+  <p><strong>INV-1003</strong>: the owner <em>confirms</em> a 760.00 USD payment to a
+  supplier whose banking details just changed — and it is <strong>still refused</strong>.
+  The control does not depend on the human noticing, and it does not depend on the
+  agent behaving.</p>
+  <p class="note">app_id <code>{{ app_id }}</code> · task <code>{{ task_type }}</code>.
+  Authority comes from the reviewed audit manifest, not from what a run asks for.</p>
+  <a class="btn" href="{{ prefix }}/runs">Run an invoice</a>
+</div>
+
+{% endblock %}

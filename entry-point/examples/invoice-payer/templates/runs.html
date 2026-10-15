@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Run — invoice-payer{% endblock %}
+{% block content %}
+
+<h2>Pay one invoice through the gated loop</h2>
+
+<div class="panel">
+  <form method="post" action="{{ prefix }}/runs">
+    <div class="field">
+      <label for="invoice_id">Invoice</label>
+      <select name="invoice_id" id="invoice_id">
+        <option value="">— choose an invoice —</option>
+        {% for i in invoices %}
+        <option value="{{ i.invoice_id }}">{{ i.invoice_id }} · {{ i.amount }} {{ i.currency }} · {{ i.supplier }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="primary" type="submit">Run</button>
+    <p class="note">Runs are scripted on purpose: the thing being demonstrated is
+    the gate, not the reasoning. A script can include requests that
+    <em>should</em> be refused, without hoping a model decides to misbehave.</p>
+  </form>
+</div>
+
+<h2>Results so far</h2>
+{% if outcomes %}
+<table>
+  <thead><tr><th>Invoice</th><th>Status</th><th>Reason</th></tr></thead>
+  <tbody>
+  {% for inv_id, o in outcomes.items() %}
+    <tr>
+      <td class="mono"><a href="{{ prefix }}/runs/{{ inv_id }}">{{ inv_id }}</a></td>
+      <td>
+        {% if o.status == 'paid' or o.status == 'paid_after_approval' %}<span class="badge b-ok">{{ o.status }}</span>
+        {% elif o.status == 'refused' %}<span class="badge b-bad">refused</span>
+        {% elif o.status == 'held' %}<span class="badge b-warn">held</span>
+        {% else %}<span class="badge">{{ o.status }}</span>{% endif %}
+      </td>
+      <td>{{ o.reason }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">Nothing run yet.</p>
+{% endif %}
+
+{% endblock %}
