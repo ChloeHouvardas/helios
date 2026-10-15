@@ -3,7 +3,7 @@
 #
 #   scripts/demo-check.sh all
 #   scripts/demo-check.sh T0 T1 T2          # offline rungs only
-#   scripts/demo-check.sh T3 --tenant demo  # Docker rungs on this machine
+#   scripts/demo-check.sh T3 T4 T5 --tenant demo  # Docker rungs on this machine
 #
 # Prints `<id> PASS|FAIL <observed>` per check and exits non-zero on any FAIL.
 set -uo pipefail

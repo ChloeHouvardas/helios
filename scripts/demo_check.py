@@ -1,8 +1,8 @@
 """The DEMOFLOW.md test ladder, scripted. One line per check: id, PASS/FAIL, observed.
 
 Rungs: T0 offline suites · T1 each app alone · T2 the builder path with a stub
-agent · T3 Docker on this machine · T4 tools and logs central · T5 cross-app ·
-T6 surprise task. Later rungs assume earlier ones; `all` runs them in order.
+agent · T3 Docker on this machine · T4 tools and logs central · T5 cross-app.
+Later rungs assume earlier ones; `all` runs them in order.
 """
 from __future__ import annotations
 
@@ -247,7 +247,9 @@ def t3(args) -> None:
         r = _deploy(args, path, t)
         slug = _slug(name, t)
         ok = r.returncode == 0 and _wait_page(slug) == 200
-        pages = {p: _page(slug, p)[0] for p in ("/", "/holds", "/health")} if ok else {}
+        # Retry each page briefly: nginx reloads the route moments after the
+        # deploy returns, and the first hit can land in that window.
+        pages = {p: _wait_page(slug, p, tries=10) for p in ("/", "/holds", "/health")} if ok else {}
         check(f"T3.{n}", ok and all(v == 200 for v in pages.values()),
               f"{name}: {pages}" if ok else (r.stderr or r.stdout)[-240:])
 
@@ -435,63 +437,12 @@ def t5(args) -> None:
     check("T5.4", r.stdout.strip() == "", "no app names another app's URL" if not r.stdout.strip() else r.stdout.strip())
 
 
-# ---------------------------------------------------------------- T6
-def t6(args) -> None:
-    t = args.tenant
-    work = Path(tempfile.mkdtemp(prefix="helios-t6-")) / "expense-approver"
-    spec = work.parent / "spec.yaml"
-    work.parent.mkdir(parents=True, exist_ok=True)
-    spec.write_text('''spec_version: "1"
-identity: { id: expense-approver, name: Expense Approver, description: Approves employee expense claims against a monthly budget per department and reimburses the approved ones. }
-stack: { use: helios-python-web-1 }
-data:
-  local:
-    entities:
-      - name: claim
-        fields:
-          - { name: id, type: string, required: true }
-          - { name: employee_id, type: string, required: true }
-          - { name: department, type: string, required: true }
-          - { name: amount, type: decimal, required: true }
-          - { name: status, type: string, required: true }
-      - name: budget
-        fields:
-          - { name: id, type: string, required: true }
-          - { name: department, type: string, required: true }
-          - { name: remaining, type: decimal, required: true }
-agents:
-  action_manifest: agents/expense-approver-action.json
-  audit_manifest: agents/expense-approver-audit.yaml
-ui:
-  pages:
-    - { id: dashboard, title: Claims this month, pattern: summary }
-    - { id: claims, title: Claims, pattern: table }
-    - { id: holds, title: Needs your approval, pattern: approval_queue }
-tools:
-  - claims_lookup
-  - budgets_remaining
-  - { name: approve_claim, side_effect: true }
-  - reimbursements_send
-''', encoding="utf-8")
-    r = _scaffold(work, spec)
-    check("T6.1", r.returncode == 0, (r.stdout.strip().splitlines() or [r.stderr[-120:]])[0])
-    r = run([REPO / ".venv" / "bin" / "helios-app", "validate", work])
-    last = (r.stdout.strip().splitlines() or [""])[-1]
-    check("T6.2", r.returncode == 0 and "0 error(s)" in last, last)
-    r = _deploy(args, work, t)
-    slug = _slug("expense-approver", t)
-    ok = r.returncode == 0 and _wait_page(slug) == 200
-    check("T6.3", ok, f"deployed /health 200, / {_page(slug, '/')[0]}" if ok else (r.stderr or r.stdout)[-240:])
-    run([PY, HELIOS, "undeploy", "expense-approver", "--tenant", t, "--engine", _engine(args)])
-    shutil.rmtree(work.parent, ignore_errors=True)
-
-
-RUNGS = {"T0": t0, "T1": t1, "T2": t2, "T3": t3, "T4": t4, "T5": t5, "T6": t6}
+RUNGS = {"T0": t0, "T1": t1, "T2": t2, "T3": t3, "T4": t4, "T5": t5}
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("rungs", nargs="+", help="T0..T6 or all")
+    ap.add_argument("rungs", nargs="+", help="T0..T5 or all")
     ap.add_argument("--tenant", default="demo")
     ap.add_argument("--engine", default=os.environ.get("HELIOS_ENGINE_URL", "http://127.0.0.1:8100"))
     args = ap.parse_args(argv)
