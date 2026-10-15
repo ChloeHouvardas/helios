@@ -20,12 +20,14 @@ Expected capabilities:
 
 **Purpose:** Allow independently deployed applications to access shared capabilities.
 
-Expected capabilities:
-- Read and publish shared business state.
-- Query the cross-app knowledge graph.
-- Access managed financial tools.
-- Receive relevant updates from other applications.
-- Request authorization for sensitive operations.
+How it works when deployed:
+- **Tools.** The app proposes a named tool (`payments.send`, `graph.publish_verified`) through `helios_sdk.propose_action` to its audit sidecar (`POST /execute`, bearer `HELIOS_ACTION_TOKEN`). The sidecar enforces the fact-free rules and the permission families from `helios.yaml`, then forwards granted tools to the tenant core's `POST /call {"tool", "args"}` with the execution secret. Three outcomes come back and stay distinct: `executed`, `denied` (the sidecar or core's own gate refused this request), or 502 `retryable` (an outage, never a decision).
+- **Graph.** `graph.publish_verified` / `graph.observe` / `graph.read` are tools like any other; verified nodes persist in the core's SQLite snapshot.
+- **Events.** `helios_sdk.publish_event(name, **data)` and `subscribe_events(handler)` on the tenant Redis channel `<tenant>:events`. Event names are `<entity>.<event>` from the app spec's `graph.publishes`.
+- **Authorization.** A payment needs an owner-confirmed intent `auth_code`; core rejects a send without one whatever the bearer token says.
+- **Permissions.** `helios.yaml` `permissions` lists the families the sidecar may forward: `payments`, `email`, `knowledge-graph`, `events`, `forecast`, `market-data`, `spreadsheets`, `collect`. An empty list grants nothing.
+
+Locally and in tests the same registry is composed in-process by `fin_tools.build_world()`.
 
 ## 3. Action Agents ↔ Audit Agents
 
@@ -64,9 +66,13 @@ The distinction between verified records and agent-generated observations will n
 
 **Purpose:** Allow Qwen to deploy generated applications.
 
-Expected flow:
+Flow:
 
-Generate → Validate → Return Feedback → Revise if Needed → Deploy → Verify
+Generate → `helios-app validate` → fix every problem at once → `helios deploy <dir> --tenant <t>` → `GET /health` 200 at `http://localhost/apps/<app>-<tenant>/`.
+
+An app provides `helios.yaml`, an ASGI entry and a constant `GET /health`. The engine (`platform/deployment`) validates the manifest, lints for secrets, builds on the golden base image, smoke-tests, attaches the audit sidecar and routes through nginx. CLI exit codes are for the coding agent: `0` deployed, `1` rejected (the response lists every problem and the build or smoke log), `2` refused before upload (a `.env` in the bundle), `3` engine unreachable, `4` usage. A failed redeploy leaves the previous deployment serving.
+
+Operator surface: `helios apps`, `helios logs <container>`, `helios evidence --tenant <t>` (every app's action, audit and sidecar logs with chain verification), `helios undeploy <name>` (containers removed, data volumes kept), `helios doctor`.
 
 ## 6. Tool Contract
 
@@ -98,10 +104,6 @@ An outage must never be reported as a rejection. Recording one as a rejection wr
 
 ## Interfaces to Define Later
 
-- Generated application package format — spec format defined in `specs/app-builder.md`; packaging and hosting still open
-- Agent manifest format
-- Audit agent definitions beyond the deterministic gate
-- Financial tool schemas and permissions (contract shape agreed; individual tool prototypes live in `platform/financial-tools/`, see its README and `research/README.md`)
-- Knowledge graph read/write interface
-- Shared event format
-- Deployment API and hosting model
+- Audit agent definitions beyond the deterministic gate (advisory review is non-binding today)
+- A tenant-wide read of the knowledge graph for apps (today apps read core's graph only through the sidecar; cross-app reads go over the bus)
+- Holds and replay guards persisted across a container restart

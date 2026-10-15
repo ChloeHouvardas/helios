@@ -15,7 +15,7 @@ Provides the tools Qwen uses to create applications.
   - **Audit Agent Builder:** A framework for creating agents that monitor and review those workflows.
 - **Agent Integration:** The seam between the two builders — `platform/agent-integration/`. This is a real, running component, not a planned one: it is the only package in the repo allowed to import both, and it holds the gated agent loop, the audit bridge, the adapters that close the two contracts' shape gaps, the manifest generator, the model driver and the CLI. The two builders never import each other, which is what keeps the auditor trustworthy — an app cannot modify the code that audits it.
 - **Deployment Engine:** `platform/deployment/`. The deployment contract every app adopts: a `helios.yaml` manifest, an ASGI entry point and `GET /health`. Builds app bundles on golden base images, smoke-tests them in a sandbox, attaches a per-app audit sidecar, and routes them through nginx. Drives the Docker Engine API via docker-py.
-- **Validation + Deployment:** Checks generated applications and supports automated deployment, including revision feedback to Qwen. `entry-point/checks/check_app.py` is the working stand-in for the app-builder validator that does not exist yet; the deployment engine above is what deploys.
+- **Validation + Deployment:** `helios-app validate` (`platform/app-builder`) checks a generated application against its own manifests and code — action tools ⊆ audit tools, side-effect flags agree in both files, every fact a rule binds is produced — and `platform/deployment/cli/helios.py deploy` ships it. Every problem is reported at once, each naming the field and what to write instead, and the deploy response carries the build or smoke-test log, so a coding agent can revise and redeploy.
 
 ### 2. Generated Applications
 
@@ -25,14 +25,23 @@ Agents execute within their respective applications rather than through a centra
 
 Applications may use packaged SDK capabilities and connect to centrally hosted Helios services.
 
+Three flagships exist, each built through the platform and deployable under one tenant at the same time:
+
+- **Helios Collect** (`apps/helios-collect`) — chases overdue invoices, negotiates extensions within a capped authority, routes inbound money by configuration.
+- **Helios Payables** (`apps/helios-payables`) — pays supplier bills that are due and affordable, reschedules the rest, holds duplicates and unusual amounts, refuses changed payee details, and asks the owner when a payment would leave payroll short according to the platform's forecaster.
+- **Helios Cash Planner** (`apps/helios-cash-planner`) — forecasts thirteen weeks from how customers actually pay, warns weeks ahead, recommends one action per short week with the public reference rate cited. The forecast is a fact the agent cannot write.
+
+Each app has one container plus a platform-owned audit sidecar; data lives on a named volume that survives redeploys.
+
 ### 3. Helios Shared Services
 
 Services that remain available to applications after deployment.
 
-- **Shared State & Knowledge Graph:** Maintains cross-application business context, relationships, and shared state.
-- **Managed Financial Tools API:** Provides centrally maintained financial operations and integrations.
-- **Intent & Trust Service:** Supports permission checks, user-defined constraints, and approvals.
-- **Shared Events & Updates:** Allows applications to react to changes originating from other applications.
+- **Shared State & Knowledge Graph:** Maintains cross-application business context, relationships, and shared state. Verified records and agent observations are distinct, and an observation can never overwrite a verified node. Lives in the tenant core (below) and persists to SQLite on the tenant volume.
+- **Managed Financial Tools API:** The **tenant core** — one `python -m fin_tools` container per tenant serving the whole tool registry (payments, collect, email, forecast, behavior, market, spreadsheet, sheets, graph) over HTTP, bearer-authenticated with the execution secret only the audit sidecars hold. Apps propose a named tool; the sidecar adjudicates and forwards; core executes and persists.
+- **Intent & Trust Service:** Intent capture, confirmation and single-use auth codes bound to amount, currency and payee, signed with a secret that lives only in core. A bearer token authenticates a caller; it never authorises a payment.
+- **Shared Events & Updates:** A Redis channel per tenant. An app publishes what it changed (`invoice.extension_agreed`, `bill.rescheduled`, ...) and others subscribe; the graph node is the record, the event is the notification.
+- **Central evidence:** `GET /api/v1/tenants/<t>/logs` on the deployment engine returns every app's action log, hash-chained audit log and sidecar log, each chain verified.
 
 ### Agent Toolkit: How Action and Audit Agents Work
 
@@ -64,11 +73,13 @@ The design principle is that **the model proposes and code decides**. Agents can
 
 ### Cross-App Coordination
 
-Applications maintain their own internal state but can publish relevant updates to Helios's shared services.
+Applications never call each other. Each works alone first; coordination is an added feature that flows only through the shared services:
 
-For example, a customer payment application may confirm a payment and publish the result. An invoice management application can then retrieve or receive the updated state and adjust its workflow.
+1. Collect agrees a due-date extension, publishes a **verified** `invoice` node and emits `invoice.extension_agreed` on the tenant bus.
+2. Cash Planner, subscribed to the bus, re-projects against the agreed date and publishes a **verified** `cashplan:<week>` warning if a week goes short.
+3. Payables asks the platform's forecaster, as a fact inside its own gate, whether paying a bill now leaves payroll short, and holds the payment for the owner when it does.
 
-The shared ledger is intended to preserve verified financial records, while the knowledge graph makes relationships and current context accessible across applications.
+The shared ledger in the tenant core preserves verified financial records, while the knowledge graph makes relationships and current context accessible across applications.
 
 ### Current Design Assumptions
 
@@ -76,8 +87,8 @@ The shared ledger is intended to preserve verified financial records, while the 
 - Action and audit agents run within generated applications, using the Agent Toolkit runtime.
 - App-specific agent behavior is defined in a manifest rather than custom agent code.
 - The knowledge graph is centrally hosted by Helios.
-- Financial capabilities may be provided through a combination of packaged libraries and managed APIs.
-- Deployment is intended to be automated through Qwen and Helios's deployment tooling.
+- Financial capabilities are one registry, composed in-process for local runs and tests and served by the tenant core when deployed.
+- Deployment is automated through the deployment engine; the coding agent drives it from the CLI and reads its exit codes.
 
 These assumptions may evolve as the interfaces and implementation are defined.
 

@@ -29,6 +29,12 @@
 - **Vendored frontend assets:** HTMX 2.0.11 is vendored into `app_builder/kit/static/` rather than loaded from a CDN, with its version, byte count and sha256 recorded in `stacks.yaml` and asserted by a test. A generated app must work offline and behind a host that strips `/apps/<slug>`
 - **Deployment:** `platform/deployment` — `helios.yaml` manifest, an ASGI entry
   and `GET /health`, built and routed through the Docker Engine API (docker-py).
+  Three golden images keyed by the platform hash: `helios-app-base` (the platform
+  packages), `helios-auditor` (the sidecar), `helios-core` (`python -m fin_tools`,
+  the tool service). One nginx on the ingress network; per tenant an internal
+  network, a Redis bus and a core container with its own data volume.
+- **Cross-app transport:** Redis pub/sub, one channel per tenant, through
+  `helios_sdk`. Apps never call each other.
 - **Testing:** pytest, run by `scripts/test-all.sh`. Every suite is offline: no
   network, Docker daemon, model token or provider credential required.
 - **Dependency pinning:** `requirements-dev.txt` pins every version exactly, so
