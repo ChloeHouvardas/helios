@@ -101,6 +101,16 @@ When an action is held, the agent's state (conversation history and the proposal
     a packaged data adapter means every deployed app holds its own `TUSHARE_TOKEN`
     and its own quota. A managed API would hold the credential once. That is a
     security and cost question, not only an architectural preference.
+  - **Coordination flag for whoever owns the teammate packages:**
+    `OTHER-TEAMMATE-STUFF/forecasting-simulation/services/financial-api/` is
+    already a data-fetching service with the same job as `fin_tools/market_data.py`
+    (its `market.py` adapter). It is a candidate to be **promoted into `platform/`
+    and shared** rather than left duplicated across sessions. Not done here — this
+    session built its own adapter (OPTION 1) and did not edit inside
+    `OTHER-TEAMMATE-STUFF`. If the group decides market data belongs behind a
+    managed API, that service is the thing to promote; its endpoint/field names
+    would still need the live-API correction recorded in `specs/tech-stack.md`
+    first.
 - How will applications authenticate with shared Helios services?
 - What platform-wide limits should mandates be capped by?
 
