@@ -40,6 +40,42 @@ Helios hosts a central knowledge graph that applications can use to exchange rel
 ### Qwen handles application generation
 Qwen uses Helios's development interfaces to generate applications and initiate deployment.
 
+### Two audit gates, one direction of authority
+A deployed app is gated twice, and the two gates are not peers.
+
+- **In-app `audit_agent`** (the YAML-driven standalone auditor inside the app
+  container) is **authoritative**. It has trusted facts from the app's
+  `FactSource`, so it can evaluate fact-bound rules — a payment against the
+  recorded invoice amount, contact frequency, a counterparty whose banking
+  details changed. It is the only gate that can **hold** an action for the owner,
+  and the owner's decision resumes exactly that action.
+- **The deployment audit sidecar** (one per app, created by the engine) is the
+  platform's last line. It holds `HELIOS_EXECUTION_SECRET` and is the only
+  container permitted to reach the tenant core. It has **no facts and no owner**,
+  so it may **deny or forward — never approve**, and never reverse an in-app
+  hold. A sidecar that could approve would be a second, weaker policy engine
+  that an app could aim its traffic at to bypass the first.
+
+Because the sidecar has no fact source, it enforces only the **fact-free subset**
+of the app's manifest — the tool allow-list, constant argument ceilings,
+forbidden values, required arguments, `max_calls`, and duplicate detection. It
+loads that manifest with `audit_agent`'s own `AuditManifest.load` and writes its
+decisions with `audit_agent`'s own hash-chained `AuditLog`, so the two gates read
+one schema through one code path and cannot drift. Rules needing a trusted fact
+are **skipped, not evaluated**: `audit_agent` fails such a rule closed, so running
+it without facts would deny every request it touched. Every skipped rule is
+disclosed under the sidecar's `/health` as `delegated_to_in_app_gate`, so a
+reviewer can always see what the platform gate does not check.
+
+The engine copies the app's manifest into the sidecar at `/policy/audit.yaml`
+before the sidecar starts; the app has no volume and no exec access to that path,
+so it cannot rewrite its own policy after deploy.
+
+This resolves the "which gate is authoritative" open question that
+`HANDOFF.md` §6 flagged for team sign-off, and the related overlap with
+`agent_toolkit.audit.AuditGate` (in-process, receivables-shaped only), which
+remains importable but out of the loop.
+
 ## Tentative
 
 ### Hybrid financial tools

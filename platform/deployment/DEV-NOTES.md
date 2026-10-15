@@ -2,6 +2,31 @@
 
 For the team (English). What we set up on the Mac mini, why, and what's open.
 
+> **Corrections applied by session p2-deploy.** These are the original Mac-mini
+> author's notes and are kept as written, but four statements no longer match the
+> code. `platform/deployment/README.md` is authoritative.
+>
+> 1. The token env var is `HELIOS_ACTION_TOKEN` (what `helios_sdk` reads), not
+>    `ACTION_PROPOSAL_TOKEN`. The sidecar verifies it against
+>    `EXPECTED_ACTION_TOKEN`. (§3 below, and the sidecar's own docstring.)
+> 2. "no outbound internet for user code" (§4) is **false** and is no longer
+>    claimed. `tenant_<id>_net` is `internal=True`, but an app container also
+>    joins `helios_ingress_net` because nginx must reach it, and that network has
+>    egress. Making the claim true would mean putting app containers on the
+>    tenant network only — an open hardening item.
+> 3. §4 still says "for Traefik"; §1 already corrects this. The ingress is
+>    **nginx**. The old `bootstrap.sh` also printed "traefik entry" and "traefik
+>    dash" while starting `nginx:alpine`; it has been rewritten.
+> 4. `HELIOS_ENGINE_URL` is **no longer injected** into the auditor. It was
+>    injected and never read, so the sidecar no longer queries the engine for app
+>    logs. It reads its policy from `/policy/audit.yaml`, which the engine copies
+>    in *before* the sidecar starts.
+>
+> The sidecar's policy is also no longer hard-coded: it is derived from the app's
+> own audit manifest (fact-free subset only), and decisions are written to a
+> hash-chained JSONL under `data_dir` using `audit_agent`'s own log writer.
+> See `specs/decisions.md` §"Two audit gates".
+
 ## What was built (maps to the LLM design doc section by section)
 
 - **§1 Orchestration** — `engine/orchestrator.py` is the `OrchestratorDriver`
