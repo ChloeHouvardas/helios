@@ -4,11 +4,17 @@ The tools an app's agents may call. Generated with the commands at the bottom of
 this file — re-run them rather than trusting this snapshot, because the tool set
 is still growing.
 
-**Everything here is an offline prototype.** `fin_tools` touches no network, no
-database, and no real money. Its `World` is an in-memory dataclass. That is
-deliberate: it lets a generated app be built, tested and demoed without
-credentials, and any implementation following the tool contract can be swapped in
-without changing the agent runtime.
+**Money movement here is an offline prototype.** `fin_tools` uses no database and
+no real money; its `World` is an in-memory dataclass. That is deliberate: it lets
+a generated app be built, tested and demoed without credentials, and any
+implementation following the tool contract can be swapped in without changing the
+agent runtime.
+
+**One exception:** the `market.*` tools may call the Tushare HTTP API for live
+quote and reference-rate data, and only when `TUSHARE_TOKEN` is set. No other
+module opens a socket, and that data is read-only — it never reaches a balance or
+the ledger. Without a token those tools raise `ServiceUnavailable` rather than
+returning invented numbers.
 
 ## Entry point
 
@@ -23,7 +29,13 @@ bundle.intents                                              # Intent Verificatio
 ```
 
 `build_world()` returns a `Bundle(world, registry, intents, payments, email,
-graph)` and registers all 12 tools onto a fresh `ToolRegistry`.
+graph)` and registers all 16 tools onto a fresh `ToolRegistry`.
+
+It also accepts two optional keyword arguments for the market tools:
+`market_client=` (a preconfigured `TushareClient`) and `post_json=` (shorthand for
+injecting only the transport). Both default to `None`. Injecting either is how the
+market tools are tested offline — pass `post_json=<callable>` and no socket is
+opened.
 
 ## Catalog
 
@@ -111,6 +123,49 @@ useful for the `approval_queue` UI, because the owner can see what would happen.
 `what_if(invoices, profiles, baseline=SimPolicy(...), variant=SimPolicy(...))`
 compares two policies. This is the capability behind Helios Cash Planner's
 plain-language what-ifs.
+
+### market — live quote data
+
+| Tool | Side effect | Arguments | Returns |
+|---|---|---|---|
+| `market.reference_rate` | no | `series: str`; `as_of: str\|None` | `{series, value_pct, unit, as_of, requested_as_of, provenance}` |
+| `market.daily_quotes` | no | `ts_code: str`; `start_date, end_date, trade_date: str\|None` | `{ts_code, count, quotes, units, provenance}` |
+| `market.trading_calendar` | no | `start_date, end_date: str`; `exchange: str\|None` | `{exchange, count, open_days, days, provenance}` |
+| `market.company_basic` | no | `query: str\|None`; `ts_code: str\|None`; `list_status: str\|None` | `{count, matches, provenance}` |
+
+All four are read-only and require `TUSHARE_TOKEN`. `series` ∈ `lpr_1y`,
+`lpr_5y`, `shibor_on`, `shibor_1w`, `shibor_1m`, `shibor_3m`, `shibor_6m`,
+`shibor_1y`.
+
+Four things an app author needs to know:
+
+- **This is quote data, not money.** Values are floats denominated in their own
+  unit, and every result says which: `CNY per share`, `手 / lots of 100 shares`,
+  `千元 / thousands of CNY`, `percent per annum`. No field is named `*_cents`,
+  because that name would imply integer money and invite adding a share price to a
+  balance. If your app needs to *use* a price, convert explicitly at your own
+  boundary and own the rounding — see `specs/decisions.md`.
+- **`as_of` may not be the date you asked for.** These series publish on their own
+  schedule, and asking for an unpublished date returns zero rows. A rate resolves
+  to the newest publication **on or before** your `as_of`, and
+  `provenance.as_of` tells you the date it was actually published — so "today's
+  LPR" may correctly come back as one published six weeks ago. Read that field
+  before presenting a rate as current.
+- **Every result carries `provenance`** — publisher, `api_name`, `as_of`,
+  `retrieved_at`, `source_url`, `mode`. Surface it. A rate with no provenance is
+  not a rate you can defend.
+- **Unavailable is not a refusal.** A missing token, a timeout, or an upstream
+  error returns `{"ok": false, "unavailable": true, "retryable": true}` — *not*
+  `rejected`. Treat it as an outage worth retrying or reporting, not as a gate
+  denying your action. `{"rejected": true}` still means a validator or gate looked
+  at this specific request and said no.
+
+Endpoints are allow-listed to `trade_cal`, `daily`, `shibor_lpr`, `shibor` and
+`stock_basic`. **No tool accepts an `api_name` argument** — the endpoint is
+hard-coded per tool, so an agent cannot reach an endpoint nobody reviewed. A
+company-lookup miss returns an empty `matches` list rather than a fuzzy
+substitute, because for a counterparty check an invented match is worse than no
+answer.
 
 ### Intent Verification — not in the registry
 
