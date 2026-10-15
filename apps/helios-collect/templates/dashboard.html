@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — helios-collect{% endblock %}
+{% block content %}
+
+<div class="cards">
+  <div class="card"><div class="n">{{ overdue_count }}</div><div class="l">Overdue</div></div>
+  <div class="card"><div class="n">{{ unpaid_count }}</div><div class="l">Unpaid invoices</div></div>
+  <div class="card"><div class="n">{{ total_due }}</div><div class="l">CNY outstanding</div></div>
+  <div class="card">
+    <div class="n">{{ holds_open }}</div><div class="l">Awaiting you</div>
+    {# The number that matters: an agent that is held and nobody is watching
+       looks identical to an agent that finished. #}
+  </div>
+</div>
+
+{% if holds_open %}
+<div class="panel" style="border-left: 4px solid var(--warn);">
+  <strong>{{ holds_open }} action{{ '' if holds_open == 1 else 's' }} held for your decision.</strong>
+  <p class="note">The auditor will not proceed without you. Nothing held has been executed.</p>
+  <a class="btn primary" href="{{ prefix }}/holds">Open the approval queue</a>
+</div>
+{% endif %}
+
+<h2>Recent runs</h2>
+{% if outcomes %}
+<table>
+  <thead><tr><th>Run</th><th>Task type</th><th>Steps</th><th>Executed</th><th>Denied</th></tr></thead>
+  <tbody>
+  {% for o in outcomes %}
+    <tr>
+      <td><a href="{{ prefix }}/runs/{{ o.run_id }}" class="mono">{{ o.run_id }}</a></td>
+      <td class="mono">{{ o.task_type or '—' }}</td>
+      <td>{{ o.steps }}</td>
+      <td>{% if o.executed %}<span class="badge b-ok">{{ o.executed }}</span>{% else %}0{% endif %}</td>
+      <td>{% if o.denied %}<span class="badge b-bad">{{ o.denied }}</span>{% else %}0{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">No runs yet. <a href="{{ prefix }}/runs">Run a scenario</a>.</p>
+{% endif %}
+
+<h2 style="margin-top:26px;">Task types this app is authorized for</h2>
+<div class="panel">
+  {% for t in task_types %}<code class="badge b-ok" style="margin-right:6px;">{{ t }}</code>{% endfor %}
+  <p class="note">Authority comes from the reviewed audit manifest, not from what a
+  run asks for. An unlisted task type is refused with "no policy registered".</p>
+</div>
+
+{% endblock %}

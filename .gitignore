@@ -7,6 +7,9 @@ __pycache__/
 
 # Runtime artifacts
 .runs/
+# Deployment engine state: tenant execution secrets, generated nginx config and
+# per-deploy work directories. Never commit these -- the tenant files contain the
+# secret the audit sidecar authenticates to core with.
 .helios-run/
 engine.log
 data/core/

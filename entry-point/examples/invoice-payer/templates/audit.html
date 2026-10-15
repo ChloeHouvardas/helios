@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Audit evidence — helios-collect{% endblock %}
+{% block content %}
+
+<h2>Chain verification</h2>
+
+<div class="panel">
+  {% if intact %}
+  <p><span class="badge b-ok">intact</span>
+     <strong>No entry has been edited or removed.</strong></p>
+  <p class="note">Every authorization issued, every decision and every owner
+  verdict is an event, and each event commits to the one before it by hash. An
+  edited or deleted line breaks verification at that point and every entry after
+  it — which is what makes this file evidence rather than a log.</p>
+  {% else %}
+  <p><span class="badge b-bad">broken</span>
+     <strong>The audit chain failed verification.</strong></p>
+  <ul>{% for p in problems %}<li class="mono">{{ p }}</li>{% endfor %}</ul>
+  {% endif %}
+  <p class="note">Evidence file: <code>{{ path }}</code></p>
+</div>
+
+<p class="note">This is the auditor's own hash-chained record, written by
+<code>audit_agent.audit_log.AuditLog</code>. The deployment audit sidecar writes a
+separate chain to <code>/data/audit/sidecar-log.jsonl</code> using the same
+writer, so the two gates produce the same shape of evidence and neither can
+drift.</p>
+
+{% endblock %}

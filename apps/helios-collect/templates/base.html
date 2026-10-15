@@ -1,0 +1,31 @@
+{# Base layout.
+
+   URL handling: nginx strips the /apps/<slug> prefix before proxying, so the
+   app sees "/" for every request. Relative links would break at nested routes
+   (from /runs/run-x, "../holds" resolves to /runs/holds). The engine sends
+   X-Forwarded-Prefix, which server.py exposes as `prefix`; every URL here is
+   written as {{ prefix }}/path so routing works under any prefix and at "/"
+   when run locally. #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}helios-collect{% endblock %}</title>
+  <link rel="stylesheet" href="{{ prefix }}/style.css">
+</head>
+<body>
+<header>
+  <h1>helios-collect</h1>
+  <nav>
+    <a href="{{ prefix }}/">Dashboard</a>
+    <a href="{{ prefix }}/holds">Approval queue{% if holds_open %} ({{ holds_open }}){% endif %}</a>
+    <a href="{{ prefix }}/runs">Run</a>
+    <a href="{{ prefix }}/audit">Audit</a>
+  </nav>
+</header>
+<main>
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

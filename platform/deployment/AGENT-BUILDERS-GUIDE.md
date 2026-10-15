@@ -175,17 +175,61 @@ permissions:
 ```
 
 **Fields:**
-- `name` — app name (used in URLs and container names)
-- `tenant` — which tenant this app belongs to
-- `entry` — Python module:app object (e.g., `main:app`)
+- `name` — app name (used in URLs and container names; sanitised to `[a-z0-9-]`)
+- `tenant` — which tenant this app belongs to (`--tenant` overrides it)
+- `entry` — Python module:app object (e.g., `server:app`)
 - `port` — port your app listens on (default 3000)
-- `permissions` — list of tools your app is allowed to use
+- `permissions` — list of tool families your app may use (below)
+- `env` — **optional.** A list of environment variable NAMES the engine passes
+  from its own environment into your container. Names only; values are resolved
+  at container creation and never appear in the manifest, a deploy response, or a
+  log line. Only names matching `^(HELIOS_|DASHSCOPE_|OPENAI_|TUSHARE_|EMAILTOOL_)`
+  are accepted — you cannot ask the engine to forward `AWS_SECRET_ACCESS_KEY`.
+- `audit_manifest` — **optional.** Path inside your bundle of your YAML audit
+  manifest. The engine copies it into your audit sidecar at `/policy/audit.yaml`
+  *before* the sidecar starts, so your app cannot modify its own policy
+  afterwards. Without it the sidecar enforces only the platform allow-list and a
+  default payment cap.
+- `data_dir` — **optional**, must be absolute (default `/data`). The engine mounts
+  a named volume `helios-data-<tenant>-<app>` here in both your app and its audit
+  sidecar, so action logs, the hash-chained audit log, holds and replay state
+  survive a redeploy.
 
 **Permissions:**
 
-The `permissions` list determines what your audit sidecar will allow. If you try to use a tool not in this list, the audit sidecar rejects it.
+`permissions` is the platform tool-family vocabulary: `payments`, `email`,
+`knowledge-graph`, `events`, `forecast`, `market-data`, `spreadsheets`, `collect`.
+An unknown permission is rejected rather than silently dropped, because a dropped
+permission leaves your app unable to act at runtime with no explanation.
 
-Example: if `permissions` includes `payments` but not `email`, your app can propose payments but not emails.
+The sidecar accepts an action whose name is either a granted family (`payments`)
+**or** a tool your own audit manifest declares (`record_inbound_payment`). The two
+vocabularies never intersect in practice, so requiring both would deny everything.
+
+---
+
+## Error responses
+
+Every rejection is a 422 (or the status the stage names) with a body FastAPI wraps
+under a top-level `detail` key:
+
+```json
+{"detail": {
+  "stage": "manifest",
+  "error": "helios.yaml failed validation",
+  "problems": [
+    "helios.yaml: unknown permission 'pay'. Allowed: ['collect', 'email', ...]. Remove it or use the closest match",
+    "helios.yaml: 'data_dir' must be absolute, got 'data'. Write: data_dir: /data"
+  ],
+  "hint": "remove credentials from code; Helios injects runtime secrets at deploy time"
+}}
+```
+
+`stage` is one of `manifest | static_audit | build | smoke_test | routing |
+execution`. `problems` is **plural and complete** — validation reports every
+problem in one pass, so you should not have to redeploy four times to find four
+errors. Each entry names the field, the problem, and what to write instead.
+`logs` (build and smoke_test only) carries the last 4000 characters.
 
 ---
 
@@ -222,6 +266,10 @@ Your app container receives these environment variables automatically:
 - `HELIOS_ACTION_TOKEN` — token for proposing actions to the audit sidecar
 - `HELIOS_AUDIT_URL` — URL of your audit sidecar (e.g., `http://sample-collect-audit:8080/execute`)
 - `HELIOS_REDIS_URL` — Redis connection string
+- `HELIOS_DATA_DIR` — the mount point of your named data volume (`data_dir`)
+- plus every name you listed under `env:` that the engine actually has — for
+  example `DASHSCOPE_API_KEY`. A name the engine does not have is not injected,
+  so your app can distinguish "not configured" from "configured as empty".
 
 You don't need to configure these. They're injected at deploy time.
 

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run_id }} — helios-collect{% endblock %}
+{% block content %}
+
+<h2>Action log</h2>
+<p class="note mono">{{ run_id }}</p>
+
+<div class="panel">
+{% if entries %}
+  {% for e in entries %}
+  <div class="log-entry">
+    {% set ev = e.kind or '' %}
+    {% if ev %}
+      {% if ev == 'action_result' %}<span class="badge b-ok">executed</span>
+      {% elif ev == 'verdict' %}<span class="badge b-warn">verdict</span>
+      {% elif ev == 'hold' %}<span class="badge b-warn">hold</span>
+      {% else %}<span class="badge b-ok">{{ ev }}</span>{% endif %}
+    {% endif %}
+    {% if e.tool %}<code>{{ e.tool }}</code>{% endif %}
+    {% if e.decision %}
+      {% if e.decision == 'allow' %}<span class="badge b-ok">allow</span>
+      {% elif e.decision == 'deny' %}<span class="badge b-bad">deny</span>
+      {% else %}<span class="badge b-warn">{{ e.decision }}</span>{% endif %}
+    {% endif %}
+    {% if e.approved is not none %}
+      <span class="meta">owner {% if e.approved %}approved{% else %}declined{% endif %}</span>
+    {% endif %}
+    {% if e.executed %}<span class="badge b-ok">side effect happened</span>{% endif %}
+    {% if e.rule %}<span class="meta">rule <code>{{ e.rule }}</code></span>{% endif %}
+    {% if e.hold_id %}<span class="meta">hold <code>{{ e.hold_id }}</code></span>{% endif %}
+    {% if e.reason %}<div class="note">{{ e.reason }}</div>{% endif %}
+    <pre>{{ e | tojson(indent=2) }}</pre>
+  </div>
+  {% endfor %}
+{% else %}
+  <p class="empty">The action log is empty or could not be parsed.</p>
+{% endif %}
+</div>
+
+<p><a href="{{ prefix }}/runs">← back to runs</a></p>
+
+{% endblock %}

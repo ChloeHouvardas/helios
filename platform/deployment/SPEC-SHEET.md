@@ -111,7 +111,9 @@ helios_ingress_net (external, for nginx routing)
   ├── demo-sample-collect-app
   └── demo-sample-collect-audit
 
-tenant_demo_net (internal, no outbound internet)
+tenant_demo_net (internal=True; but the app also joins helios_ingress_net, which
+                 has egress -- so the app container is NOT internet-isolated.
+                 See the correction below the security model.)
   ├── demo-sample-collect-app (alias: sample-collect)
   ├── demo-sample-collect-audit (alias: sample-collect-audit)
   ├── helios-core-demo (alias: helios-core)
@@ -461,10 +463,21 @@ Audit Sidecar (trusted)
 helios-core (platform tools)
 ```
 
-- App containers only have `ACTION_PROPOSAL_TOKEN`
-- Only audit sidecars have `EXECUTION_SECRET`
+- App containers only have `HELIOS_ACTION_TOKEN` (the env var name the SDK reads;
+  the sidecar verifies it against `EXPECTED_ACTION_TOKEN`)
+- Only audit sidecars have `HELIOS_EXECUTION_SECRET`
 - App containers cannot reach helios-core directly
 - Audit sidecars enforce allow-lists, amount caps, duplicate detection
+
+> **Correction.** Earlier revisions of this sheet said "no outbound internet for
+> user code". That was not true and is not claimed now. The tenant network
+> (`tenant_<t>_net`) IS created `internal=True`, but an app container is attached
+> to **both** the tenant net and `helios_ingress_net`, which is a normal bridge
+> with egress -- so an app container does have outbound internet. nginx needs
+> that path to reach the app. Making the claim true would mean putting app
+> containers on the tenant network only and letting nginx reach them through a
+> second interface on the sidecar; that is an open hardening item, not the
+> current behaviour. See `docs/sessions/p2-deploy/HANDOFF-TO-P1-P3.md`.
 
 ### Current limitations
 

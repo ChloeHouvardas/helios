@@ -1,65 +1,83 @@
 #!/usr/bin/env bash
-# Helios local bootstrap: deployment engine + nginx ingress + python env.
-# Prereq: a Docker provider (OrbStack, Colima, or Docker Desktop) and python3.13.
+# Helios local bootstrap: Docker daemon + nginx ingress + deployment engine.
 #
-# Imported from the Mac-mini build. Two things changed on import: the Docker
-# socket is now detected rather than assumed to be OrbStack, and the venv is
-# built on python3.13 — audit_agent and agent_integration both require >=3.13,
-# and one interpreter for the whole repo is the point of scripts/bootstrap-venv.sh.
+# Idempotent: re-running is safe and will not duplicate containers or networks.
+#
+# Socket detection order matches engine/orchestrator.py and the session spec:
+#   1. $DOCKER_HOST if set
+#   2. OrbStack socket
+#   3. Colima socket
+#   4. /var/run/docker.sock
+# Whichever answers `docker info` first wins. On a machine with Docker Desktop
+# installed, /var/run/docker.sock is a symlink into the Desktop socket, so the
+# right action is to START DESKTOP -- not to install Colima alongside it, which
+# would create two competing daemons and a second docker binary.
+#
+# Requires python3.13+: the platform packages declare that floor. A bare
+# `python3` is never assumed to satisfy it.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# --- Docker socket detection ------------------------------------------------
-# Order: an explicit $DOCKER_HOST always wins, then the socket of whichever
-# provider is actually present. The upstream version hard-coded OrbStack, which
-# silently produced "daemon unreachable" for anyone on Colima or Docker Desktop.
-detect_docker_host() {
+ENGINE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$ENGINE_ROOT/../.." && pwd)"
+VENV="$REPO_ROOT/.venv"
+RUN_DIR="$ENGINE_ROOT/.helios-run"
+PORT="${HELIOS_ENGINE_PORT:-8100}"
+
+# --- 1. Docker daemon -----------------------------------------------------
+echo "==> docker daemon"
+detect_docker() {
   if [ -n "${DOCKER_HOST:-}" ]; then
-    printf '%s' "$DOCKER_HOST"
-    return 0
+    echo "    DOCKER_HOST=$DOCKER_HOST"
+    docker info >/dev/null 2>&1 && return 0
   fi
-  local candidate
-  for candidate in \
-    "$HOME/.orbstack/run/docker.sock" \
-    "$HOME/.colima/default/docker.sock" \
-    "/var/run/docker.sock"
-  do
-    if [ -S "$candidate" ]; then
-      printf 'unix://%s' "$candidate"
+  for sock in "$HOME/.orbstack/run/docker.sock" \
+              "$HOME/.colima/default/docker.sock" \
+              /var/run/docker.sock; do
+    [ -S "$sock" ] || continue
+    if DOCKER_HOST="unix://$sock" docker info >/dev/null 2>&1; then
+      export DOCKER_HOST="unix://$sock"
+      echo "    using $sock"
       return 0
     fi
   done
   return 1
 }
 
-if DETECTED="$(detect_docker_host)"; then
-  export DOCKER_HOST="$DETECTED"
-  echo "==> docker socket: $DOCKER_HOST"
-else
-  echo "==> no Docker socket found; start OrbStack, Colima or Docker Desktop,"
-  echo "    or export DOCKER_HOST explicitly."
-fi
-
-echo "==> docker daemon"
-if ! docker info >/dev/null 2>&1; then
-  if [ -x /usr/bin/open ] && [ -d "/Applications/OrbStack.app" ]; then
-    echo "    daemon not up — starting OrbStack"
-    open -a OrbStack
-    sleep 5
+if ! detect_docker; then
+  echo "    no daemon answering; trying to start one"
+  if command -v colima >/dev/null 2>&1; then
+    colima start --cpu 3 --memory 4 --disk 50 || true
+    detect_docker || true
+  elif [ -d /Applications/Docker.app ]; then
+    open -a Docker
+    for _ in $(seq 1 60); do
+      detect_docker && break
+      sleep 2
+    done
   else
-    echo "    daemon not reachable at ${DOCKER_HOST:-<unset>}. Start your Docker"
-    echo "    provider and re-run."
+    echo "ERROR: no Docker daemon and neither Colima nor Docker Desktop is installed." >&2
+    echo "Install one of:" >&2
+    echo "  brew install --formula colima docker && colima start --cpu 3 --memory 4 --disk 50" >&2
+    echo "  (or install Docker Desktop)" >&2
     exit 1
   fi
 fi
+docker info >/dev/null 2>&1 || { echo "ERROR: docker daemon still unreachable" >&2; exit 1; }
+echo "    daemon OK ($(docker version --format '{{.Server.Version}}' 2>/dev/null || echo '?'))"
 
-echo "==> shared ingress network + nginx (reverse proxy)"
+# --- 2. shared ingress network + nginx ------------------------------------
+echo "==> ingress network + nginx"
 docker network inspect helios_ingress_net >/dev/null 2>&1 || \
-  docker network create helios_ingress_net
-if ! docker ps --format '{{.Names}}' | grep -qx helios-nginx; then
-  docker rm -f helios-nginx >/dev/null 2>&1 || true
-  mkdir -p .helios-run/nginx
-  cat > .helios-run/nginx/default.conf <<'EOF'
+  docker network create helios_ingress_net >/dev/null
+
+# nginx must mount the SAME directory the engine writes routes into. The engine
+# resolves its run dir from the repository root, so mounting a different path
+# here leaves nginx serving its default page while the engine believes it has
+# routed an app -- a 200 that is not the app.
+mkdir -p "$RUN_DIR/nginx"
+if [ ! -f "$RUN_DIR/nginx/default.conf" ]; then
+  cat > "$RUN_DIR/nginx/default.conf" <<'EOF'
 server {
     listen 80 default_server;
     server_name _;
@@ -70,44 +88,56 @@ server {
     }
 }
 EOF
+fi
+
+if docker ps --format '{{.Names}}' | grep -qx helios-nginx; then
+  echo "    helios-nginx already running"
+else
+  docker rm -f helios-nginx >/dev/null 2>&1 || true
   docker run -d --name helios-nginx --restart unless-stopped \
     --network helios_ingress_net \
-    -v "$(pwd)/.helios-run/nginx:/etc/nginx/conf.d:ro" \
-    -p 80:80 \
-    nginx:alpine
+    -v "$RUN_DIR/nginx:/etc/nginx/conf.d:ro" \
+    -p 80:80 nginx:alpine >/dev/null
+  echo "    helios-nginx started"
 fi
 
-# --- python env -------------------------------------------------------------
-# python3.13, matching the repo floor. Prefer the shared repo venv when the
-# caller built it with scripts/bootstrap-venv.sh, since it already has these
-# deps pinned; fall back to a local venv so the engine still boots standalone.
-PY313="${PYTHON313:-python3.13}"
-if [ -x ../../.venv/bin/python ]; then
-  echo "==> using the shared repo venv at ../../.venv"
-  PYBIN=../../.venv/bin/python
-  UVICORN=../../.venv/bin/uvicorn
+# --- 3. python venv --------------------------------------------------------
+echo "==> python venv"
+if [ ! -x "$VENV/bin/python" ]; then
+  "$REPO_ROOT/scripts/bootstrap-venv.sh"
+fi
+"$VENV/bin/python" -c 'import sys; assert sys.version_info >= (3,13), sys.version' 2>/dev/null || {
+  echo "ERROR: $VENV is not Python 3.13+. Recreate it with scripts/bootstrap-venv.sh" >&2
+  exit 1
+}
+
+# --- 4. deployment engine --------------------------------------------------
+echo "==> deployment engine on 127.0.0.1:$PORT"
+if curl -sf -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+  # Something is already serving this port. Do not kill it blindly: another
+  # session may own it, and it may be running older code.
+  echo "    port $PORT already in use; leaving that process alone"
+  echo "    NOTE: verify it is running THIS engine -- check that"
+  echo "          curl -s http://127.0.0.1:$PORT/api/v1/doctor returns 200."
+  echo "          A 404 there means it is an older engine; use another port via"
+  echo "          HELIOS_ENGINE_PORT, or stop that process yourself."
 else
-  echo "==> python virtualenv ($($PY313 -V 2>&1)) + engine deps"
-  [ -d .venv ] || "$PY313" -m venv .venv
-  .venv/bin/pip install -q -r requirements.txt
-  PYBIN=.venv/bin/python
-  UVICORN=.venv/bin/uvicorn
+  pkill -f "uvicorn engine.app:app --host 127.0.0.1 --port $PORT" 2>/dev/null || true
+  sleep 1
+  ( cd "$ENGINE_ROOT" && \
+    HELIOS_REPO_ROOT="$REPO_ROOT" nohup "$VENV/bin/python" -m uvicorn \
+      engine.app:app --host 127.0.0.1 --port "$PORT" \
+      > "$ENGINE_ROOT/engine.log" 2>&1 & )
+  for _ in $(seq 1 40); do
+    curl -sf -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
+    sleep 1
+  done
 fi
 
-echo "==> deployment engine on 127.0.0.1:8100 (stops any previous engine process)"
-pkill -f 'uvicorn engine.app:app' 2>/dev/null || true
-sleep 1
-nohup "$UVICORN" engine.app:app --host 127.0.0.1 --port 8100 \
-  > engine.log 2>&1 &
-for _ in $(seq 1 40); do
-  curl -sf http://127.0.0.1:8100/health >/dev/null 2>&1 && break
-  sleep 1
-done
-
 echo
-echo "engine health:   $(curl -sf http://127.0.0.1:8100/health || echo FAILED)"
-echo "ingress entry:   http://localhost/  (routes via /apps/<app>-<tenant> prefix)"
-echo "app hostname:    http://<app>-<tenant>.helios.test  (needs a local DNS entry"
-echo "                 or the path-based route above)"
+echo "engine health: $(curl -sf -m 5 "http://127.0.0.1:$PORT/health" || echo FAILED)"
+echo "app entry:     http://localhost/apps/<app>-<tenant>/   (prefix stripped by nginx)"
+echo "virtual host:  http://<app>-<tenant>.helios.test       (needs a hosts entry)"
 echo
-echo "next: ./test-deploy.sh   # deploys the sample app end-to-end"
+echo "next: $VENV/bin/python cli/helios.py doctor --engine http://127.0.0.1:$PORT"
+echo "      $VENV/bin/python cli/helios.py deploy ../../apps/helios-collect --tenant demo"
