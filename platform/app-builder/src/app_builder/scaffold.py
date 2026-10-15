@@ -1130,6 +1130,179 @@ __all__ = ["SOURCE", "READS"]
 # app.py
 # ---------------------------------------------------------------------------
 
+# The scenario runner, the driver it replays, and the two page renderers.
+#
+# This is a PLAIN string, not part of app_module's f-string, and that is
+# deliberate. Everything here needs no value from the spec, and keeping it out of
+# the f-string means its braces are literal — no `{{` doubling. Doubling is the
+# single easiest way to silently corrupt generated code: a brace that should have
+# been doubled is interpolated by the GENERATOR instead of the generated module, so
+# the bug surfaces as a NameError in scaffold.py while the real fault is in text
+# that was never checked. Two such bugs were found and fixed by adding test_boot.py.
+#
+# Semantics mirror apps/helios-collect/app.py, including the precedence in
+# _summarize. That function is the part worth getting right: a run whose only side
+# effect was REFUSED still reports COMPLETED, because a denial is fed back to the
+# model as an observation and the loop then finishes normally. Reporting the loop's
+# status would call a blocked payment a success.
+_APP_RUNNER = '''
+class ScriptedDriver:
+    """A driver that replays a scenario's calls, then reports.
+
+    It ignores history and replays its script, which is what makes the offline demo
+    trustworthy: it proves the GATE works independently of what any model does.
+    Substituting a real Qwen loop means replacing this object with one that reads
+    `tools` and `history` and returns calls — the gate underneath does not change,
+    and that separability is the architecture-defence point.
+
+    It does not retry a held or denied call, per the action manifest's operating
+    contract. Retrying a reworded variant is circumventing a control, and it is the
+    specific failure mode a reviewer looks for.
+    """
+
+    def __init__(self, calls, final_text=""):
+        self._calls = [(name, dict(args)) for name, args in calls]
+        self._index = 0
+        self.final_text = final_text or "Work on this subject is complete."
+
+    def next_calls(self, *, task, instructions, tools, history):
+        from agent_integration.runtime import ToolCall
+
+        if self._index >= len(self._calls):
+            return self.final_text
+        name, args = self._calls[self._index]
+        self._index += 1
+        return [ToolCall(name=name, arguments=args)]
+
+
+def run_scenario(app, scenario, owner, *, run_id=None):
+    """Run one scenario through the platform's gated loop, resolving holds."""
+    from agent_integration.runtime import COMPLETED
+
+    task = f"{scenario.task_type} for {scenario.subject_id}"
+    outcome = Outcome(
+        subject_id=scenario.subject_id, task_type=scenario.task_type,
+        control=scenario.control, expects=scenario.expects,
+    )
+
+    # Request every tool the app has. The auditor grants only what this task's
+    # allowlist permits, and the loop offers the agent nothing else — an ungranted
+    # tool is invisible rather than rejected after the fact.
+    result = app.runtime.run(
+        driver=ScriptedDriver(scenario.calls),
+        task=task, task_type=scenario.task_type, run_id=run_id,
+        requested_tools=list(app_tools.TOOL_NAMES),
+    )
+
+    outcome.run_id = result.run_id
+    outcome.status = result.status
+    outcome.detail = result.detail
+    outcome.actions = list(result.actions)
+    outcome.holds = list(result.holds)
+
+    final_status = result.status
+    # A hold stops the loop. Resolve it with the owner, then resume — which executes
+    # exactly the action the owner was shown and nothing else.
+    for hold in list(result.holds):
+        approve = owner.decide_hold(hold)
+        outcome.owner_decisions.append({"hold_id": hold.get("hold_id"),
+                                        "approved": approve})
+        resumed = app.runtime.resume(
+            driver=ScriptedDriver([], final_text="Resumed after the owner's decision."),
+            run_id=result.run_id, hold_id=str(hold.get("hold_id")),
+            decision=approve, decided_by="owner",
+            task=task, task_type=scenario.task_type,
+        )
+        outcome.actions.extend(resumed.actions)
+        final_status = resumed.status
+        # The pre-hold detail describes a pause that is now over. Keeping it would
+        # report a completed run as "paused for an owner decision".
+        outcome.detail = resumed.detail if resumed.status != COMPLETED else ""
+        outcome.holds = [h for h in outcome.holds
+                         if h.get("hold_id") != hold.get("hold_id")]
+
+    # final_status is the status of the LAST run, which after a resume is the
+    # resumed one — passing the pre-resume status here would report an
+    # approved-and-executed action as still held.
+    outcome.status = _summarize(outcome, fallback=final_status)
+    outcome.reason = _reason_for(outcome)
+    return outcome
+
+
+def _reason_for(outcome):
+    """The human-readable reason behind an outcome, from what the gate recorded."""
+    for action in outcome.actions:
+        verdict = action.get("verdict") or {}
+        reason = str(verdict.get("reason") or "").strip()
+        if reason:
+            return reason
+    return (outcome.detail or "").strip()
+
+
+def _summarize(outcome, *, fallback):
+    """One word for what happened, derived from the actions rather than the loop.
+
+    Precedence runs from the most terminal outcome backwards:
+
+      1. an error beats everything — something broke;
+      2. a reject beats an execution — if any action was refused, the scenario did
+         not complete cleanly, whether a rule refused it or the owner declined it;
+      3. an execution means the work landed;
+      4. a still-pending hold means the scenario is paused;
+      5. otherwise nothing had any effect at all.
+
+    Note what this deliberately does NOT do: it never reports `done` merely because
+    the loop finished. A run whose only side effect was refused finishes normally,
+    and calling that a success would hide the control firing.
+    """
+    from agent_integration.runtime import ERROR, HELD
+
+    if fallback == ERROR:
+        return "error"
+    side_effects = [a for a in outcome.actions if (a.get("verdict") or {})]
+    if not side_effects:
+        return "read_only"
+    verdicts = [str((a.get("verdict") or {}).get("decision")) for a in side_effects]
+    executed = [a for a in side_effects if a.get("executed")]
+
+    # An owner-declined hold is recorded as a reject on resume; only the original
+    # hold carries the hold_id, so the owner's own decision is what distinguishes
+    # "the owner said no" from "the rules said no".
+    if "reject" in verdicts:
+        declined = any(d.get("approved") is False for d in outcome.owner_decisions)
+        return "declined_by_owner" if declined else "refused"
+    if executed:
+        return "done"
+    if "hold" in verdicts:
+        return "held" if fallback == HELD else "held_unresolved"
+    return "no_effect"
+
+
+def render_records(app):
+    """The records in the store, as the summary page would show them."""
+    lines = []
+    for entity in store.ENTITIES:
+        rows = getattr(store, f"list_{entity}")(app.conn)
+        lines.append(f"{entity}: {len(rows)} row(s)")
+        for row in rows[:20]:
+            lines.append(f"  {row}")
+    return "\\n".join(lines)
+
+
+def render_dashboard(app, outcomes):
+    """The `summary` pattern as text: outcome counts, then the records."""
+    counts = {}
+    for outcome in outcomes:
+        counts[outcome.status] = counts.get(outcome.status, 0) + 1
+    lines = [f"{app.app_id} — {len(outcomes)} scenario(s)"]
+    for status in sorted(counts):
+        lines.append(f"  {status}: {counts[status]}")
+    lines.append("")
+    lines.append(render_records(app))
+    return "\\n".join(lines)
+'''
+
+
 def app_module(spec: AppSpec) -> str:
     """Composition of `build_integration`, matching `apps/helios-collect/app.py`.
 
@@ -1381,10 +1554,15 @@ class Outcome:
     task_type: str
     control: str
     expects: str
-    decided: str = "unknown"
     reason: str = ""
     steps: list[dict[str, Any]] = field(default_factory=list)
-
+    run_id: str = ""
+    status: str = ""
+    detail: str = ""
+    actions: list[dict[str, Any]] = field(default_factory=list)
+    holds: list[dict[str, Any]] = field(default_factory=list)
+    owner_decisions: list[dict[str, Any]] = field(default_factory=list)
+''' + _APP_RUNNER + f'''
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -1416,27 +1594,68 @@ def main(argv: list[str] | None = None) -> int:
 
     app = build_app(run_dir=args.run_dir)
     try:
-        if args.dashboard:
-            for entity in store.ENTITIES:
-                rows = getattr(store, f"list_{{entity}}")(app.conn)
-                print(f"{{entity}}: {{len(rows)}} row(s)")
-                for row in rows[:20]:
-                    print(f"  {{row}}")
-            return 0
-
         selected = scenarios()
         if args.scenario:
             wanted = set(args.scenario)
             selected = [s for s in selected if s.subject_id in wanted]
-        if not selected:
-            print("no scenarios to run — write them in scenarios(), one per control")
+
+        if args.dashboard and not selected:
+            # No scenarios written yet, so there is nothing to summarise. Showing
+            # the records is still useful — it proves the store and its fixtures
+            # load, which is the other half of "does this app work".
+            print(render_records(app))
             return 0
 
-        for scenario in selected:
-            print(f"{{scenario.subject_id}}: {{scenario.control}}")
-            print("  TODO: drive the runtime over scenario.calls and record the "
-                  "outcome")
+        if not selected:
+            print("no scenarios to run — write them in scenarios(), one per control")
+            print()
+            print(render_records(app))
+            return 0
 
+        owner = ScriptedOwner(verbose=not args.json)
+        outcomes = [run_scenario(app, scenario, owner) for scenario in selected]
+
+        if args.json:
+            import json as _json
+
+            print(_json.dumps([
+                {{k: v for k, v in vars(o).items() if k != "steps"}} |
+                {{"steps": len(o.steps)}}
+                for o in outcomes
+            ], indent=2, default=str))
+            return 0
+
+        if args.dashboard:
+            print(render_dashboard(app, outcomes))
+            return 0
+
+        for outcome in outcomes:
+            marker = {{"done": "OK  ", "held": "WAIT", "refused": "DENY",
+                      "declined_by_owner": "DENY", "error": "ERR ",
+                      "read_only": "READ", "no_effect": "    ",
+                      "held_unresolved": "WAIT"
+                      }}.get(outcome.status, "??? ")
+            print(f"{{marker}} {{outcome.subject_id}}: {{outcome.status}}"
+                  f" — {{outcome.control}}")
+            if outcome.reason:
+                print(f"        {{outcome.reason}}")
+            if args.trace:
+                for step in outcome.steps:
+                    print(f"        {{step}}")
+
+        # Exit non-zero when a scenario did not reach the outcome its author
+        # declared, so `python app.py` can gate CI. A scenario that expects any
+        # outcome opts out with expects="any".
+        failures = [o for o in outcomes
+                    if o.expects != "any" and o.status != o.expects]
+        if failures:
+            print()
+            print(f"{{len(failures)}} of {{len(outcomes)}} scenario(s) did not "
+                  f"reach the expected outcome:")
+            for outcome in failures:
+                print(f"  {{outcome.subject_id}}: got {{outcome.status}}, "
+                      f"expected {{outcome.expects}}")
+            return 1
         return 0
     finally:
         app.close()

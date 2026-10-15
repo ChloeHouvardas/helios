@@ -288,6 +288,183 @@ def test_the_decide_endpoint_does_not_need_python_multipart(scaffolded, spec_pat
     assert "parse_qs" in source
 
 
+# ---------------------------------------------------------------------------
+# The scenario runner must actually drive the gate
+# ---------------------------------------------------------------------------
+
+def test_the_generated_app_runs_a_scenario_through_the_gate(tmp_path):
+    """End to end: build the app, run a scenario, get a verdict from the auditor.
+
+    This is the strongest statement the scaffolder can make about its output —
+    not "the text looks right" but "a side effect went through the audit gate and
+    came back with a decision". It uses the invoice-payer spec because that app's
+    manifests are complete enough to load and grant.
+
+    Tool handlers are generated as TODO stubs that RAISE, so this test supplies a
+    real one in-process. That is deliberate and mirrors what an author does next:
+    the scaffolder must not invent business logic, and a stub that returned an
+    empty result would let a demo succeed while doing nothing.
+    """
+    target = tmp_path / "runner"
+    spec_path = INVOICE_PAYER / "helios-app.yaml"
+    spec = AppSpec.load(spec_path)
+    scaffold(target, spec, spec_path=spec_path)
+
+    sys_path = str(target)
+    if sys_path not in sys.path:
+        sys.path.insert(0, sys_path)
+    for stale in ("app", "server", "store", "facts", "tools", "graph"):
+        sys.modules.pop(stale, None)
+
+    import importlib
+
+    import yaml
+
+    app_mod = importlib.import_module("app")
+
+    # The audit manifest declares this task; a scenario must name a task the
+    # auditor has policy for, or the grant fails closed with "no policy registered".
+    audit = yaml.safe_load(
+        (target / "agents" / f"{spec.app_id}-audit.yaml").read_text("utf-8")
+    )
+    task_type = next(iter(audit["tasks"]))
+
+    built = app_mod.build_app(run_dir=target / "runs")
+    try:
+        executed: list[dict] = []
+
+        def real_handler(args):
+            executed.append(dict(args))
+            return {"ok": True}
+
+        gated = None
+        for definition in built.integration.tools:
+            if definition.side_effect:
+                gated = definition.name
+                object.__setattr__(definition, "handler", real_handler)
+        assert gated, "the generated app should declare at least one gated tool"
+
+        # Discover one argument the gated tool's schema accepts, so the call passes
+        # schema validation. additionalProperties is False, so inventing a name
+        # would be refused for the wrong reason and prove nothing.
+        schema = next(d for d in built.integration.tools if d.name == gated).input_schema
+        first_prop = next(iter(schema.get("properties", {})), None)
+        arguments = {first_prop: "seeded-value"} if first_prop else {}
+
+        scenario = app_mod.Scenario(
+            subject_id="SUBJ-1", task_type=task_type,
+            calls=((gated, arguments),),
+            control="a gated side effect under the audit agent",
+            expects="any",
+        )
+        owner = app_mod.ScriptedOwner(verbose=False)
+        outcome = app_mod.run_scenario(built, scenario, owner)
+
+        assert outcome.status, "the runner produced no status"
+        assert outcome.status != "unknown"
+        # The decisive assertion: the gate made a decision about the side effect.
+        # The vocabulary here is the RUNTIME's — approve/reject/hold, as written
+        # into actions[].verdict — not the auditor's Decision enum (allow/deny).
+        # Two vocabularies at two layers; asserting the wrong one fails on a
+        # correct app.
+        verdicts = [
+            (a.get("verdict") or {}).get("decision")
+            for a in outcome.actions
+            if a.get("verdict")
+        ]
+        assert verdicts, (
+            f"no verdict was recorded for {gated}; actions={outcome.actions}. "
+            "The runner must drive the call through the audit gate."
+        )
+        assert all(v in ("approve", "reject", "hold") for v in verdicts), verdicts
+    finally:
+        built.close()
+
+
+def test_the_generated_runner_reports_a_refusal_as_not_done(tmp_path):
+    """A refusal must never be summarised as success.
+
+    `_summarize` derives the outcome from the recorded actions, not from the loop's
+    status, because a run whose only side effect was REFUSED still reports
+    COMPLETED — a denial is fed back to the model as an observation and the loop
+    finishes normally. Reporting the loop's status would call a blocked payment a
+    success, which is the single most misleading thing a demo could do.
+    """
+    target = tmp_path / "summarize"
+    spec_path = INVOICE_PAYER / "helios-app.yaml"
+    scaffold(target, AppSpec.load(spec_path), spec_path=spec_path)
+
+    path = str(target)
+    if path not in sys.path:
+        sys.path.insert(0, path)
+    for stale in ("app", "server", "store", "facts", "tools", "graph"):
+        sys.modules.pop(stale, None)
+    import importlib
+
+    app_mod = importlib.import_module("app")
+
+    refused = app_mod.Outcome(
+        subject_id="X", task_type="t", control="c", expects="e",
+        actions=[{"tool": "payments.send",
+                  "verdict": {"decision": "reject"}, "executed": None}],
+    )
+    assert app_mod._summarize(refused, fallback="completed") == "refused"
+
+    approved_and_run = app_mod.Outcome(
+        subject_id="X", task_type="t", control="c", expects="e",
+        actions=[{"tool": "payments.send",
+                  "verdict": {"decision": "allow"}, "executed": {"ok": True}}],
+    )
+    assert app_mod._summarize(approved_and_run, fallback="completed") == "done"
+
+    # A decline by the owner is distinguishable from a refusal by a rule.
+    declined = app_mod.Outcome(
+        subject_id="X", task_type="t", control="c", expects="e",
+        actions=[{"tool": "payments.send",
+                  "verdict": {"decision": "reject"}, "executed": None}],
+        owner_decisions=[{"hold_id": "h1", "approved": False}],
+    )
+    assert app_mod._summarize(declined, fallback="completed") == "declined_by_owner"
+
+
+def test_the_generated_app_has_no_todo_in_its_main_loop(tmp_path):
+    """`python app.py` must do something, not print a TODO.
+
+    The runner used to print "TODO: drive the runtime over scenario.calls" and
+    return 0, so a generated app exited successfully having demonstrated nothing.
+    """
+    target = tmp_path / "no-todo-main"
+    scaffold(target, AppSpec.load(INVOICE_PAYER / "helios-app.yaml"),
+             spec_path=INVOICE_PAYER / "helios-app.yaml")
+    source = (target / "app.py").read_text(encoding="utf-8")
+    assert "TODO: drive the runtime" not in source
+    for name in ("run_scenario", "_summarize", "render_dashboard"):
+        assert f"def {name}" in source, f"app.py is missing {name}"
+    assert "class ScriptedDriver" in source, "app.py is missing ScriptedDriver"
+
+
+def test_the_generated_outcome_has_one_expectation_field(tmp_path):
+    """`Outcome` must not carry two fields for the same idea.
+
+    It once had both `expects` (set from the Scenario) and `decided` (never set,
+    so always "unknown"), and main() compared the run's status against `decided`.
+    The mismatch check then reported "got done, expected unknown" and only exited
+    non-zero by accident — the comparison could never succeed for any declared
+    expectation. One field, one meaning: `expects`.
+    """
+    target = tmp_path / "one-expectation"
+    scaffold(target, AppSpec.load(INVOICE_PAYER / "helios-app.yaml"),
+             spec_path=INVOICE_PAYER / "helios-app.yaml")
+    source = (target / "app.py").read_text(encoding="utf-8")
+    assert "decided: str" not in source, (
+        "Outcome still declares a `decided` field alongside `expects`; the runner "
+        "never sets it, so the expectation check compares against 'unknown'."
+    )
+    assert "o.expects != \"any\"" in source or "o.expects != 'any'" in source, (
+        "main() must gate on Scenario.expects, not on an unset field"
+    )
+
+
 def test_the_generated_server_has_no_unimplemented_route_handlers(tmp_path):
     """No route may be a stub that raises.
 
