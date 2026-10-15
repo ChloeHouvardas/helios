@@ -120,7 +120,7 @@ DISCLAIMER = (
 # Costing
 # --------------------------------------------------------------------------
 
-def _bps_to_percent(bps: int | Decimal) -> Decimal:
+def bps_to_percent(bps: int | Decimal) -> Decimal:
     return (Decimal(int(bps)) / _BPS) * Decimal(100)
 
 
@@ -214,7 +214,7 @@ def compare_options(book: Book, bill_id: str, *, days_until_funds: int) -> dict[
 
     # --- credit line -------------------------------------------------------
     lpr = rate("lpr_1y")
-    spread = _bps_to_percent(config.CREDIT_LINE_SPREAD_BPS)
+    spread = bps_to_percent(config.CREDIT_LINE_SPREAD_BPS)
     annual = lpr.percent + spread
     principal = shortfall if shortfall > 0 else amount
     limit = config.CREDIT_LINE_LIMIT_CENTS
@@ -258,7 +258,7 @@ def compare_options(book: Book, bill_id: str, *, days_until_funds: int) -> dict[
     # --- delay the supplier -------------------------------------------------
     late_bps = int(supplier.get("late_penalty_bps") or config.SUPPLIER_LATE_FEE_BPS)
     late_cost = _round_cents(
-        Decimal(int(amount)) * _bps_to_percent(late_bps) / Decimal(100))
+        Decimal(int(amount)) * bps_to_percent(late_bps) / Decimal(100))
     options.append(Option(
         kind="delay_supplier",
         label=f"Delay {book.supplier_name(supplier_id)} and pay the late fee",
@@ -276,7 +276,7 @@ def compare_options(book: Book, bill_id: str, *, days_until_funds: int) -> dict[
                 or (book.bill(bill_id) or {}).get("early_payment_discount_bps"))
     if disc_bps:
         saving = _round_cents(
-            Decimal(int(amount)) * _bps_to_percent(int(disc_bps)) / Decimal(100))
+            Decimal(int(amount)) * bps_to_percent(int(disc_bps)) / Decimal(100))
         options.append(Option(
             kind="early_payment_discount",
             label=f"Take the {disc_bps} bp early-payment discount",
@@ -394,6 +394,6 @@ def registry_evidence(book: Book, supplier_id: str) -> dict[str, Any]:
 
 
 __all__ = [
-    "AS_OF", "DISCLAIMER", "RATES", "Option", "Rate", "compare_options",
-    "interest_cost_cents", "rate", "registry_evidence",
+    "AS_OF", "DISCLAIMER", "RATES", "Option", "Rate", "bps_to_percent",
+    "compare_options", "interest_cost_cents", "rate", "registry_evidence",
 ]

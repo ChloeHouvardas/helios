@@ -521,7 +521,7 @@ def make_draw_credit_line(book: Book, bundle: Any) -> ToolDefinition:
         # owner sees one number rather than two that might disagree.
         days = 30
         rate_used = funding.rate("lpr_1y")
-        annual = rate_used.percent + funding._bps_to_percent(  # noqa: SLF001
+        annual = rate_used.percent + funding.bps_to_percent(
             config.CREDIT_LINE_SPREAD_BPS)
         interest = funding.interest_cost_cents(amount, annual, days)
 
