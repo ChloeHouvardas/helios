@@ -17,7 +17,12 @@ CENTS_SUFFIX = "_cents"
 
 def load_csv(path: str | Path) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
-    with open(path, newline="", encoding="utf-8") as fh:
+    # utf-8-sig, not utf-8: Excel writes UTF-8 CSVs with a BOM by default, and
+    # plain utf-8 leaves it attached to the first header, so `invoice_id`
+    # arrives as `\ufeffinvoice_id` — a key no caller can guess, and one that
+    # breaks every lookup, filter and schema check on that column. Reading with
+    # utf-8-sig strips a BOM when present and is identical to utf-8 when not.
+    with open(path, newline="", encoding="utf-8-sig") as fh:
         for raw in csv.DictReader(fh):
             row: Dict[str, Any] = {}
             for key, val in raw.items():

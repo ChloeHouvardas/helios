@@ -52,6 +52,41 @@ def test_load_fixture_csv_coerces_cents():
     assert isinstance(rows[0]["amount_cents"], int)
 
 
+def test_load_fixture_csv_first_column_is_not_bom_polluted():
+    """A UTF-8 BOM must not become part of the first column's name.
+
+    Read with plain `utf-8`, the BOM is not stripped by Python, so the header
+    `invoice_id` arrives as `\\ufeffinvoice_id` — a key no caller can guess and
+    one that breaks on every comparison, lookup and schema check. Only the
+    FIRST column is affected, which is why the other tests here (they read
+    `amount_cents` and `customer`) never caught it.
+    """
+    rows = load_csv(FIXTURES / "invoices.csv")
+    keys = set(rows[0])
+    assert "invoice_id" in keys, sorted(keys)
+    assert not any(k.startswith("\ufeff") for k in keys), sorted(keys)
+
+
+def test_load_csv_reads_a_bom_file_with_plain_column_names(tmp_path):
+    """The fixture is one instance; the loader must handle any BOM file.
+
+    Excel writes UTF-8 CSVs with a BOM by default, so a file exported from a
+    spreadsheet and handed to these tools is the normal case, not an edge case.
+    """
+    path = tmp_path / "bom.csv"
+    path.write_bytes("\ufeffinvoice_id,customer,amount_cents\n".encode("utf-8")
+                     + b"INV-1,acme,100\n")
+    rows = load_csv(path)
+    assert rows == [{"invoice_id": "INV-1", "customer": "acme",
+                     "amount_cents": 100}]
+
+
+def test_the_shipped_fixture_has_no_bom():
+    """The fixture itself is cleaned up, so nothing depends on the tolerance."""
+    raw = (FIXTURES / "invoices.csv").read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf"), "invoices.csv still carries a UTF-8 BOM"
+
+
 def test_filter_and_aggregate(tmp_path):
     rows = load_csv(FIXTURES / "invoices.csv")
     acme = filter_rows(rows, customer="acme")
