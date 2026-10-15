@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Holds — Helios Payables{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Needs your approval</h2>
+  {% if pending %}
+    {% for hold in pending %}
+    <div class="rule warn">
+      <p style="margin:0 0 7px"><b>{{ hold.tool }}</b>
+        <span class="mono">{{ hold.hold_id }}</span></p>
+      <p style="margin:0 0 10px">{{ hold.question }}</p>
+      <form class="inline" method="post" action="/holds/{{ hold.hold_id }}/decide">
+        <button class="btn primary" type="submit" name="decision" value="approve">Approve this exact action</button>
+        <button class="btn" type="submit" name="decision" value="decline">Decline</button>
+      </form>
+      <p class="note">
+        Approving executes <b>exactly the arguments shown</b> and nothing else. The run
+        resumes without re-asking the auditor, because the triggering fact has not
+        changed — re-adjudicating would just hold again.
+      </p>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p class="note">Nothing is waiting on you right now.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Decisions in this session</h2>
+  {% if decided %}
+  <table>
+    <thead><tr><th>Bill</th><th>Tool</th><th>Decision</th><th>The question you were asked</th></tr></thead>
+    <tbody>
+      {% for d in decided %}
+      <tr>
+        <td class="mono">{{ d.bill_id }}</td>
+        <td class="mono">{{ d.tool }}</td>
+        <td><span class="pill {{ 'paid' if d.approved else 'refused' }}">
+            {{ 'approved' if d.approved else 'declined' }}</span></td>
+        <td class="note">{{ d.question }}</td>
+      </tr>
+      {% if d.funding %}
+      <tr><td colspan="4">
+        <div class="rule">
+          <p style="margin:0 0 5px"><b>Funding behind this payment</b></p>
+          <p style="margin:0 0 5px">
+            Drew {{ d.funding.drawn_money }} at {{ d.funding.annual_percent }}%
+            (<span class="mono">{{ d.funding.rate_name }}</span>,
+            as of {{ d.funding.as_of }},
+            {% if d.funding.stale %}<b>stale quote</b>{% else %}current{% endif %}).
+            Interest for the period: {{ d.funding.interest_money }}.
+          </p>
+          <p style="margin:0" class="note">
+            Provenance: <span class="mono">{{ d.funding.provenance }}</span><br>
+            {{ d.funding.disclaimer }}
+          </p>
+        </div>
+      </td></tr>
+      {% endif %}
+      {% if d.evidence %}
+      <tr><td colspan="4">
+        <div class="rule warn">
+          <p style="margin:0"><b>Payee evidence:</b> {{ d.evidence.line }}</p>
+        </div>
+      </td></tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">No holds have been put to you yet.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Refused in code, without asking you</h2>
+  <p class="note">
+    This is the section that matters. These actions were <b>denied</b>, so they never
+    became queue items — approving everything above could not have allowed any of them.
+    The control does not depend on the human noticing, and it does not depend on the
+    agent behaving.
+  </p>
+  {% if refused %}
+  <table>
+    <thead><tr><th>Bill</th><th>Control</th><th>Rule</th><th>Reason the agent was given</th></tr></thead>
+    <tbody>
+      {% for r in refused %}
+      <tr>
+        <td><a href="/bills/{{ r.bill_id }}" class="mono">{{ r.bill_id }}</a></td>
+        <td>{{ r.control }}</td>
+        <td class="mono">{{ r.rule or '—' }}</td>
+        <td class="note">{{ r.reason }}</td>
+      </tr>
+      {% if r.evidence %}
+      <tr><td colspan="4">
+        <div class="rule deny"><p style="margin:0"><b>Payee evidence:</b> {{ r.evidence.line }}</p></div>
+      </td></tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">Nothing was refused in this session.</p>
+  {% endif %}
+</div>
+{% endblock %}

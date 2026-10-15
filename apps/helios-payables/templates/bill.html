@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}{{ row.bill_id }} — Helios Payables{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Bill {{ row.bill_id }}</h2>
+  <dl>
+    <dt>Supplier</dt><dd>{{ row.supplier_name }} <span class="mono">({{ row.supplier_id }})</span></dd>
+    <dt>Amount</dt><dd>{{ row.money }}</dd>
+    <dt>Reference</dt><dd class="mono">{{ row.reference }}</dd>
+    <dt>Issued</dt><dd>{{ row.issue_date }}</dd>
+    <dt>Due</dt><dd>{{ row.due_date }}
+      {% if row.days_until_due is not none %}
+        <span class="note">({{ row.days_until_due }} day{{ '' if row.days_until_due == 1 else 's' }})</span>
+      {% endif %}</dd>
+    <dt>Scheduled</dt><dd>{{ row.scheduled_date or '—' }}</dd>
+    <dt>Status</dt><dd><span class="pill {{ row.status_class }}">{{ row.status }}</span></dd>
+    {% if row.duplicate_of %}
+    <dt>Duplicate of</dt>
+    <dd><a href="/bills/{{ row.duplicate_of }}" class="mono">{{ row.duplicate_of }}</a>
+        <span class="note">— same supplier, amount and reference inside
+        {{ config.duplicate_window_days }} days</span></dd>
+    {% endif %}
+    {% if row.paid_at %}
+    <dt>Paid at</dt><dd>{{ row.paid_at }}</dd>
+    <dt>Settlement</dt><dd class="mono">{{ row.payment_id }}</dd>
+    {% endif %}
+    {% if row.reschedule_reason %}
+    <dt>Reschedule reason</dt><dd>{{ row.reschedule_reason }}</dd>
+    {% endif %}
+  </dl>
+  {% if row.notes %}<p class="note">{{ row.notes }}</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Supplier</h2>
+  <dl>
+    <dt>Name</dt><dd>{{ supplier.name }}</dd>
+    <dt>Terms</dt><dd>{{ supplier.settlement_terms or '—' }}</dd>
+    <dt>Average bill</dt><dd>{{ avg_money }}</dd>
+    <dt>Unusual-amount ceiling</dt>
+    <dd>{{ ceiling_money }}
+        <span class="note">(2× the average; the fact <span class="mono">supplier_amount_ceiling_cents</span>)</span></dd>
+    <dt>Listed company</dt><dd>{{ supplier.public_ticker or 'no — private' }}</dd>
+    <dt>Contacts this week</dt><dd>{{ supplier.contacts_in_window }} of {{ config.max_supplier_contacts }} allowed</dd>
+  </dl>
+</div>
+
+{% if evidence %}
+<div class="card">
+  <h2>Payee verification evidence — owner-facing</h2>
+  <div class="rule {{ 'deny' if evidence.mismatch else '' }}">
+    <p style="margin:0">{{ evidence.line }}</p>
+  </div>
+  <p class="note">
+    <b>This evidence never changes a verdict.</b> The refusal stands on the trusted fact
+    <span class="mono">payment_details_changed</span> alone. A registry match would not
+    weaken it either: a match proves the company is who it says it is, not that this
+    particular bank-account change was authorised by anyone who matters.
+    The only thing that lifts the refusal is
+    <a href="/settings">re-verifying the supplier</a>.
+  </p>
+  <p class="note">Provenance: <span class="mono">{{ evidence.provenance }}</span></p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>What the agent may see about this bill</h2>
+  <p class="note">
+    <span class="mono">lookup_bill</span> returns the bill and its supplier with these
+    fields <b>withheld</b>: <span class="mono">payment_details_changed</span>,
+    <span class="mono">details_changed_days_ago</span>,
+    <span class="mono">change_request</span>, <span class="mono">reverified</span>,
+    <span class="mono">registered_website</span>, <span class="mono">legal_representative</span>.
+    A control the agent can read is a control the agent can argue with, so the auditor
+    resolves those facts itself through <span class="mono">facts.py</span>.
+  </p>
+</div>
+{% endblock %}
