@@ -28,6 +28,8 @@ indistinguishable from a validator that checked nothing.
 """
 from __future__ import annotations
 
+import re
+
 import ast
 import json
 import sys
@@ -116,7 +118,35 @@ def validate_app(app_dir: Path | str, *, strict: bool = False) -> Report:
 
     check_shape_warnings(spec, r)
     check_cross_files(app_dir, spec, r)
+    check_deployability(app_dir, r)
     return r
+
+
+_UNGUARDED_PARENTS = re.compile(r"^\s*\w+\s*=\s*\w+(?:\.parent)*\.parents\[\d+\]\s*$", re.M)
+
+
+def check_deployability(app_dir: Path, r: Report) -> None:
+    """Things that pass every local test and fail inside the app image.
+
+    The deploy smoke test runs the bundle as /app. A module-level
+    `REPO = HERE.parents[1]` raises IndexError there at import time, before
+    uvicorn can serve /health, and the deploy fails with an opaque traceback.
+    Three apps hit this; the guard is one `if len(HERE.parents) > 1` away.
+    """
+    for name in ("app.py", "server.py"):
+        path = app_dir / name
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for m in _UNGUARDED_PARENTS.finditer(text):
+            line = text.count("\n", 0, m.start()) + 1
+            r.warn(f"{name}:{line} derives a path with .parents[N] at module level; "
+                   "inside the deployed image this file is /app/<name> and that "
+                   "raises IndexError at import, before /health can answer. Guard it: "
+                   "`REPO = HERE.parents[1] if len(HERE.parents) > 1 else HERE`.")
 
 
 def validate_spec_only(spec_text: str) -> Report:
