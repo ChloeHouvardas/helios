@@ -160,21 +160,134 @@ def test_all_problems_reported_at_once(tmp_path, monkeypatch):
 
 
 def test_default_payment_cap_when_manifest_silent(tmp_path, monkeypatch):
-    """A manifest with no cap still gets the platform default on `amount`."""
+    """A manifest with no cap still gets the platform default on `amount_cents`."""
     mod = _load_sidecar(tmp_path, monkeypatch, manifest_text="""
 manifest_version: "1"
 app_id: t
 name: T
 tools:
-  - name: payments
+  - name: payments.send
     side_effect: true
-    input_schema: {type: object, properties: {amount: {type: number}}}
+    input_schema: {type: object, properties: {amount_cents: {type: integer}}}
 tasks:
-  t.pay: {allowed_tools: [payments]}
+  t.pay: {allowed_tools: [payments.send]}
 """)
-    # default cap is 10000
-    assert mod.evaluate("payments", {"amount": "5000"}) == []
-    assert mod.evaluate("payments", {"amount": "99999"})
+    # default cap is 1_000_000 cents (10,000.00), integer cents never float
+    assert mod.evaluate("payments.send", {"amount_cents": 500_000}) == []
+    assert mod.evaluate("payments.send", {"amount_cents": 1_500_000})
+    assert mod.evaluate("email.send", {"amount_cents": 1_500_000}) == []
+
+
+def test_a_tool_name_maps_to_its_permission_family(tmp_path, monkeypatch):
+    mod = _load_sidecar(tmp_path, monkeypatch)
+    assert mod.family_of("payments.send") == "payments"
+    assert mod.family_of("graph.publish_verified") == "knowledge-graph"
+    assert mod.family_of("market.rate") == "market-data"
+    assert mod.family_of("sheets.reconcile") == "spreadsheets"
+    assert mod.family_of("payments") == "payments"          # a bare family still names itself
+    assert mod.family_of("record_inbound_payment") is None  # an app-local tool
+
+
+def test_no_permissions_means_no_family_is_granted(tmp_path, monkeypatch):
+    """An app that asked for nothing cannot reach core, but may run its own tools."""
+    import asyncio
+    monkeypatch.setenv("ALLOWED_TOOLS", "")
+    mod = _load_sidecar(tmp_path, monkeypatch)
+    monkeypatch.setattr(mod, "PERMISSIONS", set())
+    assert mod.PERMISSIONS == set()
+
+    class Req:
+        def __init__(self, body):
+            self._body = body
+
+        async def json(self):
+            return self._body
+
+    denied = asyncio.run(mod.execute(
+        Req({"action": "email.send", "payload": {"to": "x"}}),
+        authorization="Bearer tok-secret"))
+    assert denied["status"] == "denied"
+    assert "does not grant" in denied["reason"]
+
+    # `payments` is declared by the app's own manifest: adjudicated, not forwarded
+    local = asyncio.run(mod.execute(
+        Req({"action": "payments", "payload": {"amount": "10", "payee": "ACME"}}),
+        authorization="Bearer tok-secret"))
+    assert local["status"] == "allowed" and local["forwarded"] is False
+
+
+def _fake_post(envelope, status=200, content_type="application/json"):
+    class Resp:
+        status_code = status
+        headers = {"content-type": content_type}
+        text = str(envelope)
+
+        def json(self):
+            return envelope
+
+    calls = []
+
+    def post(url, json=None, headers=None, timeout=None):
+        calls.append({"url": url, "json": json, "headers": headers})
+        return Resp()
+
+    post.calls = calls
+    return post
+
+
+def test_forwarding_calls_the_tool_service_and_executes_on_ok(tmp_path, monkeypatch):
+    import asyncio
+    mod = _load_sidecar(tmp_path, monkeypatch)
+    post = _fake_post({"ok": True, "result": {"payment_id": "p1", "state": "settled"}})
+    monkeypatch.setattr(mod.httpx, "post", post)
+
+    class Req:
+        async def json(self):
+            return {"action": "payments", "payload": {"amount": "10", "payee": "ACME"}}
+
+    out = asyncio.run(mod.execute(Req(), authorization="Bearer tok-secret"))
+    assert out["status"] == "executed"
+    assert out["result"]["state"] == "settled"
+    call = post.calls[0]
+    assert call["url"].endswith("/call")
+    assert call["json"] == {"tool": "payments", "args": {"amount": "10", "payee": "ACME"}}
+    assert call["headers"]["Authorization"] == "Bearer exec-secret"
+    assert mod.DECISIONS[-1]["decision"] == "allow"
+
+
+def test_a_core_rejection_is_recorded_as_a_denial_not_an_outage(tmp_path, monkeypatch):
+    import asyncio
+    mod = _load_sidecar(tmp_path, monkeypatch)
+    monkeypatch.setattr(mod.httpx, "post", _fake_post(
+        {"ok": False, "rejected": True, "error": "missing verified intent auth code"}))
+
+    class Req:
+        async def json(self):
+            return {"action": "payments", "payload": {"amount": "10", "payee": "ACME"}}
+
+    out = asyncio.run(mod.execute(Req(), authorization="Bearer tok-secret"))
+    assert out["status"] == "denied"
+    assert "intent auth code" in out["reason"]
+    assert out["findings"][0]["rule_id"] == "core.rejected"
+    assert mod.DECISIONS[-1]["decision"] == "deny"
+
+
+def test_a_core_outage_is_a_502_never_a_decision(tmp_path, monkeypatch):
+    import asyncio
+    from fastapi import HTTPException
+    mod = _load_sidecar(tmp_path, monkeypatch)
+    monkeypatch.setattr(mod.httpx, "post", _fake_post(
+        {"ok": False, "unavailable": True, "retryable": True, "error": "ledger offline"}))
+
+    class Req:
+        async def json(self):
+            return {"action": "payments", "payload": {"amount": "10", "payee": "ACME"}}
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(mod.execute(Req(), authorization="Bearer tok-secret"))
+    assert exc.value.status_code == 502
+    assert exc.value.detail["retryable"] is True
+    assert mod.DECISIONS[-1]["reason"].startswith("core unavailable")
 
 
 def test_sidecar_chain_log_verifies(tmp_path, monkeypatch):

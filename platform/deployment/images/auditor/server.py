@@ -62,12 +62,39 @@ EXECUTION_SECRET = os.environ["HELIOS_EXECUTION_SECRET"]
 CORE_URL = os.environ.get("HELIOS_CORE_URL", "http://helios-core:9000")
 
 #: Platform tool families granted by helios.yaml. These are the vocabulary of
-#: `propose_action(...)` and of the core's /tools/{family} routes.
+#: `permissions:`; a proposed tool name is mapped onto a family by its prefix
+#: (`payments.send` -> `payments`). Empty means no family is granted: an app
+#: that asked for nothing can still act on its own declared tools, but cannot
+#: reach the tenant core.
 PERMISSIONS = {
     t.strip()
-    for t in os.environ.get("ALLOWED_TOOLS", "payments,email").split(",")
+    for t in os.environ.get("ALLOWED_TOOLS", "").split(",")
     if t.strip()
 }
+
+#: Tool-name prefix -> permission family. The core service registers tools as
+#: `family.operation`; helios.yaml grants families. Anything not listed here is
+#: not a platform tool and can only be an app-declared tool.
+FAMILY_BY_PREFIX = {
+    "payments": "payments",
+    "collect": "collect",
+    "email": "email",
+    "graph": "knowledge-graph",
+    "events": "events",
+    "forecast": "forecast",
+    "behavior": "forecast",
+    "market": "market-data",
+    "spreadsheet": "spreadsheets",
+    "sheets": "spreadsheets",
+    "simulation": "forecast",
+}
+
+
+def family_of(action: str) -> str | None:
+    """The permission family a proposed tool belongs to, or None."""
+    prefix = action.split(".", 1)[0] if "." in action else action
+    return FAMILY_BY_PREFIX.get(prefix) or (prefix if prefix in PERMISSIONS or prefix in FAMILY_BY_PREFIX.values() else None)
+
 
 MANIFEST_PATH = Path(os.environ.get("HELIOS_AUDIT_MANIFEST_PATH", "/policy/audit.yaml"))
 DATA_DIR = Path(os.environ.get("HELIOS_DATA_DIR", "/data"))
@@ -75,10 +102,10 @@ LOG_PATH = DATA_DIR / "audit" / "sidecar-log.jsonl"
 
 DEDUPE_WINDOW_S = float(os.environ.get("DEDUPE_WINDOW_S", "120"))
 
-#: Last-resort cap applied when no manifest limit binds. Decimal, never float:
-#: money in this platform is integer cents or decimal strings (decision B.6),
-#: and a float cap would compare imprecisely against a decimal amount.
-DEFAULT_MAX_PAYMENT = Decimal(os.environ.get("MAX_PAYMENT_AMOUNT", "10000"))
+#: Last-resort cap on `amount_cents` for the payments family when no manifest
+#: limit binds. Integer cents, never float: money in this platform is integer
+#: cents or decimal strings (decision B.6). 1_000_000 is 10,000.00.
+DEFAULT_MAX_PAYMENT_CENTS = Decimal(os.environ.get("MAX_PAYMENT_AMOUNT_CENTS", "1000000"))
 
 
 @dataclass
@@ -329,10 +356,10 @@ def evaluate(action: str, payload: dict[str, Any]) -> list[Finding]:
 
     # --- constant ceilings --------------------------------------------------
     ceilings = dict(POLICY.ceilings.get(action, {}))
-    if action == "payments" and "amount" not in ceilings:
+    if family_of(action) == "payments" and "amount_cents" not in ceilings:
         # The platform's generic payment cap, applied when the app manifest does
-        # not declare a tighter one on the `amount` argument.
-        ceilings["amount"] = DEFAULT_MAX_PAYMENT
+        # not declare a tighter one on the `amount_cents` argument.
+        ceilings["amount_cents"] = DEFAULT_MAX_PAYMENT_CENTS
     for arg, ceiling in ceilings.items():
         raw = _dig(payload, arg)
         if raw is None:
@@ -366,6 +393,7 @@ def health() -> dict:
         "app": APP_NAME,
         "tenant": TENANT,
         "allowed_tools": sorted(PERMISSIONS),
+        "core": CORE_URL,
         "manifest": {
             "loaded": POLICY.loaded,
             "path": str(MANIFEST_PATH),
@@ -411,18 +439,20 @@ async def execute(request: Request, authorization: str = Header(default="")) -> 
     # gate meaningful, and it still fails closed: an action in neither set is
     # refused, and only families in `permissions` can ever reach core, because
     # core routes on the family name.
-    if action not in PERMISSIONS and action not in POLICY.tool_names:
+    family = family_of(action)
+    granted_family = family is not None and family in PERMISSIONS
+    if not granted_family and action not in POLICY.tool_names:
         return _deny(
             action, payload,
             [_finding(
                 "sidecar.not_granted",
                 f"tool '{action}' is not granted",
-                {"granted_families": sorted(PERMISSIONS)},
+                {"family": family, "granted_families": sorted(PERMISSIONS)},
             )],
             reason=(
-                f"tool '{action}' is neither a granted permission "
-                f"({sorted(PERMISSIONS)}) nor a tool declared in the app's audit "
-                f"manifest"
+                f"tool '{action}' belongs to family {family!r}, which helios.yaml "
+                f"does not grant ({sorted(PERMISSIONS)}), and it is not a tool "
+                f"declared in the app's audit manifest"
             ),
         )
 
@@ -450,11 +480,19 @@ async def execute(request: Request, authorization: str = Header(default="")) -> 
         )
 
     # --- forward through the trusted channel ---------------------------------
+    # Only a granted platform family reaches core. An app-declared tool that is
+    # not a platform tool is adjudicated here and reported back; the app runs
+    # it itself, with its own in-app gate having already decided.
+    if not granted_family:
+        entry = _record(Decision.ALLOW, action, payload, [],
+                        reason="app-local tool; adjudicated, not forwarded")
+        return {"status": "allowed", "audit_id": entry["audit_id"], "forwarded": False}
+
     try:
         resp = httpx.post(
-            f"{CORE_URL}/tools/{action}", json=payload,
+            f"{CORE_URL}/call", json={"tool": action, "args": payload},
             headers={"Authorization": f"Bearer {EXECUTION_SECRET}"},
-            timeout=10,
+            timeout=15,
         )
     except httpx.HTTPError as exc:
         _record(Decision.DENY, action, payload, [], reason=f"core unreachable: {exc}")
@@ -472,7 +510,7 @@ async def execute(request: Request, authorization: str = Header(default="")) -> 
                 f"core returned {resp.status_code} for '{action}'",
                 {"http_status": resp.status_code},
             )],
-            reason=f"core rejected the action with HTTP {resp.status_code}",
+            reason=f"core rejected the call with HTTP {resp.status_code}",
             result={"http_status": resp.status_code, "detail": detail},
         )
         raise HTTPException(502, {
@@ -483,9 +521,35 @@ async def execute(request: Request, authorization: str = Header(default="")) -> 
         })
 
     try:
-        result: Any = resp.json() if "json" in resp.headers.get("content-type", "") else resp.text
+        envelope: Any = resp.json() if "json" in resp.headers.get("content-type", "") else {"ok": False, "unavailable": True, "error": resp.text[:500]}
     except ValueError:
-        result = resp.text
+        envelope = {"ok": False, "unavailable": True, "error": resp.text[:500]}
+
+    # The tool service answers with one of three envelopes, and conflating the
+    # last two corrupts the record (specs/interfaces.md "Call outcomes"):
+    #   ok          -> the tool ran; executed
+    #   rejected    -> a gate or validator in core refused THIS request; a denial
+    #   unavailable -> nobody decided; an outage, never a decision
+    if not isinstance(envelope, dict):
+        envelope = {"ok": False, "unavailable": True, "error": "malformed envelope"}
+    if envelope.get("ok"):
+        result = envelope.get("result")
+    elif envelope.get("rejected"):
+        return _deny(
+            action, payload,
+            [_finding("core.rejected", str(envelope.get("error", "rejected by core")),
+                      {"source": "core"})],
+            reason=f"core rejected the call: {envelope.get('error', '')}"[:500],
+        )
+    else:
+        entry = _record(Decision.DENY, action, payload, [],
+                        reason=f"core unavailable: {envelope.get('error', '')}"[:500])
+        raise HTTPException(502, {
+            "stage": "execution",
+            "error": f"core could not execute tool '{action}': {envelope.get('error', '')}"[:500],
+            "audit_id": entry["audit_id"],
+            "retryable": True,
+        })
 
     _seen[digest] = now
     entry = _record(Decision.ALLOW, action, payload, [], reason="forwarded to core", result=result)
