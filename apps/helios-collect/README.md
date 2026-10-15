@@ -12,7 +12,13 @@ python3 app.py --scenario INV-1006   # one control path
 python3 app.py --json           # machine-readable
 python3 app.py --list           # what each scenario demonstrates
 python3 app.py --dashboard      # the receivables book
-python3 -m pytest tests -q      # 74 tests, offline
+```
+
+Tests run from the repo root with the repo venv (`scripts/bootstrap-venv.sh`
+builds it; `scripts/test-all.sh` runs every suite):
+
+```bash
+.venv/bin/python -m pytest apps/helios-collect/tests -q   # 74 tests, offline
 ```
 
 Runs offline. No API key, no network, no dependencies beyond the four platform
@@ -171,10 +177,11 @@ apps/helios-collect/
 ## Verification
 
 ```bash
-python3 -m pytest tests -q                                    # 74 passed
-python3 entry-point/checks/check_app.py apps/helios-collect    # 0 errors, 3 warnings
-cd platform/audit-agent-builder && PYTHONPATH=src python3 -m audit_agent.cli \
-    inspect ../../apps/helios-collect/agents/helios-collect-audit.yaml
+# from the repo root, using the repo venv
+.venv/bin/python -m pytest apps/helios-collect/tests -q              # 74 passed
+.venv/bin/python entry-point/checks/check_app.py apps/helios-collect # 0 errors, 3 warnings
+.venv/bin/python -m audit_agent.cli \
+    inspect apps/helios-collect/agents/helios-collect-audit.yaml
 ```
 
 The three remaining checker warnings are expected and explained in
@@ -341,8 +348,8 @@ Planner cannot yet forecast against these due dates.
 
 ## Checker warnings
 
-`python3 entry-point/checks/check_app.py apps/helios-collect` reports 0 errors and 3
-warnings. All three are expected:
+`python3 entry-point/checks/check_app.py apps/helios-collect` reports 0 errors and 4
+warnings. All four are expected:
 
 1. *`graph.publishes` entity 'negotiation' is not declared in `data.local`.* Correct
    and intentional. A negotiation is cross-app graph state, not a local table; its
@@ -351,7 +358,19 @@ warnings. All three are expected:
    and terms events rather than consuming them. The consumer is Helios Cash Planner,
    which would read `invoice` to forecast against real due dates — which is exactly
    why the verified publish matters.
-3. *rules depend on these trusted fact keys …* Informational; the checker can only
+3. *could not resolve side-effect flags for tool(s) `list_overdue_invoices`,
+   `record_agreed_extension`, `record_inbound_payment`.* Correct and unavoidable:
+   those three are defined in this app's own `tools.py`, so the checker cannot see
+   them in the `agent_toolkit` or `fin_tools` catalogs. The other two tools it
+   *does* resolve — `send_email` (platform, side-effecting) and `lookup_invoice`
+   (platform, read-only) — are checked and agree. **All five were verified by hand
+   against `agents/helios-collect-audit.yaml` and every flag matches**, so the
+   warning is informational here. It exists because the alternative — silently
+   passing a tool it could not resolve — would hide a real mismatch, and the
+   dangerous direction is a tool the app calls read-only while the audit manifest
+   gates it: the runtime gates on the action side's flag, so such a tool would run
+   without ever reaching the auditor.
+4. *rules depend on these trusted fact keys …* Informational; the checker can only
    see the names. `test_every_rule_fact_key_is_supplied_by_the_fact_source` asserts
    the running fact source actually supplies all seven, which is the property that
    matters: a fact-bound rule whose fact never resolves denies everything, and it

@@ -38,9 +38,11 @@ Cross-file (the ones a single file cannot express):
   - action-manifest tools SUBSET OF audit-manifest declared tools   <- the big one
   - the spec's `tools` is a superset of both manifests' tool lists
   - identity.id equals the audit manifest's app_id
-  - every side-effect tool the action agent may call is declared side-effecting
-    in the audit manifest (a tool gated in one file and ungated in the other is
-    reported, not passed)
+  - the action side's tool flags agree with the audit manifest's `side_effect`
+    (a tool gated on one side and ungated on the other is reported, not passed).
+    The action manifest carries tool *names* only, so the flags are resolved
+    from the platform catalogs those names come from — `agent_toolkit` and
+    `fin_tools` — which is the same source the runtime gates on
   - every entity the spec publishes to the graph is a real entity it declares
   - every audit rule's fact / max_from_fact key is actually supplied by the app's
     fact source (a fact-bound rule whose fact never resolves denies everything)
@@ -338,8 +340,114 @@ def check_cross_files(app_dir: Path, spec: dict[str, Any], r: Report) -> None:
         r.error("no audit task allows any tool the action agent offers — the agent "
                 "will be denied everything at authorize() time")
 
+    # --- the action side and the audit side must agree on side-effect ----
+    _check_side_effect_agreement(action_tools, declared, r)
+
     # --- facts the rules depend on must be resolvable -------------------
     _check_fact_coverage(audit, r)
+
+
+def _action_side_flags() -> tuple[dict[str, bool], list[str]]:
+    """The action side's own view of which tools have side effects.
+
+    The action manifest JSON carries tool *names* only — no flags — so the
+    flags have to come from the platform catalogs those names resolve against,
+    which is exactly the source the runtime gates on
+    (``runtime.py:_side_effect`` reads the action side's ``ToolDefinition``).
+
+    Returns ``(flags, problems)``. A catalog that cannot be imported is
+    reported rather than swallowed: a checker that silently checks nothing is
+    worse than one that says it could not check.
+
+    Deliberately side-effect free. ``fin_tools.register(reg)`` is called on a
+    fresh registry and never on the module-global ``REGISTRY``, and ``bind()``
+    — the part that mutates global handler state — is never called. Nothing
+    here needs working handlers, only the declared flags.
+    """
+    flags: dict[str, bool] = {}
+    problems: list[str] = []
+
+    try:
+        from agent_toolkit.tools import Store, build_mock_tools
+
+        for tool in build_mock_tools(Store()):
+            flags[tool.name] = bool(tool.side_effect)
+    except Exception as exc:  # noqa: BLE001 - report, do not crash the checker
+        problems.append(f"could not read the agent_toolkit catalog: "
+                        f"{type(exc).__name__}: {exc}")
+
+    try:
+        from fin_tools import (email_sender, knowledge_graph, payments,
+                               simulation, spreadsheet_tools)
+        from fin_tools.contracts import ToolRegistry
+
+        registry = ToolRegistry()  # fresh: leaves fin_tools.REGISTRY untouched
+        payments.register(registry)
+        email_sender.register(registry)
+        spreadsheet_tools.register(registry)
+        knowledge_graph.register(registry, knowledge_graph.KnowledgeGraph())
+        simulation.register(registry)
+        for spec in registry.list():
+            # fin_tools spells it `side_effects`; the action contract and the
+            # audit manifest both spell it `side_effect`. Same meaning.
+            flags[spec.name] = bool(spec.side_effects)
+    except Exception as exc:  # noqa: BLE001 - report, do not crash the checker
+        problems.append(f"could not read the fin_tools catalog: "
+                        f"{type(exc).__name__}: {exc}")
+
+    return flags, problems
+
+
+def _check_side_effect_agreement(action_tools: set[str],
+                                 declared: dict[str, Any],
+                                 r: Report) -> None:
+    """Every tool both sides know about must agree on `side_effect`.
+
+    Why this is an error and not a style note: the runtime decides whether to
+    gate a call from the **action** side's flag. So a tool the action side
+    calls read-only while the audit manifest declares side-effecting runs
+    directly and never reaches the auditor — an ungated side effect, and the
+    audit manifest's rules for it are dead text. The reverse is a real
+    disagreement too: the auditor would be asked to adjudicate something it
+    believes cannot change state.
+
+    A tool neither platform catalog knows about (an app-local tool defined in
+    the app's own code, like invoice-payer's `lookup_invoice`) cannot be
+    checked from here, so it is a warning that names what to do rather than a
+    silent pass.
+    """
+    flags, problems = _action_side_flags()
+    for problem in problems:
+        r.warn(problem)
+
+    unresolved: list[str] = []
+    for tname in sorted(action_tools & set(declared)):
+        if tname not in flags:
+            unresolved.append(tname)
+            continue
+        action_flag = flags[tname]
+        audit_flag = bool(declared[tname].side_effect)
+        if action_flag != audit_flag:
+            # Which consequence applies depends on the ACTION side's flag,
+            # because that is the one the runtime gates on.
+            direction = (
+                "runs directly and never reaches the auditor, so its audit "
+                "rules are dead text"
+                if not action_flag else
+                "is proposed to an auditor that believes it cannot change state"
+            )
+            r.error(f"tool {tname!r} disagrees on side_effect: the action side "
+                    f"says {action_flag}, the audit manifest says {audit_flag}. "
+                    f"The runtime gates on the action side's flag, so this tool "
+                    f"{direction}. Make the two agree — change the audit "
+                    f"manifest's side_effect, or the tool definition the action "
+                    f"side is built from.")
+
+    if unresolved:
+        r.warn(f"could not resolve side-effect flags for tool(s) {unresolved}: "
+               "they are not in the agent_toolkit or fin_tools catalogs, so they "
+               "are app-local. Confirm by hand that each one's `side_effect` "
+               "matches the audit manifest — the checker cannot see app code.")
 
 
 def _check_fact_coverage(audit: Any, r: Report) -> None:

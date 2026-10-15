@@ -232,13 +232,42 @@ Note the **contract mismatch** between packages: `fin_tools.ToolSpec` uses
 `side_effects` (plural) and a flat `{name: "type"}` schema with
 `handler(**kwargs)`, while `agent_toolkit.ToolDefinition` uses `side_effect`
 (singular), a JSON Schema object, and `handler(args: Mapping)`. They are not
-interchangeable. See `platform-status.md` §4.
+interchangeable — **but you do not write the adapter, it already exists.**
+
+- `fin_tools.toolkit_bridge.as_tool_definitions(bundle)` (or
+  `agent_tool_definitions(bundle)`, which excludes the intent-issuing operations an
+  agent must never hold) returns the financial tools as real
+  `agent_toolkit.ToolDefinition`s, converting the flat schema map to JSON Schema
+  and the kwargs handler to a Mapping-taking one.
+- `agent_integration.adapters.ToolContractView` closes the gap in the other
+  direction, so the auditor registers each tool with the correct side-effect flag
+  and schema rather than silently treating a gated tool as read-only.
+
+`fin_tools.audit_manifest` likewise derives the audit manifest's tool declarations
+and per-tool required-argument rules from the real schemas, so the manifest cannot
+drift from the contract. See `platform-status.md` §4.
+
+### The sibling packages
+
+`platform/financial-tools/` holds four more packages beside `fin_tools`, all
+installed by the same pyproject and all offline-testable:
+
+- `helios_forecast` — Monte-Carlo cash-flow projection, scenario deltas and
+  conformal calibration. `helios_forecast.market` is the stdlib market-data
+  reader (P1 wires it to the real service).
+- `spreadsheets` — render a query to a sheet; live engines are Feishu (default),
+  WPS and Grist, but they are served in-process by a local engine, so tests need no
+  credentials. `spreadsheets/app.py` is a FastAPI service.
+- `email_tool` — a templated SMTP sender with JSON-Schema-validated requests and an
+  idempotency store. Credentials come from the environment; it degrades offline.
+- `payments_collect` — a pydantic receivables model and in-memory `PaymentStore`,
+  integer minor units, no provider yet.
 
 ## Regenerate this table
 
 ```bash
-cd platform/financial-tools
-python3 -c "
+# From the repo root, with the repo venv (scripts/bootstrap-venv.sh).
+.venv/bin/python -c "
 from fin_tools import build_world
 b = build_world()
 print('%-24s %-12s %s' % ('TOOL','SIDE_EFFECT','TAGS'))
@@ -246,7 +275,7 @@ for t in b.registry.list():
     print('%-24s %-12s %s' % (t.name, t.side_effects, list(t.tags)))
 print('total:', len(b.registry.list()))
 "
-python3 -m fin_tools.demo     # end-to-end: simulate -> intent -> shadow -> pay -> email -> graph
+.venv/bin/python -m fin_tools.demo     # end-to-end: simulate -> intent -> shadow -> pay -> email -> graph
 ```
 
 `python3 -m fin_tools.demo` is the fastest way to see every family used

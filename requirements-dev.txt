@@ -1,0 +1,85 @@
+# Pinned dev/test dependencies for the single repo venv.
+#
+# Every version here is the one `scripts/bootstrap-venv.sh` actually resolved
+# and the 403-test baseline was observed green against, on CPython 3.13.9 /
+# macOS arm64. Pinned exactly rather than ranged so that two agents in two
+# worktrees cannot drift into different dependency trees and blame each other's
+# code for the difference.
+#
+# The four first-party packages are NOT listed here; the bootstrap script
+# installs them as editable local paths. They are pinned in requirements-dev.txt
+# only as transitive third-party deps (pydantic, pyyaml, jsonschema).
+#
+# To update: change a pin, re-run scripts/bootstrap-venv.sh, then confirm
+# scripts/test-all.sh is green before committing the new set.
+
+# --- test runner -----------------------------------------------------------
+pytest==9.1.1
+pluggy==1.6.0
+iniconfig==2.3.1
+packaging==26.3
+
+# --- build tooling (needed for the editable installs) ----------------------
+setuptools==84.0.0
+wheel==0.48.0
+
+# --- validation / modelling ------------------------------------------------
+pydantic==2.14.1
+pydantic_core==2.50.1
+annotated-types==0.8.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+attrs==26.1.0
+referencing==0.37.0
+rpds-py==2026.9.1
+
+# --- config / templates ----------------------------------------------------
+PyYAML==6.0.3
+Jinja2==3.1.6
+MarkupSafe==3.0.4
+
+# --- HTTP stack (FastAPI apps, deployment engine, example apps) ------------
+fastapi==0.143.1
+starlette==1.8.0
+anyio==4.15.1
+idna==3.20
+h11==0.16.0
+httpx==0.28.1
+httpcore==1.0.9
+certifi==2026.7.22
+urllib3==2.8.0
+requests==2.34.2
+charset-normalizer==3.5.2
+
+# --- ASGI server + its [standard] extras ----------------------------------
+uvicorn==0.54.0
+uvloop==0.23.0
+httptools==0.9.0
+watchfiles==1.3.0
+websockets==17.2
+python-dotenv==1.2.4
+Pygments==2.21.0
+click==8.5.0
+
+# --- form uploads (FastAPI multipart) --------------------------------------
+python-multipart==0.0.32
+
+# --- containers / cache (deployment engine) --------------------------------
+docker==7.2.0
+redis==8.1.0
+
+# --- numerics (forecast package) ------------------------------------------
+numpy==2.5.4
+
+# --- .xlsx read/write (spreadsheets package) ------------------------------
+openpyxl==3.1.5
+et-xmlfile==2.0.0
+
+# --- IANA tz database fallback (payments_collect zoneinfo) ----------------
+tzdata==2026.5
+
+# --- misc resolved transitives --------------------------------------------
+annotated-doc==0.0.5
+opentelemetry-api==1.45.1

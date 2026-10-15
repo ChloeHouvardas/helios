@@ -70,10 +70,12 @@ class CollectFactSource:
     # -- contact history --------------------------------------------------
     #
     # `GatedAgentRuntime._execute` calls `fact_source.record_contact(customer_id,
-    # store.today)` after a `send_email` that succeeded, and it does so OUTSIDE its
-    # try/except — so a fact source without this method takes the whole run down
-    # with an AttributeError. Implementing it is not optional for an app that
-    # reuses that runtime.
+    # store.today)` after a successful execution of any tool whose
+    # ToolDefinition sets `records_contact=True` (the platform's `send_email`,
+    # which this app reuses as-is, does). It does so OUTSIDE its try/except — so
+    # a fact source without this method takes the whole run down with an
+    # AttributeError. Implementing it is not optional for an app that reuses
+    # that runtime.
 
     def _seed(self, customer_id: str) -> bool:
         """Load a customer's recorded contact dates once. True when known."""

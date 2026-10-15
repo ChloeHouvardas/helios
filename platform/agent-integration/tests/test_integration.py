@@ -260,6 +260,206 @@ def test_record_contact_increments_the_count() -> None:
     assert source.contact_count_for("CUST-001", 7) == 1
 
 
+def test_the_send_email_tool_declares_the_contact_marker() -> None:
+    """Defect 3, contract side: the flag lives on the tool, not in the runtime.
+
+    `make_send_email` is the platform tool that contacts a customer, so it is
+    the one that must declare `records_contact`. `lookup_invoice` reads only,
+    so it must not — a read that inflated a contact count would deny legitimate
+    follow-ups.
+    """
+    from agent_toolkit.tools import make_lookup_invoice, make_send_email
+
+    store = Store.from_fixtures()
+    assert make_send_email(store).records_contact is True
+    assert make_lookup_invoice(store).records_contact is False
+
+
+def test_records_contact_defaults_to_false() -> None:
+    """An opt-in flag: silence must mean "does not contact anyone"."""
+    tool = ToolDefinition(
+        name="quiet_tool",
+        description="does something that contacts nobody",
+        input_schema={"type": "object", "properties": {}},
+        output_schema={"type": "object", "properties": {}},
+        side_effect=True,
+        handler=lambda args: {"ok": True},
+    )
+    assert tool.records_contact is False
+
+
+def test_records_contact_must_be_a_boolean() -> None:
+    """Fail closed on a malformed contract, like every other flag here."""
+    with pytest.raises(ValueError, match="records_contact must be a boolean"):
+        ToolDefinition(
+            name="bad_tool",
+            description="a tool with a non-boolean marker",
+            input_schema={"type": "object", "properties": {}},
+            output_schema={"type": "object", "properties": {}},
+            side_effect=True,
+            handler=lambda args: {"ok": True},
+            records_contact="yes",
+        )
+
+
+def test_contact_recording_follows_the_marker_not_the_tool_name(
+    workspace,
+) -> None:
+    """Defect 3, runtime side: a contact tool under any name is counted.
+
+    The runtime used to hard-code `name == "send_email"`, so a tool that
+    contacts a customer under any other name — a `fin_tools` `email.send`, the
+    teammate email tool — silently skipped the contact count. The
+    contact-frequency rule would then under-count and let an agent message the
+    same customer past the cap. The runtime now reads
+    `ToolDefinition.records_contact`.
+
+    This registers a side-effect tool named `notify_customer` carrying the
+    marker, runs it, and asserts the fact source was told a contact happened.
+    Before the runtime was generalised this failed: the name did not match, so
+    nothing was recorded.
+    """
+    runs, data = workspace
+
+    notify = ToolDefinition(
+        name="notify_customer",
+        description="notify a customer about their invoice; this contacts them",
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["customer_id", "invoice_id"],
+            "properties": {
+                "customer_id": {"type": "string", "minLength": 1},
+                "invoice_id": {"type": "string", "minLength": 1},
+            },
+        },
+        output_schema={
+            "type": "object",
+            "properties": {"sent": {"type": "boolean"}},
+        },
+        side_effect=True,
+        handler=lambda args: {"sent": True, "customer_id": args["customer_id"]},
+        records_contact=True,
+    )
+
+    built = build_integration(
+        app_id="marker-test",
+        agent_id="marker-agent",
+        task_type="collect.reminder",
+        tools=[notify],
+        runs_dir=str(runs),
+        data_dir=str(data),
+        allow_unsigned=True,
+        # Self-declared so the custom tool is granted; the point of this test
+        # is the runtime's contact recording, not manifest governance.
+        manifest_path=None,
+        # Suppress the two DEFAULT_MANDATE rules that reference arguments or
+        # facts this tool does not have (the manifest validator rightly rejects
+        # a limit on an argument the tool never declares). None overrides the
+        # default, which is how _mandate_rules skips a rule.
+        mandate={
+            "extension_owner_approval_days": None,
+            "invoice_owner_approval_amount": None,
+        },
+    )
+    try:
+        recorded: list[tuple[Any, Any]] = []
+        original = built.fact_source.record_contact
+
+        def spy(customer_id, when=None):
+            recorded.append((customer_id, when))
+            return original(customer_id, when)
+
+        built.fact_source.record_contact = spy
+
+        result = built.runtime.run(
+            driver=ScriptedDriver(
+                [ToolCall(name="notify_customer",
+                          arguments={"customer_id": "CUST-001",
+                                     "invoice_id": "INV-1001"})],
+                final_text="done",
+            ),
+            task=SUMMARY,
+            task_type="collect.reminder",
+        )
+        assert result.summary()["side_effects_executed"] == 1, result.detail
+        # The contact was recorded, under a tool name that is not send_email.
+        assert [cid for cid, _ in recorded] == ["CUST-001"]
+        assert built.fact_source.contact_count_for("CUST-001", 7) == 1
+    finally:
+        built.close()
+
+
+def test_a_side_effect_without_the_marker_records_no_contact(
+    workspace,
+) -> None:
+    """The converse: marking is opt-in, not applied to every side effect.
+
+    A tool that changes state without contacting anyone (recording a payment,
+    say) must not inflate a contact count, or a customer who paid would look
+    like a customer who was nagged.
+    """
+    runs, data = workspace
+
+    quiet = ToolDefinition(
+        name="record_note",
+        description="attach an internal note; contacts nobody",
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["customer_id", "invoice_id"],
+            "properties": {
+                "customer_id": {"type": "string", "minLength": 1},
+                "invoice_id": {"type": "string", "minLength": 1},
+            },
+        },
+        output_schema={"type": "object", "properties": {"ok": {"type": "boolean"}}},
+        side_effect=True,
+        handler=lambda args: {"ok": True},
+        # records_contact intentionally omitted -> False
+    )
+
+    built = build_integration(
+        app_id="no-marker-test",
+        agent_id="no-marker-agent",
+        task_type="collect.reminder",
+        tools=[quiet],
+        runs_dir=str(runs),
+        data_dir=str(data),
+        allow_unsigned=True,
+        manifest_path=None,
+        mandate={
+            "extension_owner_approval_days": None,
+            "invoice_owner_approval_amount": None,
+        },
+    )
+    try:
+        recorded: list[Any] = []
+        original = built.fact_source.record_contact
+
+        def spy(customer_id, when=None):
+            recorded.append(customer_id)
+            return original(customer_id, when)
+
+        built.fact_source.record_contact = spy
+
+        result = built.runtime.run(
+            driver=ScriptedDriver(
+                [ToolCall(name="record_note",
+                          arguments={"customer_id": "CUST-001",
+                                     "invoice_id": "INV-1001"})],
+                final_text="done",
+            ),
+            task=SUMMARY,
+            task_type="collect.reminder",
+        )
+        assert result.summary()["side_effects_executed"] == 1, result.detail
+        assert recorded == []
+        assert built.fact_source.contact_count_for("CUST-001", 7) == 0
+    finally:
+        built.close()
+
+
 def test_payment_details_changed_is_honestly_unanswered(
     integration: Integration,
 ) -> None:
@@ -1126,6 +1326,61 @@ def test_summary_is_json_serializable(integration: Integration) -> None:
     assert summary["status"] == COMPLETED
     assert summary["authorized"] is True
     assert summary["side_effects_executed"] == 1
+
+
+def test_summary_counts_only_side_effects_not_read_only_calls(
+    integration: Integration,
+) -> None:
+    """Defect 2: read-only calls are appended to `actions` too.
+
+    `_execute_direct` records a successful read as an action entry with
+    `executed: True` (runtime.py:248-261), so `len(self.actions)` and the
+    `executed` property both over-count whenever a run reads before it acts.
+    `side_effects_attempted` / `side_effects_executed` are what an operator
+    reads to know how many gated actions a run took; inflating them with
+    lookups makes the number meaningless.
+
+    The discriminator is `proposal_id`: only a side-effect call is turned into
+    a Proposal and adjudicated, so only those entries carry one. A read-only
+    entry has `proposal_id is None`.
+
+    This run does one lookup then one send, so the correct counts are 1 and 1.
+    Before the fix, `attempted` was 2 (both actions) and `executed` was 2 (both
+    had `executed: True`).
+    """
+    lookup = ToolCall(name="lookup_invoice", arguments={"invoice_id": "INV-1001"})
+    result = integration.runtime.run(
+        driver=ScriptedDriver([lookup, _send()], final_text="done"),
+        task=SUMMARY,
+        task_type=TASK,
+    )
+    summary = result.summary()
+    assert summary["status"] == COMPLETED
+
+    # Both calls happened; only one is a side effect.
+    assert len(result.actions) == 2, "sanity: a read and a send were recorded"
+    assert summary["side_effects_attempted"] == 1
+    assert summary["side_effects_executed"] == 1
+
+
+def test_summary_attempted_counts_gated_calls_that_did_not_execute(
+    integration: Integration,
+) -> None:
+    """A denied/held side effect was still *attempted*, just not executed.
+
+    `attempted` must count every adjudicated side-effect call regardless of
+    verdict, while `executed` counts only those that ran. A denied call has a
+    `proposal_id` but `executed: False`.
+    """
+    denied = _send(invoice_id="INV-1003")  # large invoice -> held, not executed
+    result = integration.runtime.run(
+        driver=ScriptedDriver([denied], final_text="done"),
+        task=SUMMARY,
+        task_type=TASK,
+    )
+    summary = result.summary()
+    assert summary["side_effects_attempted"] == 1
+    assert summary["side_effects_executed"] == 0
 
 
 # ---------------------------------------------------------------------------

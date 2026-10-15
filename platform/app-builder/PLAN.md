@@ -265,22 +265,30 @@ the platform.
 
 ## 6. Boundaries and risks
 
-**The action agent loop does not exist yet.** `agent_toolkit` has contracts,
-models, mock tools, store, audit gate, action log, holds, and manifest loading —
-but no loop. `qwen-agent` is a declared dependency imported nowhere, and
-`pyproject.toml` declares a `cli:main` entrypoint with no `cli.py`. Another agent
-is building this now.
+**The action agent loop now exists.** It is `platform/agent-integration/`:
+`runtime.GatedAgentRuntime` (authorize → propose → adjudicate → execute/hold/deny,
+with resumable holds) and `model_driver.ModelDriver` (Qwen over DashScope's
+OpenAI-compatible endpoint, stdlib `urllib`). `build_integration()` assembles it in
+one call, and the CLI provides `demo`, `doctor`, `run`, `inspect`, `manifest`,
+`selfcheck`. `agent_toolkit` itself still has no loop and no `cli.py` — the
+unused `qwen-agent` dependency declaration and the `cli:main` script entry that
+pointed at a non-existent module were both removed, so `pip install -e` now
+succeeds; P3 writes that CLI.
 
-*Consequence:* Flow B cannot be completed end-to-end until it lands.
-*Mitigation:* everything in Flows A and C, and the whole build plane, is
-independent of it and can proceed. Define the agent host against a narrow
-interface — start a run, report events, surface holds — so the loop drops in
-later. Confirm that interface with the package owner before building the host.
+*Consequence:* Flow B can be completed end-to-end. The agent host no longer needs
+to wait for a loop to land.
+*Note:* define the host against `build_integration()` / the `Driver` protocol
+rather than re-implementing a loop. The loop is not built on Qwen-Agent — no file
+in the repo imports `qwen_agent` except one lazy optional import behind
+`audit-agent-builder`'s `advisory` extra.
 
 **Unsettled terminology.** `platform/agent-toolkit/` became
 `platform/action-agent-builder/`, but the Python package is still `agent_toolkit`
 and its README still says "Agent Toolkit". Templates should reference the package
-name, not the directory path. Tracked in `TODO.md`.
+name, not the directory path. There is also a third package now,
+`platform/agent-integration/` (`agent_integration`), which is the only one allowed
+to import both builders — templates must not imply the two builders import each
+other.
 
 **Two languages in one generated app.** The component library is the mitigation;
 its completeness is what determines how much TypeScript Qwen has to invent. Build

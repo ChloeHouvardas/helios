@@ -99,16 +99,20 @@ pytest suite (offline, deterministic), package `README.md`, and
 ## Not doing (veto anytime)
 
 - No Qwen/LLM calls at runtime (offline-first; LLM hooks are documented interfaces only)
-- No DB, no packaging beyond a minimal pyproject
-- No resolution of the Action-gate vs Audit-auditor seam (open team question, unchanged)
+- No DB, and no packaging beyond a minimal pyproject
+- No resolution of the Action-gate vs Audit-auditor seam — **this one has since
+  been settled at the repo level**, not here: the standalone `audit_agent` is
+  authoritative and `agent_toolkit.audit.AuditGate` is legacy
+  (`specs/decisions.md`). This package was right not to pick a side; it emits
+  proposals/records the authoritative auditor consumes, and
+  `fin_tools.toolkit_bridge` adapts them to the action side's contract.
 
-### Superseded since this plan was written
-
-- ~~No HTTP server~~ — `service.py` ships `ToolServer`/`HttpToolClient`, the
-  boundary in `specs/financial-tools-service.md` §5. The line above was already
-  stale when market data landed; corrected here rather than left misleading.
-- ~~No network calls~~ — see the non-interference guarantees above. Network is
-  confined to `fin_tools/market_data.py`.
+*Superseded since this plan was written:* "no HTTP server" is no longer true.
+`fin_tools/service.py` provides `HttpToolClient` + `ToolServer` over stdlib
+`http.server` so the tools can be reached across a process or container boundary,
+with only the server holding the signing secret. The `spreadsheets` package
+imported from a teammate also ships a FastAPI app. Both remain optional: nothing
+in `fin_tools`' own surface requires a server, and no test starts one.
 
 ### Market data scope (added with `market.*`)
 

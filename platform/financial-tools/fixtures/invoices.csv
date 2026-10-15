@@ -1,4 +1,4 @@
-﻿invoice_id,customer,amount_cents,due_date,contact_email,status
+invoice_id,customer,amount_cents,due_date,contact_email,status
 INV-1001,acme,250000,2026-10-10,ap@acme.example,open
 INV-1002,acme,120000,2026-10-24,ap@acme.example,open
 INV-1003,borealis,480000,2026-10-17,finance@borealis.example,open

@@ -1,4 +1,4 @@
-"""Tests for the GLM-5.3 model driver.
+"""Tests for the Qwen model driver.
 
 Everything here is offline. The wire protocol is exercised against a local
 ``http.server`` that mimics the endpoint's documented request and response
@@ -50,10 +50,17 @@ from agent_toolkit.contracts import ToolDefinition
 class _MockServer:
     """Records requests, replies with a canned payload.
 
-    Deliberately strict about the documented contract: it rejects a missing
-    Authorization header and a request that tries to disable thinking, because
-    GLM-5.3 does both and a driver that got either wrong should fail here
-    rather than in production.
+    Deliberately strict about the documented contract, so a driver that got the
+    wire format wrong fails here rather than in production:
+
+    - a missing Authorization header is rejected;
+    - the legacy ``thinking`` object (a different vendor's field) is rejected —
+      this endpoint takes ``enable_thinking``;
+    - a ``qwen3`` hybrid model must be sent ``enable_thinking: false``, because
+      it defaults to thinking mode and refuses a non-streaming request while it
+      is on;
+    - any other model must be sent *neither* thinking field, because an endpoint
+      that does not know the parameter rejects an unknown one.
     """
 
     def __init__(self, replies: list[dict[str, Any]], *, expect_token: str = "tok") -> None:
@@ -89,9 +96,28 @@ class _MockServer:
                     outer.errors.append("token did not match")
                     self._send(401, {"error": {"code": "auth", "message": "bad token"}})
                     return
-                if payload.get("thinking", {}).get("type") == "disabled":
-                    outer.errors.append("tried to disable thinking on GLM-5.3")
-                    self._send(400, {"error": {"code": "bad", "message": "thinking cannot be disabled"}})
+                if "thinking" in payload:
+                    outer.errors.append("sent the legacy 'thinking' object; this endpoint "
+                                        "takes 'enable_thinking'")
+                    self._send(400, {"error": {"code": "bad", "message": "unknown parameter 'thinking'"}})
+                    return
+                model = str(payload.get("model", ""))
+                if "qwen3" in model.lower():
+                    if payload.get("enable_thinking") is not False:
+                        outer.errors.append(
+                            f"{model} is a hybrid model: enable_thinking must be "
+                            "sent as false, otherwise a non-streaming request is refused"
+                        )
+                        self._send(400, {"error": {"code": "bad",
+                                                  "message": "thinking must be disabled"}})
+                        return
+                elif "enable_thinking" in payload:
+                    outer.errors.append(
+                        f"{model} is not a hybrid model: enable_thinking must not be "
+                        "sent at all"
+                    )
+                    self._send(400, {"error": {"code": "bad",
+                                              "message": "unknown parameter 'enable_thinking'"}})
                     return
 
                 if not outer.replies:
@@ -114,7 +140,7 @@ class _MockServer:
 
     @property
     def base_url(self) -> str:
-        return f"http://127.0.0.1:{self.port}/api/paas/v4"
+        return f"http://127.0.0.1:{self.port}/compatible-mode/v1"
 
     def start(self) -> "_MockServer":
         self._thread.start()
@@ -219,27 +245,46 @@ def _tool_reply(name: str, arguments: Any) -> dict[str, Any]:
 
 
 def test_defaults_match_the_documented_endpoint() -> None:
-    assert DEFAULT_BASE_URL == "https://open.bigmodel.cn/api/paas/v4"
-    assert DEFAULT_MODEL == "glm-5.3"
+    assert DEFAULT_BASE_URL == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    assert DEFAULT_MODEL == "qwen3.8-max"
 
 
 def test_token_is_read_from_the_environment(monkeypatch) -> None:
-    for name in ("HELIOS_LLM_API_KEY", "LLM_API_TOKEN", "GLM_API_KEY",
-                 "ZHIPUAI_API_KEY", "DASHSCOPE_API_KEY"):
+    for name in ("HELIOS_LLM_API_KEY", "DASHSCOPE_API_KEY", "OPENAI_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     assert resolve_token() == ""
     assert api_key_present() is False
 
-    monkeypatch.setenv("LLM_API_TOKEN", "  L2secret1Y  ")
-    assert resolve_token() == "L2secret1Y"  # stripped
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "  sk-vendor1Y  ")
+    assert resolve_token() == "sk-vendor1Y"  # stripped
     assert api_key_present() is True
-    assert token_env_var_name() == "LLM_API_TOKEN"
+    assert token_env_var_name() == "DASHSCOPE_API_KEY"
 
 
 def test_token_priority_prefers_the_helios_name(monkeypatch) -> None:
     monkeypatch.setenv("HELIOS_LLM_API_KEY", "preferred")
-    monkeypatch.setenv("LLM_API_TOKEN", "fallback")
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "fallback")
     assert resolve_token() == "preferred"
+
+
+def test_token_priority_prefers_dashscope_over_openai(monkeypatch) -> None:
+    """Qwen Code exports OPENAI_API_KEY, so it is honoured — but only last.
+
+    An explicitly Helios or DashScope key must win, otherwise a developer who
+    has both configured would silently spend the wrong quota.
+    """
+    monkeypatch.delenv("HELIOS_LLM_API_KEY", raising=False)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "vendor")
+    monkeypatch.setenv("OPENAI_API_KEY", "qwen-code")
+    assert resolve_token() == "vendor"
+
+
+def test_openai_variables_are_honoured_as_a_last_resort(monkeypatch) -> None:
+    for name in ("HELIOS_LLM_API_KEY", "DASHSCOPE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "qwen-code")
+    assert resolve_token() == "qwen-code"
+    assert token_env_var_name() == "OPENAI_API_KEY"
 
 
 def test_a_blank_token_counts_as_absent(monkeypatch) -> None:
@@ -248,22 +293,33 @@ def test_a_blank_token_counts_as_absent(monkeypatch) -> None:
 
 
 def test_environment_overrides_model_and_base_url(monkeypatch) -> None:
-    monkeypatch.setenv("HELIOS_LLM_MODEL", "glm-5.3-flash")
-    monkeypatch.setenv("HELIOS_LLM_BASE_URL", "https://gateway.example.com/v4/")
-    monkeypatch.setenv("HELIOS_LLM_REASONING_EFFORT", "low")
+    monkeypatch.setenv("HELIOS_LLM_MODEL", "qwen3-max")
+    monkeypatch.setenv("HELIOS_LLM_BASE_URL", "https://gateway.example.com/compatible-mode/v1/")
     monkeypatch.setenv("HELIOS_LLM_MAX_TOKENS", "512")
 
     driver = ModelDriver(token="tok")
-    assert driver.model == "glm-5.3-flash"
-    assert driver.base_url == "https://gateway.example.com/v4"  # trailing / stripped
-    assert driver.reasoning_effort == "low"
+    assert driver.model == "qwen3-max"
+    # trailing / stripped, so the path joins cleanly
+    assert driver.base_url == "https://gateway.example.com/compatible-mode/v1"
     assert driver.max_tokens == 512
 
 
+def test_openai_base_url_is_used_when_helios_is_unset(monkeypatch) -> None:
+    monkeypatch.delenv("HELIOS_LLM_BASE_URL", raising=False)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://qwen-code.example.com/v1/")
+    assert ModelDriver(token="tok").base_url == "https://qwen-code.example.com/v1"
+
+
 def test_explicit_arguments_win_over_the_environment(monkeypatch) -> None:
-    monkeypatch.setenv("HELIOS_LLM_MODEL", "glm-5.3-flash")
-    driver = ModelDriver(model="glm-5.3", token="tok")
-    assert driver.model == "glm-5.3"
+    monkeypatch.setenv("HELIOS_LLM_MODEL", "qwen3-max")
+    driver = ModelDriver(model="qwen3.8-max", token="tok")
+    assert driver.model == "qwen3.8-max"
+
+
+def test_openai_model_is_used_when_helios_is_unset(monkeypatch) -> None:
+    monkeypatch.delenv("HELIOS_LLM_MODEL", raising=False)
+    monkeypatch.setenv("OPENAI_MODEL", "qwen3-coder-plus")
+    assert ModelDriver(token="tok").model == "qwen3-coder-plus"
 
 
 def test_a_non_numeric_max_tokens_falls_back(monkeypatch) -> None:
@@ -288,8 +344,8 @@ def test_no_token_is_a_clear_local_error_not_a_network_call() -> None:
 
 
 def test_request_is_a_plain_bearer_with_no_jwt(mock_server) -> None:
-    """GLM-5.3 rejects the legacy JWT-shaped credential. The token must go
-    out exactly as supplied."""
+    """The token must go out exactly as supplied: a plain Bearer value, not an
+    encoded or JWT-shaped credential."""
     driver = ModelDriver(token="tok", base_url=mock_server.base_url)
     driver.next_calls(
         task="t", instructions="i", tools=[],
@@ -298,20 +354,71 @@ def test_request_is_a_plain_bearer_with_no_jwt(mock_server) -> None:
     assert mock_server.errors == []
     auth = mock_server.headers[0]["authorization"]
     assert auth == "Bearer tok"
-    assert auth.count(".") < 2, "looks like a JWT, which GLM-5.3 rejects"
+    assert auth.count(".") < 2, "looks like a JWT, not a plain bearer token"
 
 
-def test_request_enables_thinking_and_never_disables_it(mock_server) -> None:
+def test_a_hybrid_model_has_thinking_switched_off(mock_server) -> None:
+    """The default model id is a qwen3 hybrid, so ``enable_thinking`` must be
+    sent as false — those models default to thinking mode and refuse a
+    non-streaming request while it is on."""
     driver = ModelDriver(token="tok", base_url=mock_server.base_url)
     driver.next_calls(
         task="t", instructions="i", tools=[],
         history=[{"role": "user", "content": "hello"}],
     )
+    assert mock_server.errors == []
     payload = mock_server.requests[0]
-    assert payload["thinking"] == {"type": "enabled"}
-    assert payload["reasoning_effort"] in {"low", "high", "max"}
-    assert payload["model"] == "glm-5.3"
+    assert payload["model"] == "qwen3.8-max"
+    assert payload["enable_thinking"] is False
     assert payload["stream"] is False
+    # the legacy vendor field must not appear at all
+    assert "thinking" not in payload
+    assert "reasoning_effort" not in payload
+
+
+def test_a_non_hybrid_model_is_sent_neither_thinking_field() -> None:
+    """An endpoint that does not know ``enable_thinking`` rejects an unknown
+    parameter, so a non-hybrid model must not be sent it. Sending it would also
+    change behaviour for a model that never had a thinking mode."""
+    server = _MockServer(
+        [{"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}]
+    ).start()
+    try:
+        driver = ModelDriver(token="tok", base_url=server.base_url, model="qwen-max")
+        driver.next_calls(
+            task="t", instructions="i", tools=[],
+            history=[{"role": "user", "content": "hello"}],
+        )
+        assert server.errors == []
+        payload = server.requests[0]
+        assert "enable_thinking" not in payload
+        assert "thinking" not in payload
+        assert "reasoning_effort" not in payload
+    finally:
+        server.stop()
+
+
+def test_thinking_is_disabled_for_every_qwen3_variant() -> None:
+    """Matched on a ``qwen3`` substring, so a cheaper or faster variant of the
+    same family is treated the same way rather than silently refused by the
+    endpoint."""
+    server = _MockServer(
+        [{"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}]
+    ).start()
+    try:
+        for model in ("qwen3-max", "qwen3-coder-plus", "QWEN3-8B", "qwen3.8-max"):
+            server.replies.append(
+                {"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+            )
+            driver = ModelDriver(token="tok", base_url=server.base_url, model=model)
+            driver.next_calls(
+                task="t", instructions="i", tools=[],
+                history=[{"role": "user", "content": "hello"}],
+            )
+        assert server.errors == []
+        assert [r["enable_thinking"] for r in server.requests] == [False] * 4
+    finally:
+        server.stop()
 
 
 def test_tools_are_wrapped_in_the_documented_envelope(mock_server) -> None:
@@ -417,8 +524,8 @@ def test_plain_text_is_returned_as_the_final_answer(mock_server) -> None:
 
 
 def test_reasoning_content_is_not_mistaken_for_an_answer() -> None:
-    """GLM-5.3 returns a thinking trace alongside the answer. The trace is
-    not the answer, and treating it as one would end the run early."""
+    """A Qwen hybrid model returns a thinking trace alongside the answer. The
+    trace is not the answer, and treating it as one would end the run early."""
     assert text_of({"content": "Sent.", "reasoning_content": "Let me think..."}) == (
         "Sent."
     )

@@ -1,21 +1,22 @@
 # Financial Tools Developer Interface (prototype)
 
 The tool layer of Helios Layer 1 (whiteboard box ①): what Qwen-as-coding-agent and
-in-app agents call to do financial work. Money movement is an offline,
-deterministic prototype — **no DB, no real money, payments stay mock**.
+in-app agents call to do financial work. Everything is an offline, deterministic
+prototype — **no real money, no live provider credentials needed to test**. The
+tools run in-process by default and can also be reached over a service boundary;
+see "Known simplifications" below.
 
-One exception, and it is deliberate: `fin_tools/market_data.py` may call the
+One exception, and it is deliberate: `fin_tools/market_data` may call the
 Tushare HTTP API to fetch **quote and reference-rate data**, and only when a
-`market.*` tool is invoked with `TUSHARE_TOKEN` set. No other module opens a
-socket. That data is read-only and never reaches a balance or the ledger — see
-`specs/decisions.md`.
+`market.*` tool is invoked with `TUSHARE_TOKEN` set. That data is read-only and
+never reaches a balance or the ledger — see `specs/decisions.md`.
 
 ## Run
 
 ```bash
-cd platform/financial-tools
-python3 -m pytest          # 104 tests; all offline (market tests inject a fake transport)
-python3 -m fin_tools.demo  # end-to-end story
+# from the repo root; scripts/bootstrap-venv.sh builds .venv first
+.venv/bin/python -m pytest platform/financial-tools/tests -q   # all offline; market tests inject a fake transport
+.venv/bin/python -m fin_tools.demo                             # end-to-end story
 ```
 
 ## Components
@@ -82,13 +83,10 @@ carry a token in their declaration.
 
 - Personas are fixture cards, not interview-grounded; fidelity claims do not transfer.
 - Shadow sandbox is copy-on-write, not LM-emulated; it reports deterministic effects.
-- Single-process, in-memory; no persistence, no real SCA device. (`service.py`
-  does ship an HTTP boundary — `ToolServer`/`HttpToolClient` — so "no HTTP" is no
-  longer true; that line was stale and is corrected here.)
-- Market data has no cache, no rate limiting, no retry/backoff and no offline
-  fixture source. No token means `ServiceUnavailable`, never invented numbers.
-- The Action-gate vs Audit-auditor seam (open team question) is untouched: these
-  tools emit proposals/records that *either* gate could consume.
+- No persistence and no real SCA device. `fin_tools` itself is in-process by default — but it is not HTTP-free: `fin_tools/service.py` provides `HttpToolClient` + `ToolServer` over stdlib `http.server`, so the tools can be reached across a process or container boundary with only the server holding the signing secret. `spreadsheets/app.py` is a separate FastAPI service. No test needs either one running.
+- The Action-gate vs Audit-auditor seam is **settled**, not open: the standalone `audit_agent` is authoritative and `agent_toolkit.audit.AuditGate` is legacy (see `specs/decisions.md`). These tools emit proposals/records that the standalone auditor consumes, and `fin_tools.toolkit_bridge` adapts them to the action side's contract.
+- Market data serves no invented numbers: no token and no fixture means
+  `ServiceUnavailable`, never a made-up rate.
 
 ## Layout
 
@@ -96,10 +94,22 @@ carry a token in their declaration.
 financial-tools/
   PLAN.md               build plan for this package
   README.md             this file
+  pyproject.toml        installs all five sibling packages below
   research/README.md    citations for intent verification + simulation choices
-  fin_tools/            the package (contracts, intent, payments, email,
-                        spreadsheets, graph, simulation, market_data, demo)
+  fin_tools/            the core package (contracts, intent, payments, email,
+                        spreadsheets, graph, simulation, service, toolkit_bridge,
+                        audit_manifest, market_data, demo)
+  helios_forecast/      Monte-Carlo cash-flow projection + scenarios + calibration
+  spreadsheets/         sheet rendering/reconciliation; FastAPI app; live engines
+                        (Feishu, WPS, Grist) served locally so tests need no creds
+  email_tool/           templated SMTP sender: schemas/, templates/, idempotency
+  payments_collect/     pydantic receivables model + in-memory PaymentStore
   fixtures/invoices.csv demo + test data (integer cents)
-  tests/                104 offline pytest tests (43 for market_data, all via an
-                        injected fake transport)
+  tests/                offline pytest tests; count printed by scripts/test-all.sh
 ```
+
+Only `fin_tools` is described in the component table above; the four sibling
+packages are teammates' work imported into this directory and installed by the
+same `pyproject.toml`. Each keeps its own tests in `tests/`, prefixed with the
+package name (`test_forecast_*`, `test_email_*`, `test_payments_collect_*`,
+`test_spreadsheets.py`). See `entry-point/references/financial-tools.md`.

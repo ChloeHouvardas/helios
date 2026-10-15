@@ -69,19 +69,23 @@ and the user discovers it when they wonder why nothing happened.
 
 ## Critical warnings
 
-- **There is no agent loop, no scaffolder and no validator.** You are the
-  scaffolder. `qwen_agent` is not installed in this checkout and no API key is set,
-  so the example runs offline from deterministic code. See
-  `references/agent-loop.md` for both paths.
-- **The two audit gates conflict and nobody has resolved it.**
-  `agent_toolkit`'s in-process gate accepts only four receivables-shaped limit
-  keys, so a payables app cannot express its policy there at all. The example makes
-  the standalone auditor authoritative. That is a defensible choice, **not a
-  settled design** — `AGENTS.md` requires team approval for architecture changes,
-  so flag it; do not resolve it silently.
-- **`auth_code` is not in the audit log's redaction key set.** A real payment
-  credential gets written to the log in full. Verified 2026-10-14. Redact before
-  you log, and see `references/platform-status.md` §"Credential handling".
+- **The agent loop exists; the scaffolder and validator do not.** Use
+  `agent_integration.build_integration()` for a real gated loop, or drive the
+  runtime from deterministic code for an offline demo (what the example does).
+  There is still no scaffolder or `helios-app.yaml` validator —
+  `checks/check_app.py` is the working stand-in. See `references/agent-loop.md`.
+- **The standalone audit agent is the authoritative gate — this is now decided.**
+  `agent_toolkit`'s in-process `AuditGate` is legacy and in no run path (its
+  four receivables-shaped limit keys cannot express a payables policy anyway).
+  Build against `audit_agent`; do not add rules to the in-process gate. See
+  `specs/decisions.md` and `references/platform-status.md`.
+- **`auth_code` is redacted before it reaches the audit log.** `auth_code` and
+  `authorization_code` are now in the audit builder's `REDACTED_KEYS`, so the
+  payment credential no longer leaks into the hash-chained log via
+  `owner_question`. Because redaction happens before schema validation, do **not**
+  put a `minLength`/`pattern` on `auth_code` in a manifest — the gate would only
+  validate the `***REDACTED***` placeholder. See `references/platform-status.md`
+  §"Credential handling".
 - **Fact resolution is keyed on a fixed argument-name set** (`invoice_id`,
   `bill_id`, `customer_id`, `supplier_id`, `subject_id`, `payment_id`). Name an
   argument anything else and fact-bound rules **fail closed and deny everything** —
@@ -91,7 +95,8 @@ and the user discovers it when they wonder why nothing happened.
   once at startup. Reuse the same `idempotency_key` on a retry so it cannot pay
   twice.
 - **Do not edit inside other packages.** `platform/action-agent-builder/`,
-  `platform/audit-agent-builder/`, `platform/app-builder/` and
+  `platform/audit-agent-builder/`, `platform/app-builder/`,
+  `platform/agent-integration/`, `platform/deployment/` and
   `platform/financial-tools/` belong to other agents working concurrently.
 
 ## Non-negotiables (competition rules)

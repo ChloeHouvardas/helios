@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "helios-deployment"
+version = "0.1.0"
+description = "Helios deployment engine: helios.yaml manifest contract, FastAPI ingest endpoint, and a Docker Engine API orchestrator that builds, smoke-tests and routes app bundles"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "docker>=7.0",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+    "python-multipart>=0.0.9",
+    "redis>=5.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+# `cli/helios.py` defines `main()` (verified), so the console script is real.
+# It talks to a running engine over HTTP; it does not import `engine`.
+[project.scripts]
+helios = "cli.helios:main"
+
+# `cli/` and `sdk/helios_sdk/` carry no `__init__.py` in the imported layout,
+# and the layout is kept as-is, so the package list is stated explicitly and
+# namespace discovery handles the missing `__init__.py`.
+#
+# `helios_sdk` is mapped to `sdk/helios_sdk` so it imports as flat
+# `helios_sdk`, which is the documented name (AGENT-BUILDERS-GUIDE.md,
+# SPEC-SHEET.md), the name `examples/sample-app/main.py` uses, and the name
+# `images/app-base/Dockerfile` installs into site-packages. Apps generated
+# against the golden image must not have to know the repo's directory nesting.
+#
+# `examples/` and `images/` are data (a sample bundle and Dockerfiles), not
+# importable packages, so they are not discovered.
+[tool.setuptools]
+packages = ["engine", "cli", "helios_sdk"]
+
+[tool.setuptools.package-dir]
+helios_sdk = "sdk/helios_sdk"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

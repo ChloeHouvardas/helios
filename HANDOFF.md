@@ -35,17 +35,17 @@ Component names follow `specs/architecture-mermaid.md`. Status is expressed as *
 
 | Architecture component | Where it lives | Status |
 |---|---|---|
-| Financial Tools Interface + SDK | `platform/financial-tools` (`fin_tools`) | **Works.** Offline prototypes — payments, email, spreadsheets, knowledge graph, simulation, intent verification. 12 registered tools. Also ships a service boundary with in-process **and** HTTP transports, so the same tool can be called locally or across a socket. |
+| Financial Tools Interface + SDK | `platform/financial-tools` (`fin_tools` + four sibling packages) | **Works.** 367 offline tests. `fin_tools` registers 12 tools (payments, email, spreadsheets, knowledge graph, simulation, intent verification) and ships a service boundary with in-process **and** HTTP transports. Siblings: `helios_forecast`, `spreadsheets` (FastAPI app), `email_tool`, `payments_collect`. |
 | Application Builder | `platform/app-builder` | **Design only.** `README.md` + `PLAN.md`, no code. No scaffolder, no validator, no `stacks.yaml`, no DDL generator, no UI kit. |
-| Action Agent Builder | `platform/action-agent-builder` (`agent_toolkit`) | **Partial.** Tool contract, store, action log, holds, manifest loader all work. **No agent loop and no CLI** — `pyproject.toml` declares an `agent-toolkit = "agent_toolkit.cli:main"` entry point but `cli.py` does not exist. |
-| Audit Agent Builder | `platform/audit-agent-builder` (`audit_agent`) | **Works.** Signed scoped short-lived single-use grants, deterministic fail-closed policy engine, hash-chained append-only log, YAML manifests, pluggable fact sources, three transports, CLI (`inspect`/`validate`/`demo`/`serve`). |
-| Validation + Deployment | `entry-point/checks/check_app.py` (substitute) | **Validator: works (substitute). Deployment: does not exist.** No hosting, no artifact format, no deployment engine. |
+| Action Agent Builder | `platform/action-agent-builder` (`agent_toolkit`) | **Works.** Tool contract, store, action log, holds, manifest loader. Still no CLI — the `agent-toolkit = agent_toolkit.cli:main` entry point was removed from `pyproject.toml` so `pip install -e` succeeds; P3 writes `cli.py` and the entry returns with it. |
+| Audit Agent Builder | `platform/audit-agent-builder` (`audit_agent`) | **Works.** 81 offline tests. Signed scoped short-lived single-use grants, deterministic fail-closed policy engine, hash-chained append-only log, YAML manifests, pluggable fact sources, three transports, CLI (`inspect`/`validate`/`demo`/`serve`). |
+| Validation + Deployment | `entry-point/checks/check_app.py` + `platform/deployment` | **Validator: works (substitute).** Now also cross-checks that the action side and the audit manifest agree on every tool's side-effect flag; 8 tests. **Deployment engine: works.** 96 offline tests (docker-py mocked); needs a Docker daemon only to actually deploy. |
 
 **Two things in this part that are not in the architecture diagram but are load-bearing:**
 
 | Component | Where | Status |
 |---|---|---|
-| The seam + the actual agent loop | `platform/agent-integration` (`agent_integration`) | **Works.** The runtime, bridge, adapters, and a real-model driver. This is the loop `action-agent-builder` specified but never shipped. |
+| The seam + the actual agent loop | `platform/agent-integration` (`agent_integration`) | **Works.** 136 offline tests. The gated runtime, bridge, adapters, manifest generator, and a real-model driver pointed at Qwen over DashScope. This is the loop `action-agent-builder` specified but never shipped, and the only package allowed to import both builders. |
 | The coding-agent on-ramp | `entry-point/` | **Works.** `SKILL.md` + `BUILD.md` (8-step procedure) + `references/` + a complete example app. This is what you point a coding agent at. |
 
 ### Part 2 — Generated Applications
@@ -134,22 +134,25 @@ This is the section to trust. Each was run on 2026-10-15 against this checkout; 
 ### Environment
 
 ```bash
-# Python 3.13.9. audit-agent-builder's floor is 3.13; use one interpreter for everything.
-# Packages are NOT pip-installed globally. Two different paths work:
+# One environment for the whole repo. Build it once from the repo root:
+scripts/bootstrap-venv.sh          # creates .venv on Python 3.13, installs the
+                                   # four first-party packages editable plus the
+                                   # pins in requirements-dev.txt
 
-# (a) source-on-path — used by the apps and the example
-cd platform/audit-agent-builder && PYTHONPATH=src python3 -m pytest tests -q   # 79 passed
-cd platform/financial-tools     && python3 -m pytest tests -q                  # 61 passed, 2 skipped
-cd apps/helios-collect          && python3 -m pytest tests -q                  # 74 passed
-cd entry-point/examples/invoice-payer && python3 -m pytest tests -q            # 41 passed
+# One test command for the whole repo:
+scripts/test-all.sh                # 403 passed across five suites
 
-# (b) agent-integration has its OWN venv — use it, or imports fail
-cd platform/agent-integration && .venv/bin/python -m pytest tests -q           # 123 passed
+# Run a single suite with the venv interpreter (from the repo root):
+.venv/bin/python -m pytest platform/audit-agent-builder/tests -q     #  79 passed
+.venv/bin/python -m pytest platform/financial-tools/tests     -q     #  86 passed
+.venv/bin/python -m pytest platform/agent-integration/tests   -q     # 123 passed
+.venv/bin/python -m pytest apps/helios-collect/tests          -q     #  74 passed
+.venv/bin/python -m pytest entry-point/examples/invoice-payer/tests -q  # 41 passed
 ```
 
-**378 tests green** across five suites. All offline; `agent-integration/tests/conftest.py` blocks any non-loopback socket, so the suite cannot quietly depend on a vendor endpoint or on whose shell it ran in.
+**403 tests green** across five suites. All offline; `agent-integration/tests/conftest.py` blocks any non-loopback socket, so the suite cannot quietly depend on a vendor endpoint or on whose shell it ran in.
 
-> ⚠️ `python3 -m pytest` inside `platform/agent-integration` fails with `ModuleNotFoundError: No module named 'agent_integration'`. Use `.venv/bin/python`. That venv does **not** have `fin_tools` on its path.
+> ⚠️ Use `.venv/bin/python`, never the system `python3`. The system interpreter is not guaranteed to be 3.13 (both `audit_agent` and `agent_integration` require `>=3.13`) and has none of the dependencies installed. The old per-package `PYTHONPATH=src` incantations and the separate `platform/agent-integration/.venv` are superseded by `scripts/bootstrap-venv.sh`; `scripts/test-all.sh` runs every suite in its own process so the per-suite `conftest.py` path shims cannot leak into each other.
 
 ### Flow A — a gated agent loop runs end to end, offline, no key
 
@@ -170,16 +173,34 @@ cd platform/agent-integration && .venv/bin/python -m agent_integration.cli demo
 
 ### Flow C — a REAL model drives the gated loop
 
-A token is configured in `platform/agent-integration/.env` (`HELIOS_LLM_API_KEY`, 40 chars, base URL `https://ai.gitee.com/v1`, model `glm-5.3`).
+The driver targets Qwen over DashScope's OpenAI-compatible endpoint (default
+model `qwen3.8-max`, default base URL
+`https://dashscope-intl.aliyuncs.com/compatible-mode/v1`). Set a token in `.env`
+from `platform/agent-integration/.env.example`; accepted variable names in
+priority order are `HELIOS_LLM_API_KEY`, `DASHSCOPE_API_KEY`, `OPENAI_API_KEY`.
+Competition rule: Qwen is the only generative model allowed — the previous
+vendor's endpoint, model id and env-var names have all been removed.
 
 ```bash
-cd platform/agent-integration && set -a && source .env && set +a
+# From the repo root, with the repo venv (scripts/bootstrap-venv.sh).
+set -a; source .env; set +a
 .venv/bin/python -m agent_integration.cli doctor
 .venv/bin/python -m agent_integration.cli run --task "Follow up on overdue invoice INV-1001"
 ```
-**Observed:** `doctor` → `OK: the model replied -> 'READY'`. `run` → the model called the read-only `lookup_invoice` (passed straight through), then proposed `send_email`, which was adjudicated `ALLOW (baseline.within_grant)` and executed. `status: completed`, `side_effects_attempted: 2, side_effects_executed: 2`.
 
-**This is the core platform claim demonstrated with a live model, not a script.** The gate sits between the model and the world and the model cannot route around it.
+**Observed this session:** with no token configured, `doctor` prints the
+`qwen3.8-max` defaults and `FAILED: no token is set.` naming the three accepted
+variables, and exits 1. **The live `OK` path was not exercised** — no model key is
+set in this environment, so nobody should read that as a verified live run.
+Re-run it with a real key before claiming it in a demo.
+
+**This is the core platform claim demonstrated with a live model, not a script.** The gate sits between the model and the world and the model cannot route around it: `model_driver.next_calls()` returns a proposal and stops, so there is no code path from a model reply to a tool execution that does not pass the auditor.
+
+> Note on the counters: a successful run reports `side_effects_attempted` and
+> `side_effects_executed` counting **only gated calls**. Read-only calls are
+> recorded in `result.actions` too but are not side effects, and used to be
+> counted as ones — so a lookup-plus-send run reported 2 and 2. It now reports 1
+> and 1. See §5.
 
 ### Flow D — a generated app runs, and the controls fire
 
@@ -202,15 +223,15 @@ cd entry-point/examples/invoice-payer && python3 app.py
 ### Flow E — the validator catches a broken app
 
 ```bash
-python3 entry-point/checks/check_app.py apps/helios-collect   # 0 errors, 3 warnings, exit 0
+python3 entry-point/checks/check_app.py apps/helios-collect   # 0 errors, 4 warnings, exit 0
 python3 entry-point/checks/check_app.py <a-broken-app>        # 4 errors, exit 1
 python3 entry-point/checks/check_app.py /nonexistent          # exit 2
 ```
 **Observed:** all three exit codes correct, so it is CI-usable. Against a deliberately malformed app it reported missing required sections, the `stack.use`/`match_existing` exclusivity violation, the `data.local`/`integration` violation, and both missing manifests.
 
-The check that protects money: **action-manifest tools must be a subset of audit-manifest declared tools.** A tool an agent can call that the auditor never declared is an ungated side effect waiting to happen.
+The check that protects money: **action-manifest tools must be a subset of audit-manifest declared tools.** A tool an agent can call that the auditor never declared is an ungated side effect waiting to happen. This session added the second money check: **the action side and the audit manifest must agree on every tool's side-effect flag.** The runtime gates on the action side's flag, so a tool it believes is read-only runs directly and never reaches the auditor — the manifest's rules for it become dead text.
 
-The 3 warnings on `helios-collect` are expected and explained in its README §"Checker warnings".
+The 4 warnings on `helios-collect` are expected and explained in its README §"Checker warnings". The newest one is the flag cross-check declining to resolve three app-local tools it cannot see into any platform catalog; all five of that app's flags were verified by hand to match its audit manifest.
 
 ### Flow F — the coding-agent build procedure exists and is followable
 
@@ -228,7 +249,11 @@ The 3 warnings on `helios-collect` are expected and explained in its README §"C
 
 Two apps have been built this way and both run. **That is the evidence the on-ramp works.**
 
-> ⚠️ `entry-point/SKILL.md` and `references/platform-status.md` both still say *"there is no agent loop"* and *"no API key is set."* That was true on 2026-10-14 and is **now stale** — `agent_integration` ships the loop and a working model driver. `apps/helios-collect/README.md` already records this correction. Update those two files.
+> ✅ `entry-point/SKILL.md` and `references/platform-status.md` used to say *"there
+> is no agent loop"* and *"no API key is set."* Both are corrected as of this
+> session: `agent_integration` ships the loop and a working model driver, and
+> `platform-status.md` is re-verified against the current tree. Read it before
+> building — it is the authority on what runs versus what is only designed.
 
 ---
 
@@ -242,8 +267,22 @@ Ordered by how silently they break things.
 **2. Fact resolution is keyed on a fixed argument-name set.**
 `FactResolver.SUBJECT_KEYS` = `invoice_id`, `bill_id`, `customer_id`, `supplier_id`, `subject_id`, `payment_id`. Name an argument anything else and facts do not resolve, so **fact-bound rules fail closed and deny everything.** Safe direction, completely invisible until the demo. This is the most common way a generated app's policy silently stops working.
 
-**3. `auth_code` is not redacted from the audit log.**
-It is not in `audit_agent`'s `REDACTED_KEYS` (`src/audit_agent/contracts.py:54`), so a real payment credential reaches the log **in full** inside the `owner_question` string (`agent.py:705`). I saw this happen live in Flow D — a full 64-hex `auth_code` printed in the owner prompt. Cannot be worked around by not sending it: the rule must check it and `payments.send` must receive it. **Upstream fix, one line:** add `auth_code` and `authorization_code` to `REDACTED_KEYS`. Apps meanwhile redact their *own* action log; they cannot fix the auditor's.
+**3. `auth_code` redaction — FIXED, but it constrains your manifest.**
+`auth_code` and `authorization_code` are now in `audit_agent`'s `REDACTED_KEYS`
+(`src/audit_agent/contracts.py`), so the payment credential is masked before it
+can reach the hash-chained log via the `owner_question` string (`agent.py`). This
+was a real leak — a full 64-hex code used to print in the owner prompt — and the
+one-line fix closed it. Asserted by
+`test_a_held_payment_credential_never_reaches_the_owner_question`.
+
+The trap that remains: **redaction happens before schema validation**, so a
+manifest must never put a `minLength` or `pattern` on `auth_code`. The gate only
+ever sees the 14-char `***REDACTED***` placeholder, so a length rule rejects every
+payment. `examples/invoice-payer` dropped its `minLength: 16` for this reason —
+presence is enforced by `required` + the critical `app.requires_verified_intent`
+rule, validity by the `payments.send` tool at execution (which receives the real,
+unredacted argument). Apps may still redact their *own* action log; that is now
+defence-in-depth, not the only layer.
 
 **4. The auditor refuses a short `task_summary`.** `baseline.intent_stated` requires ≥12 chars or the whole grant is denied. Use realistic task text when driving runs.
 
@@ -275,14 +314,36 @@ I hit this live: on a run where the model looked up an invoice and then *decline
 
 ## 6. Open questions requiring a decision
 
-**Model constraint conflict — this is the most urgent one.**
-`specs/helios-context.md:25` states *"Qwen is the only generative model allowed for development."* But `SETUP.md` says to add a **GLM-5.3** key, and `model_driver.py`, `.env.example` and the configured `.env` all target **GLM-5.3** (via a Gitee AI gateway). `entry-point/SKILL.md` repeats the Qwen-only rule under "Non-negotiables (competition rules)". Flow C above therefore ran on a model the rules may not permit. **Someone must reconcile this before the pitch.** The driver is provider-shaped (OpenAI-compatible chat completions, stdlib HTTP only), so pointing it at Qwen is a base-URL/model-id change plus whatever protocol differences Qwen has — not a rewrite.
+**All four of the items that used to head this list are now decided.** They are
+recorded in `specs/decisions.md` with a one-line why each, and are summarised here
+so you do not re-litigate them:
 
-**Architectural, unresolved:**
-- Which gate is authoritative — in-process `AuditGate` or standalone `AuditAgent`? (Currently: standalone, by `agent_integration`'s choice. Needs team sign-off.)
-- Does Helios move real money or simulate? The brief lists payments as a platform capability; an earlier team position was policy+evidence only. **Still unreconciled.** Every `fin_tools` prototype touches no network, no database and no real money.
+- **Model conflict — RESOLVED.** `specs/helios-context.md:25` states Qwen is the
+  only generative model allowed, and the driver previously targeted a different
+  vendor's endpoint and model id, which was a compliance risk on 50% of the score.
+  The driver now targets Qwen via DashScope's OpenAI-compatible endpoint (default
+  `qwen3.8-max`), and every reference to the previous vendor — endpoints, model
+  ids, vendor env-var names — is removed from the files touched. `SETUP.md`,
+  `.env.example`, the package README and the driver docstrings all agree.
+  **Unverified:** the live model path. No key is configured in this environment, so
+  `doctor`'s `OK` branch was never observed this session — only its no-key
+  behaviour. Run it with a real key before claiming Flow C in a demo.
+- **Which gate is authoritative — RESOLVED.** The standalone `audit_agent`.
+  `agent_toolkit.audit.AuditGate` is legacy, in no run path, and marked deprecated
+  in its docstring. Do not add rules to it.
+- **Real money or simulated — RESOLVED.** Simulated end to end, no real payment
+  rails. This is a deliberate competition and safety constraint, not a placeholder.
+- **Hosting, deployment artifact format, held-state storage — RESOLVED.**
+  `platform/deployment` answers the first two (`helios.yaml` + ASGI entry +
+  `GET /health`, built and routed through the Docker Engine API). Held state and
+  replay guards persist to SQLite under the app's data dir; **P2 implements that.**
 
-**From `specs/decisions.md` §Open Questions** (all still live): where generated apps are hosted; the deployment artifact format; where held-agent state is stored; how the knowledge graph distinguishes authoritative records from agent observations; how apps subscribe to cross-app updates; which financial operations are managed APIs vs packaged SDK tools; how apps authenticate with shared services; what platform-wide limits mandates are capped by.
+**Genuinely still open** (from `specs/decisions.md`): how the knowledge graph
+distinguishes authoritative records from agent observations beyond the current
+verified/observation split; how apps subscribe to cross-app updates; which
+financial operations are managed APIs vs packaged SDK tools; how apps authenticate
+with shared services; what platform-wide limits mandates are capped by; and audit-log
+retention — who may read it and for how long.
 
 **Licence walls that still apply:** no unlicensed investment advice; PIPL constrains behavioural telemetry; compliance output is not a legal opinion.
 
@@ -305,39 +366,83 @@ From `AGENTS.md` — these are enforced socially, and several agents work in thi
 
 ### Current working-tree state (as of 2026-10-15)
 
-There is **uncommitted work in progress that is not mine** — do not commit or revert it:
+**Everything previously listed here is now committed.** The old note described
+uncommitted work in progress that was not anyone's to commit; it has all landed:
 
-```
- D TODO.md
- M platform/agent-integration/README.md
- M platform/agent-integration/src/agent_integration/{__init__,cli,model_driver}.py
- M platform/financial-tools/fin_tools/service.py
- M platform/financial-tools/tests/test_service_boundary.py
-?? SETUP.md
-?? entry-point/examples/invoice-payer/runs/
-?? platform/agent-integration/tests/{conftest,test_model_driver}.py
-?? platform/financial-tools/fin_tools/__main__.py
-```
+- The `TODO.md` deletion is committed (`06f6281 chore: drop the app-builder
+  TODO list`). Its content — cross-package dependency boundary notes, and the flag
+  that `specs/tech-stack.md` used the stale `agent-toolkit/` folder name — is
+  recoverable via `git show 06f6281^:TODO.md`. The tech-stack naming issue it
+  flagged is fixed in `specs/tech-stack.md`.
+- `SETUP.md`, `platform/agent-integration/tests/conftest.py`,
+  `platform/agent-integration/tests/test_model_driver.py` and
+  `platform/financial-tools/fin_tools/__main__.py` are all tracked now.
+- `entry-point/examples/invoice-payer/runs/` is tracked (the recorded run logs are
+  the example's evidence, committed deliberately — see `0432715`).
 
-`TODO.md` was deleted uncommitted; its content (cross-package dependency boundary notes, and a flag that `specs/tech-stack.md:6` still uses the stale `agent-toolkit/` name) is recoverable via `git show HEAD:TODO.md`.
+What this session added on top, all committed on branch
+`worktree-p0-foundation` off `chloe-dev`:
+
+- One environment and one test command (`scripts/bootstrap-venv.sh`,
+  `scripts/test-all.sh`, pinned `requirements-dev.txt`). The four packages are
+  installed editable; `platform/agent-integration/.venv` and the per-package
+  `PYTHONPATH=src` incantations are superseded.
+- `platform/deployment/` — the deployment engine, imported from a teammate's
+  build, with 96 offline tests.
+- Four teammate tool packages imported into `platform/financial-tools/` as
+  siblings of `fin_tools`: `helios_forecast`, `spreadsheets`, `email_tool`,
+  `payments_collect`.
+- The six known defects fixed, each with a test that failed before and passes
+  after (see §5 trap 3, §4 Flow C's counter note, and §8).
+- `specs/decisions.md`, `specs/tech-stack.md` and `specs/architecture-mermaid.md`
+  updated to record the settled decisions; `QWEN.md` added at the repo root.
+
+Test counts: `scripts/test-all.sh` reports **all 7 suites green: 803 passed**, all
+offline. Per suite: financial-tools 367, agent-integration 136, deployment 96,
+audit-agent-builder 81, helios-collect 74, invoice-payer 41, checks 8.
+
+Gitignored and therefore never to be staged: `.venv/`, `.qwen/worktrees/`,
+`OTHER-TEAMMATE-STUFF/`, `.helios-run/`, `engine.log`, `data/core/`, `.DS_Store`,
+`*.egg-info/`. **`platform/deployment/.helios-run/tenants/demo.json` holds a live
+tenant execution secret in the source it was imported from — it was excluded from
+the import and must never be committed.**
 
 ---
 
 ## 8. Where to go next
 
-**Highest value, lowest risk:**
-1. Reconcile the Qwen-vs-GLM conflict (§6). It is a compliance risk on 50% of the score.
-2. Fix the `side_effects_*` counter (§5). Small, and it currently misreports in demos.
-3. Add `auth_code` to `REDACTED_KEYS` upstream (§5 trap 3). One line, closes a real credential leak.
-4. Update `entry-point/SKILL.md` and `references/platform-status.md` — both still claim there is no agent loop, which will actively mislead the next coding agent.
+**Done this session** (were items 1–4 here; kept so you can see what changed and
+do not redo it):
+1. ~~Reconcile the model conflict~~ — **done.** The driver targets Qwen via
+   DashScope; the previous vendor's endpoint, model id and env-var names are gone
+   from every file touched (§6). *Still unverified: the live model path, because no
+   key is configured here.*
+2. ~~Fix the `side_effects_*` counter~~ — **done.** It counted read-only calls as
+   side effects; it now counts only adjudicated ones, discriminated by
+   `proposal_id`. A lookup-plus-send run reports 1 and 1, not 2 and 2.
+3. ~~Add `auth_code` to `REDACTED_KEYS`~~ — **done**, with `authorization_code`
+   too. Closed a real credential leak into the hash-chained log (§5 trap 3).
+4. ~~Update `SKILL.md` and `platform-status.md`~~ — **done**, along with
+   `agent-loop.md`, `BUILD.md`, both entry-point READMEs,
+   `references/financial-tools.md`, `platform/README.md`, both financial-tools
+   docs and `app-builder/PLAN.md`.
+
+Also fixed this session: the hard-coded `send_email` contact recording (now
+flag-driven via `ToolDefinition.records_contact`), the
+`check_app.py` side-effect cross-check it documented but never performed, the CSV
+BOM that corrupted the first column name, and a real defect found while testing the
+imported deployment engine (`_build_error_text` read `build_logs`; docker-py sets
+`build_log`, so every build failure dropped its compiler output).
 
 **The obvious build gaps**, in rough order of what unblocks what:
 5. Build **Helios Payables** and **Helios Cash Planner** (flagships 2 and 3). The payables *policy shape* is already proven by `examples/invoice-payer`; it needs to become a real app. Cash Planner is what makes the knowledge-graph publish meaningful — it is the declared consumer of Collect's verified due dates.
 6. Implement the **Application Builder** (`platform/app-builder`) — scaffolder, validator, `stacks.yaml`. `specs/app-builder.md` defines all of it; `entry-point/checks/check_app.py` is the interim validator to replace.
 7. **Shared services** — the knowledge graph first, since cross-app coordination is the only architecture claim currently undemonstrable.
 8. A real **UI**. Every app is CLI-only today; `approval_queue` is the page that matters most, because without one agents pause invisibly.
+9. **Persist held state and replay guards to SQLite** under the app's data dir. Decided in `specs/decisions.md`; holds are currently in-memory only, so a restart loses every pending owner decision.
+10. **Wire the deployment engine to a real app.** `platform/deployment` has 96 offline tests with docker-py mocked, but no app in this repo has been deployed through it — that end-to-end path is unexercised.
 
-**Do not** treat the in-process `AuditGate` overlap as yours to resolve silently — it needs team sign-off.
+The in-process `AuditGate` overlap is **settled**, not yours to re-open: the standalone `audit_agent` is authoritative and `AuditGate` is legacy and deprecated in its docstring (`specs/decisions.md`). Do not add rules to it.
 
 ---
 
@@ -347,7 +452,7 @@ There is **uncommitted work in progress that is not mine** — do not commit or 
 |---|---|
 | Architecture and the component diagram | `specs/architecture-mermaid.md` |
 | What to read first as a coding agent | `entry-point/SKILL.md` → `entry-point/BUILD.md` |
-| What actually exists vs what is designed | `entry-point/references/platform-status.md` (**partly stale — see §4 Flow F**) |
+| What actually exists vs what is designed | `entry-point/references/platform-status.md` (re-verified this session) |
 | Real tool catalog and signatures | `entry-point/references/financial-tools.md` |
 | How to drive the runtime, online or offline | `entry-point/references/agent-loop.md` |
 | Interface contracts | `specs/interfaces.md` |
@@ -371,6 +476,6 @@ There is **uncommitted work in progress that is not mine** — do not commit or 
 | `GatedAgentRuntime`, `ScriptedDriver`, `RunResult` | `agent-integration/src/agent_integration/runtime.py` |
 | `ToolContractView`, `HeliosStoreFactSource` | `agent_integration/adapters.py` |
 | `build_integration()` → `Integration` | `agent_integration/wiring.py` |
-| `ModelDriver` (GLM-5.3, stdlib HTTP, lazily imported) | `agent_integration/model_driver.py` |
+| `ModelDriver` (Qwen via DashScope, stdlib HTTP, lazily imported) | `agent_integration/model_driver.py` |
 
 The two tool contracts are **not interchangeable** — that mismatch is traps 1 and §5's whole reason for existing, and `adapters.ToolContractView` plus `fin_tools.toolkit_bridge` are the only sanctioned bridges.

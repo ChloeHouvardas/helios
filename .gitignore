@@ -7,8 +7,22 @@ __pycache__/
 
 # Runtime artifacts
 .runs/
+.helios-run/
+engine.log
+data/core/
 
 # Local environment
 .env
 
 dev-resources
+
+# Agent worktrees: one per session, never tracked
+.qwen/worktrees/
+
+# Teammates' raw untracked work. Read-only reference material; lives only in
+# the main checkout, and importing from it means copying files out, never
+# committing the folder.
+OTHER-TEAMMATE-STUFF/
+
+# OS noise
+.DS_Store

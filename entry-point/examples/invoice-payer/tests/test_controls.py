@@ -55,6 +55,7 @@ from app import (  # noqa: E402
     InvoiceFactSource,
     ScriptedOwner,
     ScriptedPayerAgent,
+    _CREDENTIAL_KEYS,
     _add_supplier_lookup,
     build_app,
     redact_arguments,
@@ -109,7 +110,12 @@ def _real_auth_code(rt: GatedRuntime, invoice_id: str, *,
     return rt.intents.confirm(intent.intent_id, by=rt.principal).code
 
 
-FAKE_CODE = "a" * 64  # passes minLength for gating tests; will not settle
+# A placeholder credential for gating tests. Long enough to look like a real
+# code, but it will not settle: `payments.send` validates the code against a
+# confirmed intent at execution time and rejects this. The gate checks only
+# PRESENCE (required + the critical requires_verified_intent rule), never the
+# value — the value is redacted before the gate sees it.
+FAKE_CODE = "a" * 64
 
 
 def _payment_args(rt: GatedRuntime, invoice_id: str, *,
@@ -699,11 +705,15 @@ def test_the_audit_log_is_hash_chained(runtime):
 # ---------------------------------------------------------------------------
 
 def test_auth_code_is_redacted_from_the_action_log(runtime):
-    """`audit_agent.redact()` does not cover `auth_code`, so the app must.
+    """The single-use payment credential never reaches the action log.
 
-    Verified 2026-10-14: without app-level redaction the single-use payment
-    credential was written in full. See
-    entry-point/references/platform-status.md §"Credential handling".
+    Two layers now mask it, and this asserts the end-to-end result: the
+    platform (`audit_agent.contracts.REDACTED_KEYS` includes `auth_code` /
+    `authorization_code`, so the audit agent redacts it before it can enter the
+    hash-chained audit log via `owner_question`), and the app's own
+    `redact_arguments` for the proposal line it writes. Historically only the
+    app layer covered `auth_code` and the credential leaked in full without it;
+    that upstream gap is now closed, so the app layer is defence-in-depth.
     """
     secret = "c5ccef68c72731b52dbb20d62f74300ecb871c70066a1a441aa173271748a123"
     _grant(runtime, NORMAL)
@@ -717,14 +727,30 @@ def test_auth_code_is_redacted_from_the_action_log(runtime):
 
 
 def test_redaction_extends_the_platform_key_set_rather_than_replacing_it():
-    """Anything audit_agent already masks stays masked."""
+    """Anything audit_agent already masks stays masked, and the app adds more.
+
+    `auth_code` used to be an app-only extension covering an upstream gap; the
+    gap is now closed (`auth_code` and `authorization_code` are in
+    `audit_agent.contracts.REDACTED_KEYS`), so the platform masks it too. The
+    point of this test is unchanged: the app's set is a *superset* of the
+    platform's — it never substitutes for it — proven here with keys the
+    platform still does not cover (`cvv`, `card_number`, `nonce`).
+    """
     from audit_agent.contracts import REDACTED_KEYS
     out = redact_arguments({"password": "hunter2", "auth_code": "deadbeef" * 8,
-                            "amount_cents": 100})
+                            "cvv": "123", "amount_cents": 100})
     assert out["password"] == "***REDACTED***"
     assert out["auth_code"] == "***REDACTED***"
+    assert out["cvv"] == "***REDACTED***"
     assert out["amount_cents"] == 100          # business data is not redacted
-    assert "auth_code" not in REDACTED_KEYS    # the upstream gap is still open
+
+    # The upstream gap is closed: the platform now masks the payment credential.
+    assert "auth_code" in REDACTED_KEYS
+    assert "authorization_code" in REDACTED_KEYS
+    # The app still extends beyond the platform for card-shaped fields it adds.
+    assert {"cvv", "card_number", "nonce"} <= _CREDENTIAL_KEYS
+    assert "cvv" not in REDACTED_KEYS          # app-only, not upstream
+    assert _CREDENTIAL_KEYS >= set(REDACTED_KEYS)  # superset, never a subset
 
 
 # ---------------------------------------------------------------------------

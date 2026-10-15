@@ -1,0 +1,18 @@
+# Pinned dependencies for the deployment engine.
+#
+# Pinned to the exact versions `requirements-dev.txt` resolves, so the engine
+# and the rest of the repo cannot drift onto different FastAPI/pydantic/docker
+# releases. If you change a pin here, change it in requirements-dev.txt too,
+# then re-run scripts/bootstrap-venv.sh and scripts/test-all.sh.
+#
+# The engine itself is installed as an editable package (see pyproject.toml);
+# this file exists so `bootstrap.sh` can provision a standalone engine venv on
+# a machine that has not built the shared repo venv.
+fastapi==0.143.1
+uvicorn[standard]==0.54.0
+docker==7.2.0
+pydantic==2.14.1
+PyYAML==6.0.3
+python-multipart==0.0.32
+httpx==0.28.1
+redis==8.1.0
