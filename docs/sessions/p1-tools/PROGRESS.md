@@ -329,3 +329,29 @@ default worth documenting rather than papering over.
 **State:** green — financial-tools 566 passed + 1 skipped (527 + 39 new), 38
 tools. `scripts/test-all.sh` exit 0, `seam check: OK`. Manifest validates with all
 38 tools, 21 rules, 18 gated.
+
+## 8. Corrections to numbers recorded earlier in this session
+
+Recorded here because two counts I wrote down were wrong, and a wrong number in a
+handoff is worse than no number.
+
+- **Teammate test count: 211 was wrong, 278 is right.** The earlier figure (in
+  §0's notes and in HANDOFF) counted `payments_collect` 38 + `email_tool` 105 +
+  `helios_forecast` 68 = 211 and silently dropped `spreadsheets`, whose 67 tests
+  live in `platform/financial-tools/tests/test_spreadsheets.py` — a package-level
+  `tests/` dir — rather than inside the package like the other three. Verified per
+  package: email_tool 105, payments_collect 38, helios_forecast 68,
+  spreadsheets 67 = **278**.
+- **Commit 7f1c7dc's message says the spreadsheets package has "92 tests".** It
+  has **67**. Not amending: history rewrites are out of scope for this session and
+  §C.1 forbids them, so the correction lives here and in commit f0b4790 instead.
+
+Neither number affects any code or any test result — the suite was green when
+written and is green now. They are recorded because HANDOFF and PROGRESS are what
+the next session reads to trust this one.
+
+**Final state:** 38 tools across nine families. `scripts/test-all.sh` exit 0, all
+suites green, `seam check: OK`. financial-tools 566 passed + 1 skipped;
+audit-agent-builder 79; agent-integration 123; invoice-payer 41;
+action-agent-builder skipped (ships no tests). Twelve local commits on
+`worktree-p1-tools`, nothing pushed.
