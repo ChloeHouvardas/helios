@@ -75,7 +75,7 @@ lazily on first use of a real page, not at import and not in `/health`.
    packages -- the app layer is a single `COPY`, with no `pip install`.
 4. **Smoke test.** Isolated network, `GET /health` must return 200.
 5. **Attach.** Per-tenant internal bridge network, `helios-redis-<t>`,
-   `helios-core-<t>` (holds `HELIOS_EXECUTION_SECRET`), then the app's audit
+   `helios-core-<t>` (the tool service, holds `HELIOS_EXECUTION_SECRET`), then the app's audit
    sidecar and the app itself. A named volume `helios-data-<t>-<a>` is mounted at
    `data_dir` in both, so action logs, the hash-chained audit log, holds and
    replay state survive a redeploy.
@@ -128,6 +128,25 @@ via `rewrite`) and `http://<app>-<tenant>.helios.test` (needs a hosts entry). Th
 engine sends `X-Forwarded-Prefix`; apps should build URLs from it, because
 relative links break at nested routes.
 
+## The tenant core
+
+One per tenant: `platform/financial-tools` served by `python -m fin_tools` on
+port 9000 of the tenant network. It is the same registry the apps compose
+in-process -- payments, collect, email, forecast, market, sheets, graph -- behind
+`GET /tools`, `POST /call` and `GET /kg/nodes`, bearer-authenticated with the
+tenant execution secret that only the audit sidecar holds. Its ledger, balances,
+outbox and verified graph nodes persist to SQLite on the named volume
+`helios-data-<t>-core`, so a redeploy does not lose money. The intent-signing
+secret (`HELIOS_INTENT_SECRET`) is separate from the execution secret and lives
+only in core: authenticating a caller and authorising a payment are different
+powers, and `payments.send` without an owner-confirmed `auth_code` is **rejected
+by core** whatever the bearer token says.
+
+Market data answers from the committed fixtures unless the engine's own
+environment carries `TUSHARE_TOKEN`, in which case the core goes live; every
+result says which mode answered. The core image is keyed by the platform hash
+like `app-base`, so a tools change reaches it on the next deploy.
+
 ## The audit sidecar
 
 One per app. It holds `HELIOS_EXECUTION_SECRET` and is the **only** container
@@ -150,6 +169,17 @@ Two gates, one direction of authority: the in-app `audit_agent` (which has facts
 and an owner) is authoritative for holds and resumes; the sidecar may **deny or
 forward, never approve**. See `specs/decisions.md` §"Two audit gates".
 
+A proposal names a **tool** (`payments.send`, `email.send`,
+`graph.publish_verified`), and its family prefix must be one the manifest's
+`permissions` grants; a tool the app's own audit manifest declares is adjudicated
+and returned to the app to run itself. Granted tools are forwarded to the core's
+`POST /call` and the three envelopes are kept distinct: `ok` is recorded as
+executed, `rejected` (core's own gate refused *this* request, e.g. no intent
+code) is recorded as a denial and returned as `status: denied`, and
+`unavailable` is a 502 with `retryable: true` and no decision in the chain. The
+platform's last-resort cap is on `amount_cents` for the payments family,
+integer cents, `MAX_PAYMENT_AMOUNT_CENTS` (default 1,000,000).
+
 `GET /health` also reports chain verification. `GET /audit-log` returns recent
 decisions. The authoritative record is `<data_dir>/audit/sidecar-log.jsonl`.
 
@@ -167,7 +197,8 @@ effect that never happened.
 | `POST /api/v1/deploy` | multipart `bundle` + form `tenant` |
 | `GET /api/v1/apps` | deployed apps and containers |
 | `GET /api/v1/apps/{container}/logs?tail=200` | container logs |
-| `DELETE /api/v1/apps/{name}?tenant=` | undeploy by container, app id, or tenant |
+| `DELETE /api/v1/apps/{name}?tenant=` | undeploy by container, app id, or tenant; every removed app's route goes with it |
+| `GET /api/v1/tenants/{tenant}/logs?app=&tail=` | **central evidence**: every app's action log, audit chain and sidecar log, read from the data volumes, each chain verified |
 
 Errors are 422 (or the status `DeployError` names) with a body FastAPI wraps
 under `detail`:
@@ -197,6 +228,7 @@ helios deploy <dir> [--tenant T] [--engine URL] [--include-tests]
 helios apps   [--engine URL]
 helios logs <container> [--tail N] [--engine URL]
 helios undeploy <name> [--tenant T] [--engine URL]
+helios evidence --tenant T [--app A] [--tail N] [--json] [--engine URL]
 helios doctor [--engine URL]
 ```
 
@@ -227,7 +259,7 @@ platform/deployment/
 ├── images/
 │   ├── app-base/Dockerfile   python:3.13 + the four platform packages
 │   ├── auditor/              the sidecar: manifest-driven, fact-free policy
-│   └── core/                 tenant mocks: payments, email, knowledge graph
+│   └── core/                 the tenant core: fin_tools served over HTTP (python -m fin_tools)
 ├── sdk/helios_sdk/           propose_action / publish_event / subscribe_events
 └── examples/sample-app/
 ```
@@ -238,7 +270,7 @@ platform/deployment/
 cd platform/deployment && PYTHONPATH=. ../../.venv/bin/python -m pytest tests
 ```
 
-36 tests, docker-py mocked throughout -- no daemon, no network, no image builds.
+docker-py mocked throughout -- no daemon, no network, no image builds.
 They cover nginx rewriting on redeploy, marker isolation between slugs, IP
 retry, the rollback guarantee driven through the real `deploy()` path, base-image
 hashing, and the sidecar's allow/deny/cap/forbidden/duplicate/chain behaviour.

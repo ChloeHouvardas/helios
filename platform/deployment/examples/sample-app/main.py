@@ -33,20 +33,38 @@ def root():
         "app": APP,
         "tenant": TENANT,
         "platform": "helios",
-        "try": ["GET /health", "POST /demo/collect-payment",
-                "POST /demo/announce-event", "GET /events"],
+        "try": ["GET /health", "POST /demo/send-reminder",
+                "POST /demo/collect-payment", "POST /demo/announce-event",
+                "GET /events"],
     }
+
+
+@app.post("/demo/send-reminder")
+def send_reminder():
+    """The action agent proposes an email; the sidecar decides and forwards to core."""
+    return propose_action(
+        "email.send",
+        to="ap@northwind.example",
+        subject="Invoice INV-0042 is due",
+        body="Friendly reminder: INV-0042 is due on 2026-10-28. Happy to discuss terms.",
+    )
 
 
 @app.post("/demo/collect-payment")
 def collect_payment():
-    """Action Agent proposes a payment; the Audit Agent decides."""
+    """A payment proposed WITHOUT the owner's intent auth code.
+
+    The sidecar forwards it; the core's intent control rejects it, and the
+    rejection is recorded as a decision. That is the platform refusing to move
+    money nobody confirmed, not an error.
+    """
     return propose_action(
-        "payments",
-        to="Northwind Supplies",
-        amount=250.0,
-        invoice="INV-0042",
-        note="friendly reminder, happy to discuss terms",
+        "payments.send",
+        payer="operating",
+        payee="Northwind Supplies",
+        amount_cents=25000,
+        currency="CNY",
+        memo="INV-0042",
     )
 
 

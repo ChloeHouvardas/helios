@@ -1,9 +1,13 @@
 """Helios App Builder SDK — pre-installed in the golden base image.
 
 Generated apps use two primitives:
-  propose_action(...)  -> sends an Action Intent to the app's Audit Agent
-  publish_event(...)   -> emits on the tenant Redis event bus
-App containers never hold execution secrets; only the proposed intent leaves.
+  propose_action(tool, **args) -> proposes a named platform tool call
+                                  (`payments.send`, `email.send`, `graph.publish_verified`)
+                                  to the app's audit sidecar, which adjudicates and
+                                  forwards to the tenant core. Money is integer cents;
+                                  a payment needs the owner's intent `auth_code`.
+  publish_event(...)           -> emits on the tenant Redis event bus
+App containers never hold execution secrets; only the proposal leaves.
 """
 from __future__ import annotations
 
@@ -25,7 +29,11 @@ EVENT_CHANNEL = f"{TENANT}:events"
 
 
 def propose_action(action: str, **payload) -> dict:
-    """Ask the Audit Agent to execute a financial action. Never executes directly."""
+    """Propose a named tool call (`payments.send`, ...) to the audit sidecar.
+
+    Never executes directly. The sidecar denies, forwards to the tenant core,
+    or reports the core's own rejection; every outcome is in the audit chain.
+    """
     if httpx is None or not AUDIT_URL:
         return {"status": "unavailable", "detail": "HELIOS_AUDIT_URL not configured"}
     try:

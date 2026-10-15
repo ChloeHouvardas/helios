@@ -27,6 +27,7 @@ the book are live, not merely that the process answered.
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,11 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import config  # noqa: E402
+
+#: Runs and the audit chain live under HELIOS_DATA_DIR when deployed (the engine
+#: mounts a named volume there, shared with the audit sidecar, so evidence
+#: survives a redeploy) and under ./runs when run by hand.
+DATA_DIR = Path(os.environ.get("HELIOS_DATA_DIR") or (HERE / "runs"))
 from app import (  # noqa: E402
     App,
     ScriptedOwner,
@@ -113,7 +119,7 @@ class State:
     def app(self) -> App:
         """The display app, built on first use. Never built at import time."""
         if self._app is None:
-            self._app = build_app(run_dir=HERE / "runs")
+            self._app = build_app(run_dir=DATA_DIR)
             self._apply_reverified(self._app)
         return self._app
 
@@ -151,7 +157,7 @@ class State:
         self.outcomes = []
         self.owner_decisions = []
         for scenario in scenarios():
-            fresh = build_app(run_dir=HERE / "runs")
+            fresh = build_app(run_dir=DATA_DIR)
             self._apply_reverified(fresh)
             try:
                 decline = self.owner_declines or scenario.owner_declines

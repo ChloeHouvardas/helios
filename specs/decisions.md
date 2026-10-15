@@ -143,6 +143,34 @@ This resolves the "which gate is authoritative" open question that
 `agent_toolkit.audit.AuditGate` (in-process, receivables-shaped only), which
 remains importable but out of the loop.
 
+### Tools run on the platform; apps request, the platform executes
+The tenant core container is `python -m fin_tools`: the financial tools
+served over HTTP with bearer authentication, SQLite persistence on a per-tenant
+volume, and its own intent-signing secret. An app proposes a **named tool**
+(`payments.send`) through its audit sidecar; the sidecar enforces the fact-free
+rules and the permission families from `helios.yaml`, forwards to the core's
+`POST /call`, and records the outcome. The three call outcomes stay distinct in
+the record: executed, rejected by core (a decision), unavailable (an outage,
+never a decision). A bearer token authenticates the caller; it never
+authorises a payment, which still needs the owner's intent `auth_code`.
+
+Apps may still compose the same tools in-process for local runs and tests; the
+deployed path is the platform one.
+
+### An app that declares no permissions is granted nothing
+`permissions: []` grants no platform family. The imported engine fell back to
+`payments, email`, which handed a read-only app the right to move money and
+send mail it never asked for. The sidecar still adjudicates tools the app's own
+audit manifest declares, so such an app can act on its own data; it cannot
+reach the tenant core.
+
+### Evidence is central, read from the volumes
+`GET /api/v1/tenants/<t>/logs` on the deployment engine returns every app's
+action log, hash-chained audit log and sidecar log for a tenant, each chain
+verified with `audit_agent`'s own walker. The logs live on the apps' named
+volumes, survive redeploys and undeploys, and are read through the running
+containers so the engine never needs the volumes mounted on the host.
+
 ## Tentative
 
 ### Hybrid financial tools
