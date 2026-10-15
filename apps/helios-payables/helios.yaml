@@ -1,0 +1,65 @@
+# helios.yaml — deployment contract for helios-payables
+#
+# The deployment engine at `platform/deployment/` does not exist in this checkout
+# (verified 2026-10-15: no such directory, no `helios` or `helios-app` CLI on
+# PATH). This file is written anyway so the app is deploy-ready the moment the
+# engine lands, and so the contract it would check is explicit rather than implied.
+#
+# `GET /health` is implemented in server.py and returns a meaningful answer — it
+# reports whether the auditor loaded its rules and whether the book is readable, not
+# merely that the process answered. That is the part of the contract worth getting
+# right early, because a health check that only proves the socket is open will
+# report a broken app as healthy.
+
+apiVersion: helios/v1
+kind: Application
+
+metadata:
+  name: helios-payables
+  displayName: Helios Payables
+  version: "1"
+  description: >
+    Pays supplier bills that are due and affordable, reschedules the ones the
+    operating account cannot cover, sends remittance advice, and escalates
+    exceptions to the owner. Bills whose supplier changed payment details within 30
+    days are refused outright.
+
+spec:
+  # ASGI entry point. Served with:
+  #   .venv/bin/python -m uvicorn server:app --host 0.0.0.0 --port 8000
+  entrypoint: server:app
+  runtime: python3.13
+
+  healthCheck:
+    path: /health
+    # The auditor loads 17 rules and the book loads 15 bills at import time, so a
+    # process that answers /health but reports "unhealthy" is a real failure worth
+    # surfacing rather than retrying.
+    expectStatus: ok
+
+  routes:
+    - { path: /, page: dashboard, pattern: summary }
+    - { path: /bills, page: bills, pattern: table }
+    - { path: /bills/{bill_id}, page: bill, pattern: detail }
+    - { path: /holds, page: holds, pattern: approval_queue }
+    - { path: /settings, page: settings, pattern: settings }
+
+  # Authority comes from a reviewed FILE. The engine's static-audit stage should
+  # load this manifest rather than trust anything the app generates at runtime —
+  # an app that writes its own permission slip is not an app under audit.
+  audit:
+    manifest: agents/helios-payables-audit.yaml
+    actionManifest: agents/helios-payables-action.json
+
+  env:
+    # Required in anything real. Without it, agent_integration generates an
+    # ephemeral process-local key so grants are still SIGNED, and the app warns.
+    - { name: HELIOS_AUDIT_SIGNING_KEY, required: false, secret: true }
+    # Optional. When set, the in-app agent can use a real model instead of the
+    # scripted driver. Every control and every test runs without it.
+    - { name: DASHSCOPE_API_KEY, required: false, secret: true }
+    - { name: HELIOS_LLM_API_KEY, required: false, secret: true }
+
+  # This app is a pure prototype: no external service, no real payment rail. Money
+  # is simulated end to end, which is a competition decision, not an omission.
+  dependencies: []
