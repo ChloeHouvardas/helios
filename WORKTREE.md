@@ -14,14 +14,27 @@ worktree is likely to collide with others.
 | Session | `p0-foundation` |
 | Worktree | `<repo>/.qwen/worktrees/p0-foundation` |
 | Branch | `worktree-p0-foundation` |
-| Base | `chloe-dev` @ `cc96f0a` ("docs: add a repository handoff for a cold reader") |
-| Commits ahead of base | 19, all local. Nothing pushed. `chloe-dev` itself was never moved. |
-| Diff vs base | 133 files changed, +17336 / −566. **42 modified**, **91 added.** |
+| Branched from | `chloe-dev` @ `cc96f0a` ("docs: add a repository handoff for a cold reader") — this is the true merge-base |
+| Commits ahead of merge-base | 21, all local. Nothing pushed. |
+| Diff vs merge-base | 134 files changed, +17623 / −566. **42 modified**, **92 added.** |
 | Working tree | Clean at time of writing. |
 
-Session notes live alongside this file: `PLAN.md` (numbered task list, plus five
-recorded deviations from the task prompt) and `PROGRESS.md` (running log with the
-reasoning behind the non-obvious calls).
+**`chloe-dev` moved during this session.** It advanced from `cc96f0a` to `7ff4b74`
+while this work was in progress, adding two commits this branch has never seen:
+
+| Commit | Files |
+|---|---|
+| `b98ba36` "fix: stop reporting an outage as an audit-gate rejection" | `platform/financial-tools/fin_tools/service.py` (+38 / −2) |
+| `7ff4b74` "feat: live Tushare market data behind an allow-list" | `fin_tools/market_data.py` (new, 587 lines), `fin_tools/__init__.py`, `tests/test_market_data.py` (new, 43 tests) |
+
+None of this branch's work was deleted by that, and the merge-base is still
+`cc96f0a`. See §7 for the overlap analysis — it is favourable.
+
+Session notes live at `docs/sessions/p0-foundation/`: `PLAN.md` (numbered task
+list, plus five recorded deviations from the task prompt) and `PROGRESS.md`
+(running log with the reasoning behind the non-obvious calls). This file was
+originally committed there and moved to the repo root so a merging agent finds it
+without knowing the session name.
 
 ---
 
@@ -54,25 +67,95 @@ Superseded by the above: the per-package `PYTHONPATH=src` incantations and
 `platform/agent-integration/.venv`. All documented commands repo-wide now use
 `.venv/bin/python` from the repo root.
 
-### 3.2 New packages (all previously untracked teammate work, now in the tree)
+### 3.2 The deployment engine — `platform/deployment/`
 
-| Package | Location | Source | Tests |
-|---|---|---|---|
-| `engine`, `cli.helios`, `helios_sdk` | `platform/deployment/` (dist `helios-deployment`) | folder copy at `OTHER-TEAMMATE-STUFF/deployment-stuff/...` | 96 |
-| `helios_forecast` | `platform/financial-tools/helios_forecast/` | folder copy (newer than `origin/forecasting-simulation`) | +68 |
-| `spreadsheets` | `platform/financial-tools/spreadsheets/` | `origin/payments` (that branch is the spreadsheets tool despite its name) | +67 |
-| `email_tool` | `platform/financial-tools/email_tool/` | `OTHER-TEAMMATE-STUFF/email-tool/sender/` | +105 |
-| `payments_collect` | `platform/financial-tools/payments_collect/` | `OTHER-TEAMMATE-STUFF/payments-tool/collect/` | +38 |
+The largest single addition, and the one other worktrees are most likely to build
+against. Imported from a teammate's Mac-mini build, 20 source files, layout
+preserved as upstream had it.
+
+**What it is.** The deployment contract every app adopts: a `helios.yaml` manifest,
+an ASGI entry point, and `GET /health`. Three importable pieces:
+
+| Module | Role |
+|---|---|
+| `engine.contracts` | `load_manifest` (defaults, name sanitisation, port range, permission allow-list) and `lint` (the static secret scanner) |
+| `engine.orchestrator` | The whole Docker lifecycle via docker-py: golden-image build, sandbox smoke test with crash-log capture, per-app audit sidecar, tenant network, nginx routing |
+| `engine.app` | FastAPI ingest endpoint — upload a bundle, get it built and routed |
+
+Plus `cli.helios` (talks to a running engine over HTTP), `helios_sdk` (what a
+generated app imports: `propose_action`, `publish_event`, `subscribe_events`),
+three golden-image Dockerfiles with their sidecar servers, a sample app bundle, and
+`bootstrap.sh` / `test-deploy.sh`.
+
+**The pipeline it implements**, which is what makes it more than a docker wrapper:
+ingest → static secret lint → fast build on a prebuilt golden base (a single `COPY`
+layer, so deploys take seconds and never reinstall dependencies) → sandbox smoke
+test that polls `/health` and returns the crash log to the caller → attach a
+per-app audit sidecar on an internal tenant network → generate nginx config and
+reload.
+
+**Security properties its tests pin**, since these are the ones a refactor could
+silently break:
+
+- The tenant execution secret appears in neither the injected Dockerfile nor any
+  nginx config, and never reaches an app or smoke container — it goes only to the
+  audit sidecar. That split is the entire reason the sidecar exists.
+- The tenant network is created `internal=True`; the ingress network deliberately
+  is not. Getting those backwards either exposes tenant traffic or makes every app
+  unreachable.
+- Tenant state is created once and reused, so a redeploy cannot orphan a running
+  sidecar by rotating the secret.
+- All writes go under `.helios-run/`; a test asserts nothing lands outside it.
+
+**Three adaptations, all on the engine side** because the app side cannot absorb
+them: `bootstrap.sh` now detects the Docker socket (`$DOCKER_HOST`, then OrbStack,
+Colima, `/var/run/docker.sock`) instead of assuming OrbStack, builds its venv on
+`python3.13`, and prefers the shared repo venv when present; the stale Traefik
+lines were replaced (the script starts nginx — there is no Traefik anywhere in the
+engine); a new `pyproject.toml` maps `sdk/helios_sdk` to flat `helios_sdk`, which
+is the documented import name and the one the golden base image installs.
+`requirements.txt` is pinned to match `requirements-dev.txt`.
+
+**96 tests, all offline** — docker-py mocked with `unittest.mock`, no daemon, no
+network, no credentials. `REPO` and `TENANTS_DIR` are redirected to a temp dir so
+no test writes tenant state into the working tree. The smoke-test poll is
+monkeypatched, otherwise a failing-smoke case would burn 45 real seconds.
+
+**Excluded from the import, deliberately:** `.venv/`, `__pycache__/`, `.DS_Store`,
+`engine.log`, and the whole `.helios-run/` directory. `.helios-run/tenants/demo.json`
+holds a live tenant execution secret and was never copied — verified absent from
+both the copied tree and every staged file list.
+
+**Unexercised:** it has never touched a real Docker daemon. `bootstrap.sh` and
+`test-deploy.sh` are unverified end to end, and no app in this repo has been
+deployed through it. See §6.
+
+### 3.3 New financial-tool packages
+
+Four previously untracked teammate packages, imported as siblings of `fin_tools`
+under one shared `pyproject.toml`:
+
+| Package | Source | Tests |
+|---|---|---|
+| `helios_forecast` | folder copy (newer than `origin/forecasting-simulation`) | +68 |
+| `spreadsheets` | `origin/payments` — that branch is the spreadsheets tool despite its name | +67 |
+| `email_tool` | `OTHER-TEAMMATE-STUFF/email-tool/sender/` | +105 |
+| `payments_collect` | `OTHER-TEAMMATE-STUFF/payments-tool/collect/` | +38 |
 
 `platform/financial-tools/` now holds **five sibling packages installed by one
-pyproject**. `platform/deployment/` is a sixth first-party package. All new
-suites run offline with zero skips.
+pyproject**. All four suites run offline with zero skips — verified rather than
+assumed. Notably the spreadsheets "live" engines (Feishu, WPS, Grist) are served
+in-process by a `LocalSheetEngine` that only formats URL strings, so a test
+rendering to `target="feishu"` never opens a socket; and Qwen inference is injected
+as `NullQwen`.
 
-**Nothing secret was imported.** `platform/deployment/.helios-run/` (which holds a
-live tenant execution secret in its source) was excluded and verified absent from
-both the copy and every staged set. `.helios-run/` is gitignored.
+Import mechanics worth knowing if another worktree adds a sixth package: the
+pyproject uses an **explicit** `[tool.setuptools] packages` list (flat-layout
+auto-discovery refuses `fin_tools` because of its non-package siblings), so a new
+package must be added there **and** to `bootstrap-venv.sh`'s `pip install -e` list,
+or it will not install.
 
-### 3.3 Six defects fixed
+### 3.4 Six defects fixed
 
 Each has a test observed to fail before the fix and pass after.
 
@@ -95,7 +178,7 @@ Two further real defects were found and fixed while testing, beyond the brief:
   default made it silent, so **every build failure dropped its compiler output**.
 - The `.env` linter gap described in §6 below.
 
-### 3.4 Decisions and docs
+### 3.5 Decisions and docs
 
 Six decisions recorded as decided in `specs/decisions.md` (each with a one-line
 why); `specs/tech-stack.md` synced; `specs/architecture-mermaid.md` **prose**
@@ -127,6 +210,18 @@ daemon, model token, or provider credential.
 
 The venv was verified twice — once built by hand, then deleted and rebuilt through
 `bootstrap-venv.sh` (exit 0, all packages import, suite green).
+
+**These counts predate the two new `chloe-dev` commits** described in §1, which add
+43 tests in `platform/financial-tools/tests/test_market_data.py`. That file is not
+in this branch, so `financial-tools` shows 367 here and should show ~410 after a
+merge. Those new tests were inspected and appear offline (injected fakes,
+monkeypatched token, no live calls), but **they have not been run in this worktree**
+— nobody should treat 803 as the post-merge total.
+
+One merge-relevant fact about them: `fin_tools/market_data.py` is stdlib-only
+(`urllib`, `json`, `os`, `socket`, `dataclasses`) and the base commits touched no
+`pyproject.toml` or requirements file, so **`requirements-dev.txt` needs no new
+pins** to accommodate them.
 
 ---
 
@@ -200,10 +295,15 @@ Recorded so nobody assumes more was done than was.
   scanned**, while `secrets.env` is. Pinned by a test so nobody assumes `.env` is
   covered. Left alone because P0 does not change teammate behaviour. Actual
   protection today is that `.env` is gitignored.
-- **`platform/app-builder/` is still design-only** — `PLAN.md` + `README.md`, no
-  code. Its scaffolder, validator, `stacks.yaml`, DDL generator and UI kit do not
-  exist. `entry-point/checks/check_app.py` is the interim validator it should
-  replace. `specs/app-builder.md` was **not** edited by this worktree.
+- **No scaffolding, validation-model or UI-generator work was done here, by
+  design.** This session's scope was foundation only: environment, imports,
+  defects, docs. `platform/app-builder/` is untouched except for one prose fix to
+  its `PLAN.md` (a dangling reference to a deleted `TODO.md`), and
+  `specs/app-builder.md` was not edited at all. The one validator-adjacent change
+  is `entry-point/checks/check_app.py`, which gained the side-effect cross-check it
+  had always documented but never performed (§3.4, defect 5) plus its own test
+  suite. That script is a stand-in, not the real validator, and says so in its own
+  docstring.
 - **Holds are still in-memory only** in the audit builder; `InMemoryReplayGuard`
   is single-process. `specs/decisions.md` records that held state and replay
   guards persist to SQLite under the app's data dir — **P2 implements that.**
@@ -258,7 +358,7 @@ audit-agent-builder; `test_controls.py` in invoice-payer;
 `test_email_and_sheets.py` in financial-tools) and
 `apps/helios-collect/{README.md,facts.py}`.
 
-**91 files were added**, overwhelmingly under two new directories
+**92 files were added**, overwhelmingly under two new directories
 (`platform/deployment/`, and the new sibling packages plus prefixed tests under
 `platform/financial-tools/`) — low collision risk except for the shared files
 listed above.
@@ -267,6 +367,35 @@ Test files added under `platform/financial-tools/tests/` are **prefixed by
 package** (`test_forecast_*`, `test_email_*`, `test_payments_collect_*`) to avoid
 collisions in that flat directory. `test_spreadsheets.py` is not prefixed — it
 came from a branch that already used that name.
+
+### Overlap with the two new `chloe-dev` commits
+
+Checked file by file, because those commits landed after this branch diverged and
+are the most likely source of a merge surprise:
+
+| File touched by base | Touched by this branch? |
+|---|---|
+| `platform/financial-tools/fin_tools/service.py` | **No** |
+| `platform/financial-tools/fin_tools/__init__.py` | **No** |
+| `platform/financial-tools/fin_tools/market_data.py` *(new in base)* | **No** |
+| `platform/financial-tools/tests/test_market_data.py` *(new in base)* | **No** |
+
+**Zero file overlap.** A textual merge of these four files should be clean, and no
+`pyproject.toml` or requirements conflict arises from them (base touched neither).
+
+Two semantic interactions still worth a look after merging, neither of which is a
+textual conflict:
+
+- `fin_tools/__init__.py` is the module that exports `build_world()` and the tool
+  count. This branch does not edit it, but `entry-point/references/platform-status.md`
+  and the financial-tools README both state "12 registered tools". If
+  `market_data.py` registers additional tools, **those two documented counts go
+  stale on merge.** Verify with
+  `.venv/bin/python -c "from fin_tools import build_world; print(len(build_world().registry.list()))"`.
+- This branch added four sibling packages to the explicit
+  `[tool.setuptools] packages` list in `platform/financial-tools/pyproject.toml`.
+  Base did not touch that file, so no conflict — but any *further* package added by
+  another worktree must also be added to that list or it will not install.
 
 ---
 
