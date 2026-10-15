@@ -1,0 +1,44 @@
+# Build context for the golden base image is the REPOSITORY ROOT, because the
+# base image installs platform/* from source. Without these exclusions every
+# build would upload the git history, a ~100 MB virtualenv and every test cache
+# to the daemon -- slow, and it risks baking credentials into an image layer.
+#
+# Anything excluded here is still visible to pytest and to git; this file only
+# governs what a Docker build can see.
+
+.git
+.gitignore
+.github
+.qwen
+
+# Virtualenvs. platform/agent-integration/.venv alone is ~100 MB and is
+# host-specific; an image built from it would not run elsewhere.
+**/.venv
+**/venv
+**/env
+
+# Runtime artifacts and secrets. A .env baked into a layer is recoverable from
+# the image even after the file is deleted, so it is excluded outright.
+**/.env
+**/.env.*
+.helios-run
+.runs
+**/runs
+
+# Test and tooling caches.
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/*.egg-info
+**/dist
+**/build
+
+# OS noise and untracked teammate material.
+.DS_Store
+**/.DS_Store
+OTHER-TEAMMATE-STUFF
+
+# Local session notes are not part of an image.
+docs/sessions
