@@ -173,32 +173,26 @@ everything and BILL-2002 is still refused.
 
 ## What this app does NOT do, honestly
 
-**`market.*` does not exist in this checkout.** The plan called for `market.rate`,
-`market.borrowing_cost_compare` and `market.registry_match`. `fin_tools` registers
-exactly twelve tools — `email.*`, `graph.*`, `payments.*`, `simulation.forecast`,
-`spreadsheet.*` — and there is no `market` package anywhere in the repo. So
-`funding.py` is a **local stand-in**, per the plan's own instruction to build the
-smallest version needed inside the app:
+**Market data comes from the platform.** `funding.py` quotes LPR/SHIBOR through
+`fin_tools.market_data` (`market.rate`) and attaches the listed-company registry
+record (`market.company_lookup`) to the changed-payee evidence. One resolver
+serves fixtures offline (`HELIOS_MARKET_MODE=fixture`, which the tests pin), the
+organisers' core files, or Tushare live when `TUSHARE_TOKEN` is set, and every
+quote carries the platform's provenance: publisher, `as_of`, the `mode` that
+answered, and `stale`. A fallback is never dressed up as live.
 
-- **No network.** Rates are a pinned table (`funding.RATES`, as of 2026-09-20). There
-  is no `TUSHARE_TOKEN` in the environment and no fixture-backed core file to read, so
-  pretending to fetch would be pretending.
-- **Every result carries provenance** — `mode: offline-fixture`, the `as_of` date, and
-  `stale: True` whenever that date is not today. A rate the app cannot date is worse
-  than no rate.
-- **It never decides anything.** Ranking an option does not authorise it, and every
-  result carries the "not financial advice" disclaimer (which is also the licence
-  position: no unlicensed investment advice).
-- `funding.py` is quarantined so the swap is small, but it is **partial**, not a
-  delete. `market_data.py` now exists on `chloe-dev` (`7ff4b74`) and its
-  `RATE_SERIES` already pins `lpr_1y` and `shibor_3m`, so `funding.rate()` is
-  replaceable by `market.reference_rate`. But there is no upstream
-  `borrowing_cost_compare`, so the option ranking stays; and `market.company_basic`
-  is a company *lookup*, not a change-request comparison, so `registry_evidence`
-  stays too. Two traps for whoever does the swap: `reference_rate` returns
-  `value_pct` as a **float** (convert with `Decimal(str(...))`, never
-  `Decimal(float)`), and there is **no `stale` field** upstream — derive it from
-  `as_of` vs `requested_as_of`. Full detail in `worktree.md` §4.
+- **Rates arrive as floats and leave as `Decimal`**, converted once at the
+  boundary with `Decimal(str(value_pct))`; no float touches an interest figure.
+- **The option ranking is app logic.** Facility limit, the supplier's late fee and
+  any early-payment discount are this business's data, so `compare_options` stays
+  here and only ranks; drawing on the credit line is the separate gated
+  `draw_credit_line` tool.
+- **Registry evidence never changes a verdict.** `app.payee_details_changed`
+  denies on the change flag alone; a registry match proves the company is who it
+  says it is, not that this bank-account change was authorised. The platform
+  record is shown next to the request and nothing more.
+- **It never gives advice.** Every result carries the "not financial advice"
+  disclaimer, which is also the licence position.
 
 **Not deployed.** `helios deploy` was never run here: the engine did not exist at this
 branch's base commit, the Docker daemon is not running and `HELIOS_ENGINE_URL` is
@@ -262,7 +256,7 @@ apps/helios-payables/
 ├── config.py                          # thresholds mirrored from the manifest
 ├── book.py                            # the data layer over the platform store
 ├── facts.py                           # THE fact source — "facts are not claims"
-├── funding.py                         # local stand-in for the missing market.* family
+├── funding.py                         # rates + registry evidence over the platform market.* family; option ranking
 ├── tools.py                           # the 10 tools, 5 read-only + 5 gated
 ├── app.py                             # composition, scenarios, CLI pages
 ├── server.py                          # FastAPI + Jinja2 web UI; lazy build, constant /health

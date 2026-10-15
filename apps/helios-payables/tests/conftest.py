@@ -6,20 +6,26 @@ Blocks every non-loopback socket for the whole suite, mirroring
   * the suite must prove the controls work with no network, no API key and no
     vendor endpoint, so a test that quietly reaches the internet is not testing
     what it claims to;
-  * `funding.py` quotes pinned offline rates. If anything ever grew a live fetch,
-    this guard turns that into a loud failure rather than a test whose result
-    depends on whose shell it ran in.
+  * `funding.py` quotes rates through the platform's market package, which is
+    pinned to fixture mode below. If anything ever reached for a live fetch, this
+    guard turns it into a loud failure rather than a test whose result depends
+    on whose shell it ran in.
 
 Also puts the app directory on `sys.path`, so `import config` works the same way
 the app itself does (flat modules, no package).
 """
 from __future__ import annotations
 
+import os
 import socket
 import sys
 from pathlib import Path
 
 import pytest
+
+# Fixture mode regardless of the shell: a TUSHARE_TOKEN in the environment must
+# not turn a control test into a live call.
+os.environ["HELIOS_MARKET_MODE"] = "fixture"
 
 HERE = Path(__file__).resolve().parents[1]
 REPO = HERE.parents[1]

@@ -28,6 +28,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from decimal import Decimal
 
 HERE = Path(__file__).resolve().parents[1]
 REPO = HERE.parents[1]
@@ -539,9 +540,9 @@ def test_funding_scenario_draws_under_its_own_gate_and_shows_provenance(app):
     evidence = outcome.funding_evidence
     assert evidence is not None, "the hold must be able to show the rate it rests on"
     assert evidence["rate_name"] == "lpr_1y"
-    assert evidence["as_of"] == funding.AS_OF.isoformat()
-    assert evidence["provenance"]["mode"] == "offline-fixture"
-    assert evidence["provenance"]["stale"] is True
+    assert evidence["as_of"] == funding.rate("lpr_1y").as_of.isoformat()
+    assert evidence["provenance"]["mode"] == "fixture"
+    assert isinstance(evidence["provenance"]["stale"], bool)
     assert "not financial advice" in evidence["disclaimer"]
     assert "app.large_payment_approval" in _rules_that_fired(outcome)
 
@@ -924,11 +925,22 @@ def test_rate_provenance_is_always_attached():
     """A rate the app cannot date is worse than no rate."""
     quoted = funding.rate("lpr_1y")
     provenance = quoted.provenance()
-    assert provenance["mode"] == "offline-fixture"
-    assert provenance["as_of"] == funding.AS_OF.isoformat()
+    assert provenance["mode"] == "fixture"          # never dressed up as live
+    assert provenance["as_of"] == quoted.as_of.isoformat()
+    assert provenance["publisher"]
     assert "stale" in provenance
+    assert isinstance(quoted.percent, Decimal)      # converted once, at the boundary
     with pytest.raises(KeyError):
         funding.rate("not_a_rate")
+
+
+def test_registry_evidence_attaches_the_platform_record_without_changing_the_verdict(app):
+    """`market.company_lookup` is evidence next to the request, nothing more."""
+    evidence = funding.registry_evidence(app.book, "SUP-002")
+    assert evidence["available"] is True
+    assert "registry" in evidence
+    # the mismatch verdict comes from the request vs the record on file only
+    assert evidence["mismatch"] == bool(evidence["reasons"])
 
 
 # ---------------------------------------------------------------------------

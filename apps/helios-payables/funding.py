@@ -1,30 +1,25 @@
-"""Funding options — a LOCAL stand-in for the missing `market.*` tool family.
+"""Funding options over the platform's `market.*` family.
 
-Why this file exists
---------------------
-The session plan calls for `market.rate`, `market.borrowing_cost_compare` and
-`market.registry_match`. None of them exist in this checkout: `fin_tools`
-registers exactly twelve tools (`email.*`, `graph.*`, `payments.*`,
-`simulation.forecast`, `spreadsheet.*`) and there is no `market` package anywhere
-in the repo. The plan's own instruction covers this case — build the smallest
-version needed inside the app and note it — so this is that smallest version.
+What this module owns and what it borrows
+-----------------------------------------
+Rates and registry evidence come from the platform: `fin_tools.market_data`
+serves LPR/SHIBOR and the listed-company registry through one resolver that
+answers from fixtures offline (`HELIOS_MARKET_MODE=fixture`, or no token in
+`auto` mode), from the organisers' core files, or live from Tushare when
+`TUSHARE_TOKEN` is set. Every quote carries the platform's provenance, including
+the mode that answered and whether the value is stale. Nothing here invents a
+number: an unknown series or an unavailable source raises.
 
-It is deliberately small and honest about being small:
+What stays app logic: ranking the three ways to fund one bill (credit line
+within the facility limit, delaying the supplier at their late fee, taking an
+early-payment discount) and comparing a payment-details change request against
+the supplier record on file. Both are decisions about this business's data, not
+market data, and both only rank or report -- drawing on the credit line is a
+separate gated tool, and registry evidence never changes a verdict.
 
-  * **No network.** Rates come from `RATES` below, a fixed table. There is no
-    `TUSHARE_TOKEN` in the environment and no fixture-backed core file to read, so
-    pretending to fetch would be pretending.
-  * **Every result carries provenance.** `mode: "offline-fixture"`, the `as_of`
-    date the rate belongs to, and `stale: True` whenever that date is not today.
-    A rate the app cannot date is worse than no rate, so staleness is always
-    explicit rather than inferred by the reader.
-  * **It never decides anything.** This module ranks options. Whether to draw on
-    the credit line is a gated `pay_bill` call, and the ranking carries a
-    disclaimer saying it is information and not financial advice — which is both
-    the licence position (no unlicensed investment advice) and the honest one.
-
-If `market.*` lands later, this file is the only thing to delete: `tools.py`
-imports `compare_options` and `registry_evidence`, and nothing else does.
+Money is `Decimal` and integer cents throughout. A platform rate arrives as a
+float percentage and is converted with `Decimal(str(value_pct))` once, at the
+boundary, so binary rounding never reaches an interest calculation.
 """
 from __future__ import annotations
 
@@ -37,26 +32,40 @@ from book import Book
 
 import config
 
+from fin_tools.market_data import build_resolver
+from fin_tools.market_data.client import MarketDataUnavailable
+from fin_tools.market_data.rates import SERIES, RateService
+from fin_tools.market_data.registry import RegistryService
+
 # Basis-point scale: 1 bp = 0.01%.
 _BPS = Decimal("10000")
 
 
 # --------------------------------------------------------------------------
-# Offline rate table
+# Reference rates, from the platform
 # --------------------------------------------------------------------------
 
-#: Public reference rates, as of the date in `AS_OF`. These are the only numbers
-#: in this file that come from outside the app, and they are pinned rather than
-#: fetched. `AS_OF` is what makes them checkable: a reader can tell how old the
-#: quote is without asking the code.
-AS_OF = date(2026, 9, 20)
+#: The series this app quotes. Both are served by `market.rate`; the names are
+#: the platform's, so a reader can look them up in the tool reference.
+RATES: tuple[str, ...] = ("lpr_1y", "shibor_3m")
 
-RATES: dict[str, Decimal] = {
-    # China's 1-year Loan Prime Rate, quoted by the PBoC monthly.
-    "lpr_1y": Decimal("3.00"),
-    # Shanghai Interbank Offered Rate, 3-month tenor.
-    "shibor_3m": Decimal("1.85"),
-}
+_resolver = None
+
+
+def _services() -> tuple[RateService, RegistryService]:
+    """One resolver per process, built lazily so tests can set the mode first."""
+    global _resolver
+    if _resolver is None:
+        _resolver = build_resolver()
+    # No graph: this app cites the rate on a page; publishing a verified node is
+    # the cash planner's job, through the gated `market.rate` tool.
+    return RateService(_resolver, None), RegistryService(_resolver)
+
+
+def reset_sources() -> None:
+    """Drop the cached resolver (tests that change `HELIOS_MARKET_MODE`)."""
+    global _resolver
+    _resolver = None
 
 
 @dataclass(frozen=True)
@@ -67,52 +76,46 @@ class Rate:
     percent: Decimal
     as_of: date
     source: str
-    mode: str = "offline-fixture"
-
-    @property
-    def stale(self) -> bool:
-        """True unless this quote is dated today.
-
-        Computed rather than stored, so it cannot be forgotten when the fixture
-        ages. A stale rate is still usable — it is the best the app has — but the
-        UI must say so, because a rate presented as current is a misrepresentation.
-        """
-        return self.as_of != date.today()
+    mode: str
+    stale: bool
+    raw_provenance: Mapping[str, Any] = field(default_factory=dict)
 
     def provenance(self) -> dict[str, Any]:
-        return {
-            "mode": self.mode,
-            "source": self.source,
-            "as_of": self.as_of.isoformat(),
-            "stale": self.stale,
-        }
-
-
-_SOURCES = {
-    "lpr_1y": "PBoC 1-year Loan Prime Rate (LPR), offline fixture",
-    "shibor_3m": "SHIBOR 3-month tenor, offline fixture",
-}
+        out = dict(self.raw_provenance)
+        out.update({"mode": self.mode, "source": self.source,
+                    "as_of": self.as_of.isoformat(), "stale": self.stale})
+        return out
 
 
 def rate(name: str, *, as_of: date | None = None) -> Rate:
-    """Look up a reference rate. Raises rather than guessing on an unknown name."""
-    if name not in RATES:
+    """Look up a reference rate on the platform. Raises rather than guessing."""
+    if name not in RATES or name not in SERIES:
         raise KeyError(
-            f"unknown rate '{name}'; available: {', '.join(sorted(RATES))}. "
+            f"unknown rate '{name}'; available: {', '.join(RATES)}. "
             "An unknown rate must fail loudly: substituting a default would put a "
             "made-up number into a financing recommendation."
         )
+    rates, _ = _services()
+    quoted = rates.rate(series=name, as_of=as_of.isoformat() if as_of else None,
+                        publish=False)
+    prov = dict(quoted.get("provenance") or {})
+    published = str(quoted.get("as_of") or prov.get("as_of") or "")[:10]
     return Rate(
         name=name,
-        percent=RATES[name],
-        as_of=as_of or AS_OF,
-        source=_SOURCES[name],
+        # str() first: Decimal(2.9) would bake the float's binary expansion in.
+        percent=Decimal(str(quoted["value_pct"])),
+        as_of=date.fromisoformat(published),
+        source=f"{prov.get('publisher', 'public reference data')} {prov.get('api_name', '')}".strip(),
+        mode=str(prov.get("mode", "unknown")),
+        stale=bool(prov.get("stale", True)),
+        raw_provenance=prov,
     )
 
 
 DISCLAIMER = (
-    "Informational only, not financial advice. Rates are pinned offline fixtures "
-    "and may be stale; confirm the current rate before borrowing."
+    "Informational only, not financial advice. Rates come from public reference "
+    "data (see provenance) and may be stale; confirm the current rate before "
+    "borrowing."
 )
 
 
@@ -390,10 +393,35 @@ def registry_evidence(book: Book, supplier_id: str) -> dict[str, Any]:
         "reasons": reasons,
         "mismatch": bool(reasons),
         "provenance": {"mode": "local-registry", "ticker": ticker, "stale": False},
+        # The platform's registry record for the ticker, attached as evidence the
+        # owner can read next to the request. A match or a miss changes nothing
+        # above: the denial stands on the change flag alone.
+        "registry": _platform_registry(ticker),
+    }
+
+
+def _platform_registry(ticker: str) -> dict[str, Any]:
+    """`market.company_lookup` for a ticker, with its provenance; never raises."""
+    try:
+        _, registry = _services()
+        found = registry.company_lookup(query=ticker)
+    except (MarketDataUnavailable, ValueError) as exc:
+        return {"available": False, "reason": str(exc)[:200]}
+    matches = found.get("matches") or []
+    first = matches[0] if matches else {}
+    return {
+        "available": True,
+        "count": found.get("count", len(matches)),
+        "name": first.get("name"),
+        "fullname": first.get("fullname"),
+        "website": first.get("website"),
+        "chairman": first.get("chairman"),
+        "provenance": found.get("provenance"),
     }
 
 
 __all__ = [
-    "AS_OF", "DISCLAIMER", "RATES", "Option", "Rate", "bps_to_percent",
+    "DISCLAIMER", "RATES", "Option", "Rate", "bps_to_percent",
     "compare_options", "interest_cost_cents", "rate", "registry_evidence",
+    "reset_sources",
 ]
