@@ -334,3 +334,65 @@ owned by another session; per section D the two `DEFAULT_*` assertions above are
 that encode the legacy wire protocol, and flipping them without also flipping
 `model_driver.py` would just turn the suite red. The whole migration must land as one
 commit in the owning package.
+
+---
+
+## Merge protocol (section H) — BLOCKED at step 1: MAIN DIRTY
+
+Ran section H step 1 exactly as written:
+
+```
+$ MAIN=$(git worktree list | head -1 | awk '{print $1}')
+MAIN=<repo>
+$ git -C "$MAIN" status --porcelain | grep -v -E '^\?\? (OTHER-TEAMMATE-STUFF/|\.DS_Store)$' && echo "MAIN DIRTY" || echo "main clean"
+?? .env.example
+?? .qwen/
+MAIN DIRTY
+```
+
+Section H says: "If step 1 reports MAIN DIRTY, do not merge; record it in BLOCKED.md with
+the dirty paths and stop after the final report." So steps 2-4 were **not** run, and this
+branch was **not** landed on `chloe-dev`.
+
+Dirty paths, both untracked:
+
+- `.env.example` at the repo root — not created by this session. This session never wrote
+  to the main checkout; its worktree has its own
+  `platform/agent-integration/.env.example`, a different path. Presumably left by another
+  session or a manual step.
+- `.qwen/` — the worktree container directory, holding `.qwen/worktrees/p0-foundation`,
+  `p1-tools`, `p2-deploy`, `p3-builder`, `p4-payables` and `p5-verify`. It is untracked in
+  the main checkout rather than gitignored.
+
+**Decision needed.** `.qwen/` is the mechanism by which every session in this run exists,
+so it will be dirty for as long as worktrees are in use; either add it to `.gitignore` or
+widen the step-1 exclusion to cover it. Root `.env.example` needs an owner to decide
+whether it belongs in the repo. Neither is this session's to resolve: adding a
+`.gitignore` entry is a shared-path change another session is concurrently editing
+(`.gitignore` is itself one of the 26 files p0 and p1 conflict on), and deleting or
+committing an untracked file at the repo root risks discarding someone's in-progress
+work, which section C3 forbids.
+
+**Merge-readiness is nonetheless verified, and it is clean.** This branch's net change
+against the base is only its own session notes plus `STATUS.md`:
+
+```
+$ git diff --name-only cc96f0a..worktree-p5-verify
+STATUS.md
+docs/sessions/p5-verify/BLOCKED.md
+docs/sessions/p5-verify/PLAN.md
+docs/sessions/p5-verify/PROGRESS.md
+docs/sessions/p5-verify/REHEARSAL-DEFECTS.md
+```
+
+A trial merge in the throwaway clone `/tmp/helios-int` confirmed
+`git merge --no-edit origin/worktree-p5-verify` onto p0-foundation reports **OK — clean
+merge**, no conflicts.
+
+**What *will* conflict, and is not this session's to fix:** the four upstream branches
+conflict with each other. A trial merge in `/tmp/helios-int` produced 26 conflicted files
+for p1-tools alone (p0 and p1 both imported the same teammate tool families into
+`platform/financial-tools/`), 10 for p2-deploy (p0 and p2 both created
+`platform/deployment/`), and 4 for p3-builder — including `scripts/bootstrap-venv.sh` and
+`scripts/test-all.sh`, which every session touched. `chloe-dev` was still at `cc96f0a`
+throughout; no session had merged into it.
