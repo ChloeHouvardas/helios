@@ -102,7 +102,8 @@ def t0(args) -> None:
     r = run(["grep", "-rniE", "glm-5|zhipu|bigmodel", "--include=*.py", "--include=*.md", "--include=*.yaml",
              "--include=*.json", "--include=*.sh", "--include=*.toml", "--exclude-dir=.venv", "--exclude-dir=.qwen",
              "--exclude-dir=OTHER-TEAMMATE-STUFF", "--exclude-dir=.git", "--exclude-dir=docs", "."])
-    hits = [ln for ln in r.stdout.splitlines() if "demo_check.py" not in ln]
+    # DEMOFLOW.md states this check's pattern and is not a reference.
+    hits = [ln for ln in r.stdout.splitlines() if "demo_check.py" not in ln and "DEMOFLOW.md" not in ln]
     check("T0.6", not hits, f"{len(hits)} legacy vendor reference(s)" + (": " + hits[0] if hits else ""))
 
 

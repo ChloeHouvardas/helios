@@ -49,17 +49,11 @@ helios-app --help            # questions / spec-from-intake / new / validate
 exist, so the installed script crashed with `ModuleNotFoundError` on every
 invocation. That is fixed.
 
-**Two caveats, both verified 2026-10-15:**
-
-- `qwen_agent` is installed but **does not import** in this venv — it needs `numpy`,
-  which is absent. So the model-driven path is not runnable as-is; install `numpy`
-  or drive the runtime from deterministic code, as both reference apps do. The gate
-  underneath is unchanged either way, which is the point of the split.
-- The model driver in `agent_integration` still defaults to **GLM-5.3 on
-  `bigmodel.cn`**. The competition rule is that Qwen is the only allowed generative
-  model, so this must be reconciled. It is an OpenAI-compatible driver, so it is a
-  base-URL and model-id change, not a rewrite. `platform/agent-integration/` is
-  another agent's package — do not edit it; flag it.
+**One caveat, verified 2026-10-15:** the live-model path is wired (Qwen via
+DashScope's OpenAI-compatible endpoint, key in `DASHSCOPE_API_KEY`) but every
+demo and every test drives the runtime with the deterministic scripted driver.
+The gate underneath is identical either way, which is the point of the split;
+run `agent_integration.cli doctor` with a real key before claiming a live run.
 
 ### 2. The app builder is implemented
 

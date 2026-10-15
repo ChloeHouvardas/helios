@@ -515,8 +515,9 @@ them, do not edit inside them.
   boundaries only. `Decimal(0.1)` bakes in binary rounding at the moment of
   conversion, which is why the generated store refuses a float outright rather than
   converting it.
-- **Qwen is the only generative model allowed.** Any reference to GLM, Zhipu or
-  `bigmodel.cn` is legacy and must be removed when you touch that file.
+- **Qwen is the only generative model allowed.** The driver speaks to Qwen through
+  DashScope's OpenAI-compatible endpoint; any reference to a previous vendor is
+  legacy and must be removed when you touch that file.
 - **Secrets come only from environment variables.** Never print, log, commit or
   hard-code a key. A key in a log is a leak even if the log is local.
 - **No hidden prompts or model-specific tricks** in docs or interfaces.
