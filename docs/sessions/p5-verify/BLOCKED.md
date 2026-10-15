@@ -145,6 +145,73 @@ everything else — a mismatch the importing session must reconcile.
 step that would unblock Task 2, but it is another session's deliverable and section C3
 marks `OTHER-TEAMMATE-STUFF/` read-only.
 
+### Update 2 — RESOLVED. Task 2 is not blocked; it was verified end to end.
+
+Both blockers above dissolved. P0 imported the engine to `platform/deployment/` itself
+(commit range on `worktree-p0-foundation`), so no copy was needed. And the container
+runtime came up: Docker Desktop 4.80.0 started, `/var/run/docker.sock` became reachable,
+`docker ps` works. The whole platform was then brought up for real in the throwaway
+clone `/tmp/helios-pre` (not the worktree, to avoid polluting it).
+
+Observed, from tool output:
+
+- `scripts/bootstrap-venv.sh` from a **cold clone** → `ok agent_toolkit / audit_agent /
+  agent_integration / fin_tools / engine`. Then `scripts/test-all.sh` → **`all 7 suites
+  green: 803 passed`** (agent-integration 136, audit-agent-builder 81, deployment 96,
+  financial-tools 367, helios-collect 74, invoice-payer 41, checks 8). Far above the 378
+  baseline in `HANDOFF.md` §4 — the other sessions have more than doubled the suite.
+- `platform/deployment/bootstrap.sh` → ingress network + `helios-nginx` created, engine
+  on 127.0.0.1:8100, `GET /health` → 200
+  `{"status":"ok","service":"helios-deployment-engine"}`.
+- All three golden images built locally (`helios-app-base`, `helios-auditor`,
+  `helios-core`); PyPI is reachable, so the `pip install` layer succeeds.
+- `helios deploy examples/sample-app --tenant demo` → `{"status":"deployed", ...}`,
+  containers `demo-sample-collect-app` + `demo-sample-collect-audit`, URLs
+  `http://localhost/apps/sample-collect-demo`.
+- `GET http://localhost/apps/sample-collect-demo/health` → **HTTP 200**
+  `{"status":"ok","app":"sample-collect","tenant":"demo"}`.
+- Zero-trust pipeline: first `POST /demo/collect-payment` → `executed`
+  (`audit_id 9259024f620b`, `simulated_sent`); the identical retry →
+  `held_for_review`, reason `possible duplicate invoice/payment within 120s window`;
+  the sidecar's `/audit-log` records **both** decisions. This is judge moment 2's shape,
+  working.
+- Event bus: `POST /demo/announce-event` → `{"status":"published","channel":"demo:events"}`;
+  `GET /events` → `receivable.rescheduled` with `{"invoice":"INV-0042","new_due":"2026-10-28"}`.
+  That is the S-box evidence Task 5's "Shared Events & Updates" section needs.
+- `agent-integration selfcheck` → exit 0, `seam check: OK`.
+
+**The one genuine obstacle is Docker Hub, not the code.** `registry-1.docker.io` times
+out from this machine, so the externally pulled images had to come via the mirror
+`dockerproxy.net` and be retagged to their canonical names:
+`python:3.12-slim-bookworm`, `nginx:alpine`, `redis:7-alpine`. Without that, `bootstrap.sh`
+fails pulling nginx and `deploy` fails at `stage: image-pull` for redis — both observed.
+
+**Supply-chain caveat a human must weigh.** `helios-auditor` is the trusted sidecar
+holding the execution secret (decision B2) and is built `FROM python:3.12-slim-bookworm`.
+Sourcing that base from an unverified third-party proxy puts it inside the platform's
+trust boundary. Fine for local verification; for the judged demo, pull from a registry
+the team controls or verify the digest — the pulled python base was
+`sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258`, nginx
+`sha256:72aeb3308ef6cb3118242fb16389518923916dfa206e32d1a8377acc328b9870`, redis
+`sha256:858f009f9709ce576febc734aa78b8f6d624b82571f9ddb6bda4377c833b3499`.
+
+**Doc defect found on the way (owner decision needed).** Task 2's runbook says to run
+`helios doctor`, but no such subcommand exists. `helios --help` offers only `{deploy}`,
+and the original Mac-mini CLI is byte-identical in shape — 71 lines, with
+`ap.add_argument("cmd", choices=["deploy"])` at
+`OTHER-TEAMMATE-STUFF/deployment-stuff/fPT9INmvWJ/default/helios/cli/helios.py:42`. So
+`doctor` was never part of the deployment contract; `helios doctor` exits **2** with
+`invalid choice: 'doctor' (choose from deploy)`. The `doctor` that does exist is
+`agent-integration doctor`. Per decision B1 ("apps adopt the engine; the engine is
+adapted where the app side cannot be") either add a `doctor` subcommand to
+`platform/deployment/cli/helios.py` or drop it from the runbook. Not changed here:
+`platform/deployment/` belongs to p2-deploy and is still mid-flight (23 dirty paths).
+
+**Also stale, corrected:** the note that `bootstrap.sh` targets `python3.12` is no longer
+true. P0's imported version detects `python3.13` and prefers the shared repo venv
+(`==> using the shared repo venv at ../../.venv`), so section A's one-interpreter rule
+holds.
+
 ---
 
 ## Task 3 — the cross-app story
