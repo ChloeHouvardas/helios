@@ -1,0 +1,9 @@
+name: sample-collect
+tenant: demo
+entry: main:app
+port: 3000
+permissions:
+  - payments
+  - email
+  - knowledge-graph
+  - events
