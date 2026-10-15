@@ -216,13 +216,19 @@ def _page(slug: str, path: str = "/") -> tuple[int, str]:
     return status, body
 
 
+NGINX_FALLBACK = "No app deployed at this path"
+
+
 def _wait_page(slug: str, path: str = "/health", tries: int = 30) -> int:
+    """200 from the APP. nginx's fallback for an unrouted path is also a 200
+    (a plain-text notice), so the body is checked, not just the status."""
+    status = 0
     for _ in range(tries):
-        status, _ = _page(slug, path)
-        if status == 200:
+        status, body = _page(slug, path)
+        if status == 200 and NGINX_FALLBACK not in body:
             return 200
         time.sleep(1)
-    return status
+    return 0 if status == 200 else status
 
 
 def _docker(*cmd: str, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -366,7 +372,7 @@ def t4(args) -> None:
     appc = f"{t}-helios-collect-app"
     secret = _secret(t)
     status, body = _from_container(audit, "GET", "http://helios-core:9000/health")
-    check("T4.1", status == 200 and '"tool_count"' in body, body.strip()[:120])
+    check("T4.1", status == 200 and ('"tool_count"' in body or '"tools"' in body), body.strip()[:120])
     status, _ = _from_container(audit, "GET", "http://helios-core:9000/tools")
     status2, body2 = _from_container(audit, "GET", "http://helios-core:9000/tools", bearer=secret)
     try:
@@ -381,8 +387,12 @@ def t4(args) -> None:
         env = json.loads(body)
     except json.JSONDecodeError:
         env = {}
-    check("T4.3", status == 200 and env.get("rejected") is True and "auth" in str(env.get("error", "")).lower(),
-          f"envelope={ {k: env.get(k) for k in ('ok', 'rejected', 'unavailable')} } error={str(env.get('error', ''))[:80]}")
+    # The tool ran and the LEDGER refused to settle: the envelope is ok, the
+    # result's state is rejected with the reason. No money moved.
+    result = env.get("result") if isinstance(env.get("result"), dict) else {}
+    check("T4.3", status == 200 and env.get("ok") is True and result.get("state") == "rejected"
+          and "auth" in str(result.get("reject_reason", "")).lower(),
+          f"state={result.get('state')} reason={str(result.get('reject_reason', ''))[:80]}")
     status, body = _from_container(audit, "POST", "http://helios-core:9000/call", bearer=secret,
                                    body={"tool": "graph.publish_verified", "args": {"kind": "demo", "key": "t4", "attrs": {"ok": True}, "source": "demo-check"}})
     _docker("restart", f"helios-core-{t}")
@@ -431,7 +441,7 @@ def t5(args) -> None:
     status, _, _ = http_noredirect("POST", f"http://localhost/apps/{pa}/run", form={"scope": "all"})
     _, holds = _page(pa, "/holds")
     check("T5.3", status in (303, 302) and "payroll" in holds, f"payables run={status} holds page mentions payroll={'payroll' in holds}")
-    r = run(["grep", "-rln", "-E", "helios-collect-|helios-payables-|helios-cash-planner-", "apps/helios-collect/server.py",
+    r = run(["grep", "-rln", "-E", "http://(helios-collect|helios-payables|helios-cash-planner)|/apps/helios-", "apps/helios-collect/server.py",
              "apps/helios-collect/tools.py", "apps/helios-payables/server.py", "apps/helios-payables/tools.py",
              "apps/helios-cash-planner/server.py", "apps/helios-cash-planner/tools.py"])
     check("T5.4", r.stdout.strip() == "", "no app names another app's URL" if not r.stdout.strip() else r.stdout.strip())

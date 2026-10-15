@@ -322,3 +322,22 @@ def test_execute_rejects_bad_token(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as exc:
         asyncio.run(mod.execute(FakeReq(), authorization="Bearer wrong"))
     assert exc.value.status_code == 401
+
+
+def test_a_ledger_rejection_inside_an_ok_envelope_is_a_denial_not_an_execution(tmp_path, monkeypatch):
+    """payments.send without an intent code runs and returns state=rejected."""
+    import asyncio
+    mod = _load_sidecar(tmp_path, monkeypatch)
+    monkeypatch.setattr(mod.httpx, "post", _fake_post(
+        {"ok": True, "result": {"payment_id": "p9", "state": "rejected",
+                                "reject_reason": "missing verified intent auth code"}}))
+
+    class Req:
+        async def json(self):
+            return {"action": "payments", "payload": {"amount": "10", "payee": "ACME"}}
+
+    out = asyncio.run(mod.execute(Req(), authorization="Bearer tok-secret"))
+    assert out["status"] == "denied"
+    assert "intent auth code" in out["reason"]
+    assert out["findings"][0]["rule_id"] == "core.ledger_rejected"
+    assert mod.DECISIONS[-1]["decision"] == "deny"

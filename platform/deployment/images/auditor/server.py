@@ -534,6 +534,18 @@ async def execute(request: Request, authorization: str = Header(default="")) -> 
         envelope = {"ok": False, "unavailable": True, "error": "malformed envelope"}
     if envelope.get("ok"):
         result = envelope.get("result")
+        # The tool ran but the ledger refused to settle (no intent code, a
+        # replayed key). Nothing moved, so this is recorded as a denial with
+        # the ledger's own reason, never as executed: a compliance log that
+        # says a payment went out when it did not is the worst entry possible.
+        if isinstance(result, dict) and result.get("state") == "rejected":
+            return _deny(
+                action, payload,
+                [_finding("core.ledger_rejected",
+                          str(result.get("reject_reason") or "rejected by the ledger"),
+                          {"source": "core", "result": result})],
+                reason=f"the ledger refused to settle: {result.get('reject_reason', '')}"[:500],
+            )
     elif envelope.get("rejected"):
         return _deny(
             action, payload,
