@@ -40,6 +40,24 @@ Helios hosts a central knowledge graph that applications can use to exchange rel
 ### Qwen handles application generation
 Qwen uses Helios's development interfaces to generate applications and initiate deployment.
 
+### Market data is quote data, and never becomes money
+Live market data — prices, rates, index levels — is **quote data**: a float denominated in its own unit, meaningful only as of a timestamp. It is categorically distinct from **money**, which in this system is integer cents and never a float.
+
+This was resolved because the two rules collided in practice. Tushare returns floats (verified live: `close` 11.5, `pct_chg` -0.605), while `contracts.World` mandates "everything money-shaped is integer cents. No floats, ever." Both are correct, because they describe different things:
+
+- A share price, interest rate or index level is a **quote**. It is a float, it carries a unit and an `as_of` date, and it is read-only.
+- A **balance** or a **ledger entry** is money. It is integer cents. It is what `World.balances` and `World.ledger` hold.
+
+**Market data must never reach `World.balances` or `World.ledger`.** The separation is enforced structurally in `fin_tools/market_data.py`, not by convention:
+
+1. The module never imports `World`, `Payments`, or anything able to write ledger or balance state.
+2. Every `market.*` tool declares `side_effects=False`, so it runs directly and can never be a proposal that mutates state.
+3. No output field is named `*_cents`. That name would imply integer money and invite a caller to add a share price to a balance. Amounts carry their real unit instead (`CNY per share`, `手 / lots of 100 shares`, `千元 / thousands of CNY`).
+
+An application that needs to *use* a price — say, to value a holding — converts explicitly at its own boundary, in its own code, and owns the rounding. The platform never silently coerces a quote into money.
+
+Corollary, ratified alongside it: an unavailable quote is an **outage**, not a decision. A missing token, a timeout, or an upstream refusal is reported as `unavailable`, never as `rejected`, so the action log never records a gate decision that no gate made.
+
 ## Tentative
 
 ### Hybrid financial tools
@@ -69,6 +87,20 @@ When an action is held, the agent's state (conversation history and the proposal
 - How will the knowledge graph distinguish authoritative records from agent observations?
 - How will applications subscribe to cross-app updates?
 - Which financial operations should be managed APIs versus packaged SDK tools?
+  - **Still open.** This session implemented live market data as a *packaged*
+    adapter inside `fin_tools/market_data.py` rather than as a managed API, for
+    the reasons recorded in §6 of `specs/financial-tools-service.md` and
+    `specs/tech-stack.md`. That is an implementation choice for one capability,
+    not a resolution of the general question.
+  - The teammate proposal in
+    `OTHER-TEAMMATE-STUFF/forecasting-simulation/services/financial-api/` — "math
+    is packaged, data-fed defaults are managed" — remains **unratified**. Their
+    §10 spec updates never landed in `specs/`. Do not treat that split as
+    decided, and do not cite it as precedent.
+  - Note the practical asymmetry that makes this question worth answering soon:
+    a packaged data adapter means every deployed app holds its own `TUSHARE_TOKEN`
+    and its own quota. A managed API would hold the credential once. That is a
+    security and cost question, not only an architectural preference.
 - How will applications authenticate with shared Helios services?
 - What platform-wide limits should mandates be capped by?
 

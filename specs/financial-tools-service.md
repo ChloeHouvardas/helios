@@ -180,6 +180,33 @@ raised with whoever owns `audit-agent-builder` rather than worked around.
 This document defines the boundary precisely enough that each party can adopt
 independently. It is a coordination artefact, not an instruction to edit their code.
 
+### Market data sits outside this boundary, deliberately
+
+`fin_tools/market_data.py` is a **packaged** adapter, not a managed service behind
+this boundary. Three reasons:
+
+- **It carries no trust material.** A market tool cannot move money, cannot issue
+  an authorization, and cannot write ledger state — every one is
+  `side_effects=False`, and the module never imports `World` or `Payments`. The
+  point of this boundary is that signing material lives server-side so an app
+  cannot self-authorize (§3, §4). Nothing here needs that guarantee, so routing it
+  through the service would add latency and a failure mode for no security gain.
+- **It is read-only quote data.** §3 governs what crosses the boundary because
+  crossing it is what makes a call adjudicable. A quote has nothing to adjudicate.
+- **Failure semantics belong to the app, not the gate.** An unavailable rate must
+  surface to the agent as `unavailable` — retryable, nobody decided anything —
+  rather than as a gate `rejected`. Keeping it in-process makes that distinction
+  direct instead of something the boundary has to preserve on the agent's behalf.
+
+**The cost, stated plainly:** a packaged adapter means every deployed app holds its
+own `TUSHARE_TOKEN` and its own quota. A managed API would hold the credential
+once, rotate it once, and cache once. If that trade starts to hurt — many apps
+against one rate-limited upstream — market data is the first thing that should move
+behind this boundary, and `ALLOWED_APIS` is already the seam that would let it: the
+same four tools could be served remotely without changing their names or schemas.
+Recorded rather than decided, because `specs/decisions.md` still lists
+managed-versus-packaged as an open question.
+
 ---
 
 ## 7. Consequences to state out loud in the pitch

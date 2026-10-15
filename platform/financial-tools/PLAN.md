@@ -66,7 +66,16 @@ pytest suite (offline, deterministic), package `README.md`, and
   `platform/app-builder/`.
 - Shared-doc edits limited to one line in `platform/README.md` (list the new folder)
   and one line in `specs/interfaces.md` (point "financial tool schemas" at this package).
-- No network calls, no secrets, no real money movement anywhere in the package.
+- No real money movement anywhere in the package. Payments, ledger and balances
+  remain mock end to end.
+- **Network is confined to `fin_tools/market_data.py`.** That one module may call
+  the Tushare HTTP API, and only when a `market.*` tool is invoked with
+  `TUSHARE_TOKEN` set. Every other module stays offline. Nothing else in the
+  package opens a socket.
+- **Secrets:** `TUSHARE_TOKEN` is read from the environment at call time, sent
+  only in a request body, never stored on an instance, never logged, never placed
+  in `ToolSpec.declare()` output, and redacted from every error message. There is
+  no `set_token()` — a token in a process global is a token in a traceback.
 
 ## Build order
 
@@ -90,5 +99,26 @@ pytest suite (offline, deterministic), package `README.md`, and
 ## Not doing (veto anytime)
 
 - No Qwen/LLM calls at runtime (offline-first; LLM hooks are documented interfaces only)
-- No HTTP server, no DB, no packaging beyond a minimal pyproject
+- No DB, no packaging beyond a minimal pyproject
 - No resolution of the Action-gate vs Audit-auditor seam (open team question, unchanged)
+
+### Superseded since this plan was written
+
+- ~~No HTTP server~~ — `service.py` ships `ToolServer`/`HttpToolClient`, the
+  boundary in `specs/financial-tools-service.md` §5. The line above was already
+  stale when market data landed; corrected here rather than left misleading.
+- ~~No network calls~~ — see the non-interference guarantees above. Network is
+  confined to `fin_tools/market_data.py`.
+
+### Market data scope (added with `market.*`)
+
+- **Closed allow-list, and no tool takes an `api_name`.** The endpoint is
+  hard-coded per tool, so an agent cannot reach an arbitrary Tushare endpoint.
+  `ALLOWED_APIS` holds exactly `trade_cal`, `daily`, `shibor_lpr`, `shibor`,
+  `stock_basic` — each verified against the live API before being listed.
+- **Read-only, and quote data, not money.** Every `market.*` tool is
+  `side_effects=False`; the module never imports `World` or `Payments`; no output
+  field is named `*_cents`. See `specs/decisions.md` for the ratified rule.
+- **Still not doing:** no caching layer, no rate limiting, no retry/backoff, no
+  fixture or offline data source, no FX/macro/credit endpoints. A caller with no
+  token gets `ServiceUnavailable`, not invented numbers.

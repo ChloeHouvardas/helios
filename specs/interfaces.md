@@ -80,6 +80,22 @@ Each tool declares:
 
 The side-effect flag determines whether a call runs directly or goes through the audit gate. Any implementation that follows the contract, including mocks, can be swapped in without changing the agent runtime.
 
+### Call outcomes
+
+A tool call has three distinguishable outcomes, and conflating the last two corrupts the action log:
+
+| Outcome | Meaning | What the agent should do |
+|---|---|---|
+| `ok: true` | the tool ran and returned a result | use the result |
+| `rejected: true` | a gate or validator looked at this request and refused it | change the request, or report that it cannot be done |
+| `unavailable: true` | nobody decided anything; the answer could not be obtained (no credential, timeout, upstream refusal) | the request may be fine — retry, or report the outage |
+
+An outage must never be reported as a rejection. Recording one as a rejection writes a gate decision into the audit log that no gate ever made, and sends the agent "fixing" a call that was never wrong.
+
+### Market data tools
+
+`market.*` tools are read-only quote-data reads and declare `side_effects=False`. They carry no credential in their declaration, accept no endpoint name from the caller (the endpoint is hard-coded per tool against a closed allow-list), and return floats with an explicit unit and `as_of` date. Quote data never reaches a balance or the ledger — see `specs/decisions.md`.
+
 ## Interfaces to Define Later
 
 - Generated application package format — spec format defined in `specs/app-builder.md`; packaging and hosting still open
