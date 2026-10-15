@@ -13,6 +13,7 @@ __pycache__/
 .helios-run/
 engine.log
 data/core/
+.helios-data/
 
 # Local environment
 .env

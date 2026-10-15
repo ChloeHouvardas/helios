@@ -5,64 +5,67 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "fin-tools"
 version = "0.1.0"
-description = "Helios Financial Tools Developer Interface — offline prototypes (payments, email, spreadsheets, simulation, intent verification, knowledge graph, forecasting)"
+description = "Helios Financial Tools Developer Interface — one tool registry over payments, email, receivables, forecasting, spreadsheets, market data, intent verification and the knowledge graph"
 requires-python = ">=3.10"
+
+# Dependencies come from the teammate packages this registry now wraps. They are
+# pinned to the versions verified green in this repo's venv so a rebuild on
+# another machine (the Mac mini build host) resolves the same set.
+#
+#   numpy       helios_forecast seeded Monte Carlo
+#   jinja2      email_tool template rendering
+#   jsonschema  email_tool request/response validation (Draft 2020-12)
+#   pydantic    payments_collect models
+#   openpyxl    spreadsheets XLSX parsing and its tests
+#   PyYAML      audit_manifest.manifest_to_yaml
+#
+# fastapi/uvicorn/httpx are NOT required: spreadsheets/app.py is the only FastAPI
+# consumer and is imported lazily, and the Qwen client degrades when httpx is
+# absent. Keeping them out means the tool surface installs and tests offline.
 dependencies = [
-    # helios_forecast projects cash-flow paths with Monte Carlo simulation.
-    "numpy>=1.26",
-    # spreadsheets reads and writes .xlsx workbooks (engine.py, parsing.py).
-    "openpyxl>=3.1",
-    # spreadsheets/app.py is a FastAPI service; the tests build workbooks and
-    # drive the engine directly, but importing the package pulls app.py in.
-    "fastapi>=0.115",
-    "pydantic>=2.8",
-    "python-multipart>=0.0.9",
-    # email_tool renders Jinja2 templates and validates requests/responses
-    # against the JSON Schemas it ships.
-    "jinja2>=3.1",
-    "jsonschema>=4.21",
-    # payments_collect models default to Asia/Shanghai via zoneinfo, resolved
-    # at import time (models.py: SHANGHAI = ZoneInfo("Asia/Shanghai")). tzdata
-    # is the IANA database fallback for hosts with no system zoneinfo (slim
-    # containers, Windows). Cheap insurance for an import-time constant.
+    "numpy==2.3.5",
+    "jinja2==3.1.6",
+    "jsonschema==4.25.0",
+    "pydantic==2.12.4",
+    "openpyxl==3.1.5",
+    "PyYAML==6.0.3",
+    # payments_collect resolves ZoneInfo("Asia/Shanghai") at import time; tzdata
+    # is the IANA fallback for slim containers with no system zoneinfo.
     "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
-# The upstream branch declared pandas + rapidfuzz here for `import_sheet` and
-# `reconcile`. Neither is imported by any file in this package as imported, so
-# they are not pulled into the base install. Kept as an extra so the upstream
-# intent is recorded rather than silently dropped.
-import = [
-    "pandas>=2.2",
-    "rapidfuzz>=3.6",
-]
-dev = ["pytest>=8"]
+# Only needed to serve spreadsheets over HTTP, or to call Qwen for column-mapping
+# inference. Both paths are optional at runtime.
+http = ["fastapi>=0.115", "uvicorn>=0.32", "httpx>=0.28"]
 
-# `fin_tools` is a flat-layout package with non-package siblings (`tests/`,
-# `fixtures/`, `research/`). Setuptools' automatic flat-layout discovery refuses
-# to guess in that situation, so the package list is stated explicitly.
-#
-# The sibling tool packages imported from teammates' work live alongside
-# `fin_tools` in this same directory and are installed by the same pyproject,
-# so they are listed here too. `spreadsheets` has a `dev/` subpackage.
-[tool.setuptools]
-packages = [
-    "fin_tools",
-    "helios_forecast",
-    "spreadsheets",
-    "spreadsheets.dev",
-    "email_tool",
-    "payments_collect",
+# Explicit discovery: this directory holds several sibling top-level packages
+# (fin_tools plus the imported teammate packages), so automatic flat-layout
+# discovery refuses to guess which ones belong in the distribution.
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
+    "fin_tools*",
+    "email_tool*",
+    "payments_collect*",
+    "helios_forecast*",
+    "spreadsheets*",
 ]
+exclude = ["tests*", "fixtures*", "research*", "docs*"]
 
-# email_tool loads its JSON Schemas and Jinja2/markdown templates from paths
-# relative to the package (tool.py SCHEMAS_DIR, templates.py
-# DEFAULT_TEMPLATES_DIR), so they ship with it rather than being data files
-# that happen to sit nearby.
 [tool.setuptools.package-data]
-email_tool = ["schemas/*.json", "templates/*.md", "templates/README.md"]
+email_tool = ["schemas/*.json", "templates/*.md", "templates/*.j2"]
+spreadsheets = ["*.md"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# tests/ holds this package's own suite. The three teammate test directories
+# came in with their packages and are collected too, so a rename or a broken
+# import inside an imported package fails the build here rather than silently
+# shipping untested code.
+testpaths = [
+    "tests",
+    "email_tool/tests",
+    "payments_collect/tests",
+    "helios_forecast/tests",
+]
 addopts = "-q"

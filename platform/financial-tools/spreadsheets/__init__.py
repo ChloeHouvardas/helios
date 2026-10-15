@@ -19,7 +19,6 @@ Knowledge Graph service, kept behind one class so it can be swapped without
 callers changing. See `store.py`.
 """
 
-from .app import create_app
 from .engine import LocalSheetEngine, SheetEngine
 from .errors import HeliosError
 from .filestore import FileStore
@@ -35,6 +34,22 @@ from .models import (
 from .qwen import NullQwen, QwenClient
 from .store import KnowledgeGraph, MultiTenantGraph
 from .tools import AuditLog, Sheets, SheetsService
+
+
+def __getattr__(name: str):
+    """Resolve `create_app` lazily.
+
+    `app.py` imports FastAPI, which the tool core does not need. Importing it
+    eagerly made the whole package unimportable on a machine without FastAPI,
+    even for callers that only want `Sheets`. Deferring keeps the offline and
+    test paths dependency-free; the HTTP app is still available by the same
+    name, and a missing FastAPI now surfaces only when an app is actually built.
+    """
+    if name == "create_app":
+        from .app import create_app
+
+        return create_app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "create_app",

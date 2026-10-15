@@ -715,8 +715,12 @@ class SheetsService:
             if scope.get(key) is not None:
                 tx_query[key] = scope[key]
                 ob_query[key] = scope[key]
-        if scope.get("from"):
-            tx_query.setdefault("_range", {})
+        # NOTE: this used to do `tx_query.setdefault("_range", {})` when the scope
+        # carried a date range. `KnowledgeGraph._record_matches_query` compares an
+        # unknown key with `dump.get(key)`, which is None for a pseudo-field, so
+        # `_range: {}` never matched and EVERY transaction was silently dropped —
+        # reconcile then reported no matches instead of an error. The date range
+        # is applied by `_in_scope` below, which is correct and sufficient.
         transactions = [t for t in self.kg.query_records(tx_query)
                         if isinstance(t, Transaction) and t.id not in linked
                         and self._in_scope(t, scope)]

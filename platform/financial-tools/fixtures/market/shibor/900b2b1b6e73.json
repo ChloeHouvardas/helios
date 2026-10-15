@@ -1,0 +1,20 @@
+{
+  "meta": {
+    "api_name": "shibor",
+    "params": {},
+    "fields": "date,on,1w,2w,1m,3m,6m,9m,1y",
+    "as_of": "2026-10-20",
+    "fetched_at": "2026-10-20T02:00:00+00:00",
+    "source_url": "https://api.tushare.pro",
+    "note": "SAMPLE DATA for offline tests and demos. Not a live quote; values are illustrative."
+  },
+  "code": 0,
+  "msg": "",
+  "data": {
+    "fields": ["date", "on", "1w", "2w", "1m", "3m", "6m", "9m", "1y"],
+    "items": [
+      ["20261019", 1.4, 1.7, 1.8, 1.9, 1.95, 2.0, 2.05, 2.1],
+      ["20261020", 1.42, 1.72, 1.82, 1.92, 1.97, 2.02, 2.07, 2.12]
+    ]
+  }
+}

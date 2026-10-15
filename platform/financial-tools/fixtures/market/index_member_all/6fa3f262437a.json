@@ -1,0 +1,19 @@
+{
+  "meta": {
+    "api_name": "index_member_all",
+    "params": {"l1_name": "银行"},
+    "fields": "l1_code,l1_name,con_code,in_date,out_date,is_new",
+    "as_of": "2026-10-20",
+    "fetched_at": "2026-10-20T02:00:00+00:00",
+    "source_url": "https://api.tushare.pro",
+    "note": "SAMPLE DATA for offline tests and demos. Shenwan (申万) industry membership. Fictional values."
+  },
+  "code": 0,
+  "msg": "",
+  "data": {
+    "fields": ["l1_code", "l1_name", "con_code", "in_date", "out_date", "is_new"],
+    "items": [
+      ["801780", "银行", "000001.SZ", "20140101", null, "Y"]
+    ]
+  }
+}

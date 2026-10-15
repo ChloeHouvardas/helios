@@ -62,11 +62,36 @@ def test_required_argument_rules_are_derived_from_the_schemas(tools):
 
 
 def test_collections_rules_are_absent(tools):
-    """No extension_offer_days / customer_id leakage from the default mandate."""
+    """No blanket collections mandate leaks into the derived financial manifest.
+
+    The integration layer's default mandate is collections-specific: it limits
+    `extension_offer_days` and requires `customer_id` + `invoice_id` on EVERY
+    gated tool. `build_financial_manifest` instead derives each rule from the
+    tools' own schemas, so no tool is ever made to carry an argument it does not
+    declare.
+
+    `customer_id` is now a legitimate field — `collect.add_receivable` declares
+    it — so this is no longer a bare substring check. What must still hold is
+    that it never appears as a BLANKET requirement on tools that lack it (e.g.
+    `payments.send`), which is exactly the shape the leaked mandate took. The
+    two collections-only names, which no financial tool declares, stay absent.
+    """
     manifest = build_financial_manifest(tools)
     blob = manifest_to_yaml(manifest)
     assert "extension_offer_days" not in blob
-    assert "customer_id" not in blob
+    assert "invoice_id" not in blob
+
+    schemas = {t["name"]: t["input_schema"].get("properties", {})
+               for t in manifest["tools"]}
+    for rule in manifest["rules"]:
+        if "customer_id" in set(rule.get("required_arguments", [])):
+            for name in rule["tools"]:
+                assert "customer_id" in schemas[name], (
+                    f"rule {rule['id']} requires customer_id on {name}, which "
+                    f"does not declare it — the collections mandate leaked")
+    # The pre-existing gated tools must not have acquired a customer_id field.
+    for name in ("payments.send", "email.send", "spreadsheet.save"):
+        assert "customer_id" not in schemas[name]
 
 
 def test_amount_ceiling_is_in_cents(tools):
