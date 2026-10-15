@@ -12,10 +12,24 @@ Two properties matter more than the happy path:
   written into the Dockerfile or the nginx config. Those files are readable by
   anyone who can read the bundle or the config directory, and the whole
   sidecar design rests on the app container not holding the execution secret.
-- **Nothing is written outside the run directory.** `REPO` and `TENANTS_DIR`
-  are module-level paths, so they are redirected at a temp dir here. A test
-  that silently drops a tenant secret into the working tree would be worse
-  than no test.
+- **Nothing is written outside the run directory.** `REPO`, `RUN`,
+  `TENANTS_DIR` and `NGINX_DIR` are module-level paths, so they are redirected
+  at a temp dir here. A test that silently drops a tenant secret into the
+  working tree would be worse than no test.
+
+Ported to the p2 engine (blue/green `-next` candidates, marker-delimited nginx
+blocks, `nginx -t` before reload). Dropped from the original p0 suite:
+- test_the_app_config_routes_the_tenant_hostname_to_the_container_ip,
+  test_the_path_based_route_lands_in_default_conf,
+  test_default_conf_is_created_from_the_fallback_when_absent,
+  test_the_route_is_inserted_inside_the_server_block_not_after_it,
+  test_two_apps_get_two_config_files: duplicates of p2's
+  test_orchestrator.py routing tests (test_route_written_for_new_slug,
+  test_redeploy_does_not_duplicate_blocks, test_two_slugs_coexist_and_do_not_collide).
+- test_an_empty_permission_list_falls_back_to_the_documented_default: pinned
+  the sidecar being granted payments+email for an app that declared no
+  permissions; that fallback is a grant the app never asked for, so it is
+  not pinned here (see test_contracts: an empty list is a legitimate manifest).
 """
 from __future__ import annotations
 
@@ -114,6 +128,9 @@ def make_mock_client() -> MagicMock:
             if name not in known:
                 nginx = MagicMock()
                 nginx.name = name
+                # `nginx -t` must pass, or reload_nginx refuses to reload. A
+                # bare MagicMock exit_code compares unequal to 0.
+                nginx.exec_run.return_value = SimpleNamespace(exit_code=0, output=b"")
                 known[name] = nginx
             return known[name]
         if name in known:
@@ -132,7 +149,9 @@ def env(monkeypatch, tmp_path):
     tenants.mkdir(parents=True)
 
     monkeypatch.setattr(orchestrator, "REPO", root)
+    monkeypatch.setattr(orchestrator, "RUN", root / ".helios-run")
     monkeypatch.setattr(orchestrator, "TENANTS_DIR", tenants)
+    monkeypatch.setattr(orchestrator, "NGINX_DIR", root / ".helios-run" / "nginx")
     # The smoke test polls for up to 45 seconds. A failing smoke test would
     # otherwise spend 45 real seconds in this suite for no reason.
     monkeypatch.setattr(orchestrator.time, "sleep", lambda _: None)
@@ -147,6 +166,16 @@ def env(monkeypatch, tmp_path):
     return SimpleNamespace(
         orch=orch, client=client, root=root, tenants=tenants, app_dir=app_dir
     )
+
+
+def created(env, name: str) -> dict:
+    """The `containers.create` record for a container name.
+
+    p2 brings every app and sidecar up as a `-next` candidate and renames it
+    into place only after it passes /health, so the creation record carries
+    the candidate name, never the production one.
+    """
+    return next(c for c in env.client.containers.created if c.get("name") == name)
 
 
 def deploy(env, *, name="collect", tenant="demo", entry="main:app", port=3000,
@@ -244,58 +273,19 @@ def test_the_image_tag_encodes_tenant_and_app(env) -> None:
 
 # --- nginx config generation ----------------------------------------------
 
-def test_the_app_config_routes_the_tenant_hostname_to_the_container_ip(env) -> None:
-    result = deploy(env, name="collect", tenant="demo", port=3000)
-    conf_path = env.root / ".helios-run" / "nginx" / "collect-demo.conf"
-    assert conf_path.is_file()
-    conf = conf_path.read_text(encoding="utf-8")
-
-    assert "server_name collect-demo.helios.test;" in conf
-    assert "listen 80;" in conf
-    assert f"proxy_pass http://{TENANT_IP}:3000;" in conf
-    assert "proxy_set_header Host $host;" in conf
-    assert "proxy_set_header X-Real-IP $remote_addr;" in conf
-    assert f"http://collect-demo.helios.test" in result["urls"]
-
-
-def test_the_path_based_route_lands_in_default_conf(env) -> None:
-    """Hostname routing needs a DNS entry; the /apps/<slug> path always works."""
-    deploy(env, name="collect", tenant="demo", port=3000)
-    default_conf = (env.root / ".helios-run" / "nginx" / "default.conf").read_text(
-        encoding="utf-8"
-    )
-    assert "location /apps/collect-demo/ {" in default_conf
-    assert "rewrite ^/apps/collect-demo(/.*)$ $1 break;" in default_conf
-    assert "location = /apps/collect-demo {" in default_conf
-    assert f"proxy_pass http://{TENANT_IP}:3000;" in default_conf
-
-
-def test_default_conf_is_created_from_the_fallback_when_absent(env) -> None:
-    default_conf_path = env.root / ".helios-run" / "nginx" / "default.conf"
-    assert not default_conf_path.exists()
-    deploy(env)
-    conf = default_conf_path.read_text(encoding="utf-8")
-    assert "listen 80 default_server;" in conf
-    assert "Helios Platform" in conf
-
-
-def test_the_route_is_inserted_inside_the_server_block_not_after_it(env) -> None:
-    """Inserting after the closing brace produces an invalid nginx config."""
-    deploy(env)
-    conf = (env.root / ".helios-run" / "nginx" / "default.conf").read_text(
-        encoding="utf-8"
-    )
-    assert conf.rstrip().endswith("}")
-    assert conf.count("}") == conf.count("{")
-
-
 def test_redeploying_does_not_duplicate_the_route(env) -> None:
-    """Idempotent: a second deploy must not stack a second location block."""
+    """Idempotent through the full deploy() path, not just write_nginx_route.
+
+    A second deploy goes through the blue/green swap and must replace exactly
+    its own marker-delimited block, not stack a second location block.
+    """
     deploy(env, name="collect", tenant="demo")
     deploy(env, name="collect", tenant="demo")
     conf = (env.root / ".helios-run" / "nginx" / "default.conf").read_text(
         encoding="utf-8"
     )
+    assert conf.count("# helios:begin collect-demo") == 1
+    assert conf.count("# helios:end collect-demo") == 1
     assert conf.count("location /apps/collect-demo/ {") == 1
     assert conf.count("location = /apps/collect-demo {") == 1
     assert conf.count("{") == conf.count("}")
@@ -323,24 +313,6 @@ def test_the_nginx_config_contains_no_secret(env) -> None:
         assert state["execution_secret"] not in text, path.name
 
 
-def test_two_apps_get_two_config_files(env) -> None:
-    deploy(env, name="collect", tenant="demo")
-    second = env.app_dir.parent / "bundle2"
-    second.mkdir()
-    saved = env.app_dir
-    env.app_dir = second
-    try:
-        deploy(env, name="invoice", tenant="demo")
-    finally:
-        env.app_dir = saved
-    nginx_dir = env.root / ".helios-run" / "nginx"
-    assert (nginx_dir / "collect-demo.conf").is_file()
-    assert (nginx_dir / "invoice-demo.conf").is_file()
-    conf = (nginx_dir / "default.conf").read_text(encoding="utf-8")
-    assert "location /apps/collect-demo/ {" in conf
-    assert "location /apps/invoice-demo/ {" in conf
-
-
 def test_nginx_is_reloaded_after_the_config_is_written(env) -> None:
     """A written config that is never loaded changes nothing at runtime."""
     deploy(env)
@@ -365,28 +337,16 @@ def test_deploy_reports_both_containers_and_the_internal_dns(env) -> None:
     }
     assert result["urls"] == [
         "http://collect-demo.helios.test",
-        "http://localhost/apps/collect-demo",
+        "http://localhost/apps/collect-demo/",
     ]
 
 
 def test_the_declared_permissions_are_echoed_to_the_audit_sidecar(env) -> None:
     """The sidecar's ALLOWED_TOOLS is what actually narrows the app."""
     result = deploy(env, permissions=["payments", "email"])
-    assert result["audit"] == {"allowed_tools": ["payments", "email"]}
+    assert result["audit"]["allowed_tools"] == ["payments", "email"]
 
-    audit = next(
-        c for c in env.client.containers.created
-        if c.get("name") == "demo-collect-audit"
-    )
-    assert audit["environment"]["ALLOWED_TOOLS"] == "payments,email"
-
-
-def test_an_empty_permission_list_falls_back_to_the_documented_default(env) -> None:
-    deploy(env, permissions=[])
-    audit = next(
-        c for c in env.client.containers.created
-        if c.get("name") == "demo-collect-audit"
-    )
+    audit = created(env, "demo-collect-audit-next")
     assert audit["environment"]["ALLOWED_TOOLS"] == "payments,email"
 
 
@@ -396,37 +356,61 @@ def test_the_app_container_never_receives_the_execution_secret(env) -> None:
     state = json.loads((env.tenants / "demo.json").read_text(encoding="utf-8"))
     secret = state["execution_secret"]
 
+    names = [r.get("name", "") for r in env.client.containers.created]
+    assert "demo-collect-app-next" in names
+    assert any(n.startswith("smoke-") for n in names)
+
     for record in env.client.containers.created:
         name = record.get("name", "")
         env_vars = record.get("environment") or {}
-        if name.endswith("-app") or name.startswith("smoke-"):
+        if name.endswith("-app-next") or name.startswith("smoke-"):
             assert secret not in env_vars.values(), name
             assert "HELIOS_EXECUTION_SECRET" not in env_vars, name
 
-    audit = next(
-        c for c in env.client.containers.created
-        if c.get("name") == "demo-collect-audit"
+    # Only the sidecar (and the tenant core) hold it.
+    holders = sorted(
+        r["name"] for r in env.client.containers.created
+        if (r.get("environment") or {}).get("HELIOS_EXECUTION_SECRET") == secret
     )
-    assert audit["environment"]["HELIOS_EXECUTION_SECRET"] == secret
+    assert holders == ["demo-collect-audit-next", "helios-core-demo"]
 
 
 def test_the_app_container_points_at_the_sidecar_not_at_core(env) -> None:
     deploy(env)
-    app = next(
-        c for c in env.client.containers.created
-        if c.get("name") == "demo-collect-app"
-    )
+    app = created(env, "demo-collect-app-next")
     assert app["environment"]["HELIOS_AUDIT_URL"] == "http://collect-audit:8080/execute"
     assert "HELIOS_CORE_URL" not in app["environment"]
+    # The sidecar is the one that talks to core.
+    audit = created(env, "demo-collect-audit-next")
+    assert audit["environment"]["HELIOS_CORE_URL"] == "http://helios-core:9000"
 
 
-def test_the_smoke_test_container_is_removed_whether_it_passes_or_not(env) -> None:
-    deploy(env)
-    smoke = next(
+def _smoke_container(env) -> MagicMock:
+    return next(
         c["_container"] for c in env.client.containers.created
         if str(c.get("name", "")).startswith("smoke-")
     )
-    smoke.remove.assert_called_once_with(force=True)
+
+
+def test_the_smoke_test_container_is_removed_when_it_passes(env) -> None:
+    deploy(env)
+    _smoke_container(env).remove.assert_called_once_with(force=True)
+
+
+def test_the_smoke_test_container_is_removed_when_it_fails(env) -> None:
+    """A crashed smoke container left behind would hold the sandbox network
+    and its image open, and pile up one per failed attempt."""
+    original = env.client.containers.create.side_effect
+
+    def failing(*args, **kwargs):
+        container = original(*args, **kwargs)
+        container.exec_run.return_value = SimpleNamespace(exit_code=1, output=b"")
+        return container
+
+    env.client.containers.create.side_effect = failing
+    with pytest.raises(orchestrator.DeployError):
+        deploy(env)
+    _smoke_container(env).remove.assert_called_once_with(force=True)
 
 
 def test_a_smoke_test_failure_reports_the_crash_logs(env) -> None:
@@ -600,7 +584,11 @@ def test_list_apps_reads_the_labels_the_deploy_writes(env) -> None:
     listed = MagicMock()
     listed.name = "demo-collect-app"
     listed.status = "running"
-    listed.labels = {"helios.app": "collect", "helios.tenant": "demo"}
+    # p2 creates the app as a candidate and cannot relabel it after the
+    # rename, so a promoted app carries the role it was created with.
+    labels = created(env, "demo-collect-app-next")["labels"]
+    assert labels["helios.managed"] == "true"
+    listed.labels = dict(labels)
     listed.image.tags = ["helios-app-demo-collect:latest"]
     env.client.containers.list.return_value = [listed]
 
@@ -608,10 +596,11 @@ def test_list_apps_reads_the_labels_the_deploy_writes(env) -> None:
     assert apps == [{
         "container": "demo-collect-app",
         "status": "running",
+        "role": "candidate",
         "tenant": "demo",
         "app": "collect",
         "image": "helios-app-demo-collect:latest",
-        "url": "http://localhost/apps/collect-demo",
+        "url": "http://localhost/apps/collect-demo/",
     }]
 
 
@@ -620,7 +609,7 @@ def test_list_apps_is_sorted_for_stable_output(env) -> None:
         c = MagicMock()
         c.name = name
         c.status = "running"
-        c.labels = {"helios.app": name, "helios.tenant": "demo"}
+        c.labels = {"helios.app": name, "helios.tenant": "demo", "helios.role": "app"}
         c.image.tags = ["t:latest"]
         return c
 
@@ -632,7 +621,7 @@ def test_an_untagged_image_does_not_crash_list_apps(env) -> None:
     c = MagicMock()
     c.name = "x-app"
     c.status = "running"
-    c.labels = {"helios.app": "x", "helios.tenant": "demo"}
+    c.labels = {"helios.app": "x", "helios.tenant": "demo", "helios.role": "app"}
     c.image.tags = []
     env.client.containers.list.return_value = [c]
     assert env.orch.list_apps()[0]["image"] == "<none>"

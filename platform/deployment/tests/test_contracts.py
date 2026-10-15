@@ -8,6 +8,11 @@ app adopts, and the linter is the last static gate before a bundle is built
 into an image. A linter that flags a documented placeholder, or a loader that
 accepts an out-of-range port, both fail at the worst possible moment — after a
 build, in front of a judge.
+
+Ported to the p2 engine's contract. Dropped from the original p0 suite:
+- the `("", "app")` case of test_name_is_sanitised_to_a_dns_safe_slug: p2
+  rejects an empty name outright instead of falling back to "app" (now
+  pinned by test_an_empty_name_is_rejected).
 """
 from __future__ import annotations
 
@@ -97,7 +102,6 @@ def test_a_missing_manifest_is_a_contract_error(tmp_path: Path) -> None:
         ("  padded  ", "padded"),
         ("---dashes---", "dashes"),
         ("!!!", "app"),           # nothing survives -> the fallback
-        ("", "app"),
         ("__init__", "init"),     # leading non-alphanumerics stripped
     ],
 )
@@ -112,6 +116,13 @@ def test_name_is_sanitised_to_a_dns_safe_slug(
     """
     write_manifest(tmp_path, f'name: "{raw}"\n')
     assert load_manifest(tmp_path).name == expected
+
+
+def test_an_empty_name_is_rejected(tmp_path: Path) -> None:
+    """An empty name is a missing name, not a request for the "app" fallback."""
+    write_manifest(tmp_path, 'name: ""\n')
+    with pytest.raises(ContractError, match="'name' is required"):
+        load_manifest(tmp_path)
 
 
 def test_tenant_is_sanitised_the_same_way(tmp_path: Path) -> None:
@@ -142,7 +153,7 @@ def test_sanitize_never_returns_empty() -> None:
 @pytest.mark.parametrize("port", [0, -1, 65536, 99999])
 def test_an_out_of_range_port_is_rejected(tmp_path: Path, port: int) -> None:
     write_manifest(tmp_path, f"name: a\nport: {port}\n")
-    with pytest.raises(ContractError, match="invalid port"):
+    with pytest.raises(ContractError, match=rf"'port' {port} is outside 1-65535"):
         load_manifest(tmp_path)
 
 
@@ -154,7 +165,7 @@ def test_the_port_range_boundaries_are_accepted(tmp_path: Path, port: int) -> No
 
 def test_a_non_numeric_port_is_rejected(tmp_path: Path) -> None:
     write_manifest(tmp_path, "name: a\nport: not-a-port\n")
-    with pytest.raises(ContractError, match="schema error"):
+    with pytest.raises(ContractError, match="'port' must be an integer"):
         load_manifest(tmp_path)
 
 
@@ -168,10 +179,11 @@ def test_an_unknown_permission_is_rejected_and_names_the_alternatives(
     with pytest.raises(ContractError) as excinfo:
         load_manifest(tmp_path)
     message = str(excinfo.value)
-    assert "shell" in message
-    assert "unknown permissions" in message
+    assert "unknown permission 'shell'" in message
     for allowed in sorted(ALLOWED_TOOLS):
         assert allowed in message
+    # The valid entry next to it is not reported as a problem.
+    assert "unknown permission 'payments'" not in message
 
 
 def test_every_allowed_permission_is_accepted(tmp_path: Path) -> None:
@@ -202,14 +214,14 @@ def test_invalid_yaml_is_reported_as_a_contract_error(tmp_path: Path) -> None:
 
 def test_a_missing_name_is_rejected(tmp_path: Path) -> None:
     write_manifest(tmp_path, "port: 3000\n")
-    with pytest.raises(ContractError, match="schema error"):
+    with pytest.raises(ContractError, match="'name' is required"):
         load_manifest(tmp_path)
 
 
 def test_an_empty_file_is_rejected(tmp_path: Path) -> None:
     """`yaml.safe_load` returns None for an empty file; that is not a manifest."""
     write_manifest(tmp_path, "")
-    with pytest.raises(ContractError, match="schema error"):
+    with pytest.raises(ContractError, match="'name' is required"):
         load_manifest(tmp_path)
 
 
