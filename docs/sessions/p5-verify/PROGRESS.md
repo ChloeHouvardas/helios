@@ -82,3 +82,35 @@ if glm/zhipu/bigmodel reappear).
 **Next.** Legacy refs remain in `HANDOFF.md` (lines 173/176, 282, 332, 377) — but p0
 owns `HANDOFF.md` and is mid-flight, so editing it now would collide. Deferred to the
 merge in section H. Continue waiting on upstream via the improved watcher.
+
+## Entry 5 — 2026-10-15, superseded by p0; migration reverted
+
+**Did.** Reverted `24c7332` as `2e66fe1`. Confirmed post-revert state: 123 passed (back
+to baseline), worktree clean, and `git diff cc96f0a..HEAD` lists only the three
+`docs/sessions/p5-verify/` files — i.e. my net change to the seven driver files is zero.
+
+**Observed.** p0-foundation landed the *same* migration while I was working on it:
+commit `72829c1 fix: point the model driver at Qwen via DashScope`. My earlier
+"no upstream branch touches these files" check was correct at the time it was run — p0
+was at `dc626ab` and `git merge-base --is-ancestor 72829c1 dc626ab` returns false, so
+that commit landed afterwards. This is a race, not a mistake in the check; it is why
+conflict-avoidance checks must be re-run immediately before the merge, not once early.
+
+p0's implementation is **more correct than mine** on the load-bearing detail. Mine
+defaulted `enable_thinking=True` alongside `stream=False`; p0's commit message records
+that qwen3 hybrid-thinking models *refuse a non-streaming request while thinking is
+on*, so they send `enable_thinking: false` explicitly, and send neither thinking field
+at all for a non-qwen model id. My version would have failed at runtime against the
+real endpoint. p0 also adds `OPENAI_API_KEY`/`OPENAI_BASE_URL`/`OPENAI_MODEL`
+fallbacks (so an existing Qwen Code setup needs no second config) and reaches 42 driver
+tests. Mine had one thing p0 lacks — a source-scanning guard test that fails if
+glm/zhipu/bigmodel reappear — but p0's mock rejects the legacy `thinking` object, which
+covers the same regression at the wire level, so it is not worth re-litigating.
+
+Reverting is the merge-preserving choice, not a surrender: because my side is now
+identical to the merge base for those files, a three-way merge takes p0's version
+cleanly with no conflict. Keeping my commit would have produced a seven-file conflict
+between two changes with the same intent.
+
+**Next.** Cold start is already proven on p0's branch in `/tmp/helios-pre` (see Entry 6).
+Wait for all five upstream sessions to land, then run tasks 1-5 against the merged tree.
