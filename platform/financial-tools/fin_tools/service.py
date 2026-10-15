@@ -34,7 +34,27 @@ from .intent_verification import VerificationError
 SECRET_ENV = "HELIOS_INTENT_SECRET"
 
 
-class ServiceUnavailable(Exception):
+class UpstreamError(Exception):
+    """Base for "we could not get an answer" failures.
+
+    Exists so the result envelope can tell two things apart that must never be
+    conflated:
+
+      - a **rejection** — a gate or a validator looked at the request and said
+        no. The agent should change what it asked for.
+      - an **unavailable** — nobody decided anything; the data or the service
+        could not be reached. The request may well be fine and a retry may
+        succeed.
+
+    Before this distinction, `_wrap` mapped every exception to
+    `{"rejected": True}`, so a network timeout was recorded in the audit trail as
+    a policy denial of an action nobody ever adjudicated. That is a false record,
+    and for a side-effecting tool it also misleads the agent into "fixing" a call
+    that was never wrong.
+    """
+
+
+class ServiceUnavailable(UpstreamError):
     """Raised when the tool service cannot be reached. Callers fail closed."""
 
 
@@ -186,9 +206,25 @@ class HttpToolClient:
 # ---------------------------------------------------------------------------
 
 def _wrap(name: str, fn: Any) -> Dict[str, Any]:
-    """Uniform envelope so a client can tell 'tool said no' from 'wire broke'."""
+    """Uniform envelope so a client can tell 'tool said no' from 'wire broke'.
+
+    Three outcomes, deliberately distinguishable:
+
+      ok=True                     the tool ran and returned
+      ok=False, rejected=True     a gate or validator refused this request
+      ok=False, unavailable=True  nobody decided anything; the answer could not
+                                  be obtained (no token, timeout, upstream error)
+
+    `unavailable` must never be reported as `rejected`. A rejection tells an agent
+    to change its request; an unavailable one tells it that the request may be
+    fine and worth retrying. Collapsing them writes a false decision into the
+    audit log and sends the agent "fixing" a call that was never wrong.
+    """
     try:
         return {"ok": True, "tool": name, "result": fn()}
+    except UpstreamError as exc:
+        return {"ok": False, "tool": name, "unavailable": True,
+                "retryable": True, "error": str(exc)}
     except VerificationError as exc:
         return {"ok": False, "tool": name, "rejected": True, "error": str(exc)}
     except (KeyError, ValueError) as exc:
