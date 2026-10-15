@@ -1,4 +1,4 @@
-# Platform status: what actually exists (verified 2026-10-14)
+# Platform status: what actually exists (verified 2026-10-15)
 
 Read this before building anything. It distinguishes **what runs today** from
 **what is designed but not implemented**, so a generated app does not call a
@@ -8,72 +8,89 @@ Everything below was verified by importing the packages and running them, not by
 reading the specs. Where a spec and the code disagree, the code is right and this
 file says so.
 
-## The three packages
+## The packages
 
 | Package | Path | Import | Status |
 |---|---|---|---|
-| Financial tools | `platform/financial-tools` | `fin_tools` | **Works.** 12 registered tools, offline, no deps beyond stdlib |
-| Audit agent builder | `platform/audit-agent-builder` | `audit_agent` | **Works.** 79 tests pass offline; pydantic + pyyaml |
-| Agent toolkit (action side) | `platform/action-agent-builder` | `agent_toolkit` | **Partial.** Gate, log, holds, manifest loader work; **no agent loop, no CLI** |
-| App builder | `platform/app-builder` | — | **Design only.** README placeholder; no code |
+| Financial tools | `platform/financial-tools` | `fin_tools` + four sibling packages | **Works.** 367 tests offline. `fin_tools` registers 12 tools; siblings are `helios_forecast`, `spreadsheets`, `email_tool`, `payments_collect` |
+| Audit agent builder | `platform/audit-agent-builder` | `audit_agent` | **Works.** 81 tests pass offline; pydantic + pyyaml |
+| Agent toolkit (action side) | `platform/action-agent-builder` | `agent_toolkit` | **Works.** Contracts, log, holds, manifest loader, mock tools. No CLI yet (P3 writes `cli.py`; the pyproject no longer declares a script entry for it) |
+| Agent integration | `platform/agent-integration` | `agent_integration` | **Works.** 136 tests. The gated agent loop, audit bridge, adapters, manifest generator, Qwen model driver and CLI |
+| Deployment engine | `platform/deployment` | `engine`, `cli.helios`, `helios_sdk` | **Works.** 96 offline tests (docker-py mocked). Needs a Docker daemon only to actually deploy |
+| App builder | `platform/app-builder` | — | **Design only.** README + PLAN, no code |
 
-All three import cleanly from a single process with the source directories on
-`sys.path`. That is how `examples/invoice-payer/app.py` runs.
+All of these are installed editable into one repo venv — `scripts/bootstrap-venv.sh`
+builds it, `scripts/test-all.sh` runs every suite. No `PYTHONPATH` juggling and no
+per-package venv any more.
 
 ## What is missing, concretely
 
-### 1. There is no agent loop
-
-`specs/architecture-mermaid.md` says the runtime provides "the model calls tools
-in a loop, built on Qwen-Agent". It does not yet:
-
-- `agent_toolkit` has no `cli.py`, although `pyproject.toml` declares an
-  `agent-toolkit` script entry point at `agent_toolkit.cli:main`. That script
-  will fail to install as written.
-- `qwen_agent` is declared as a dependency but **is not installed** in this
-  checkout.
-- No `DASHSCOPE_API_KEY` is configured.
-
-**Consequence for you:** you must supply the loop. Either write it against
-Qwen-Agent once it is installed, or (as the example does) drive the runtime from
-deterministic code so the app runs offline. The gate underneath is unchanged
-either way — that is the point of the split.
-
-### 2. There is no scaffolder, validator, or schema tool
+### 1. There is no scaffolder, validator, or schema tool
 
 `specs/app-builder.md` defines all three in detail. None is implemented;
-`platform/app-builder/` holds a README only. There is no `helios-app.yaml`
-parser, no `stacks.yaml`, no UI kit, no DDL generator.
+`platform/app-builder/` holds a README and a PLAN only. There is no
+`helios-app.yaml` parser, no `stacks.yaml`, no UI kit, no DDL generator.
+
+`entry-point/checks/check_app.py` is the working stand-in for the validator: it
+loads both manifests under their own builders' validators and cross-checks them,
+including that the action side and the audit manifest agree on every tool's
+side-effect flag. It reports all problems at once and exits non-zero on any
+error. Run it in CI. It has its own tests under `entry-point/checks/tests/`.
 
 **Consequence for you:** *you are the scaffolder.* Follow the build order in
 `BUILD.md` and write the app directly. Write `helios-app.yaml` anyway — it is the
-design record and it will be machine-checkable the moment the validator lands.
+design record, and `check_app.py` already machine-checks much of it.
 
-### 3. The two audit gates overlap, and nobody has decided which wins
+### 2. The agent loop exists — use it
 
-This is the most important open item for anyone building an app.
+There is a gated agent loop: `platform/agent-integration/`.
 
-- `agent_toolkit.audit.AuditGate` — in-process, checks a `Proposal` against a
-  static `Mandate`. Its `MandateLimits` accepts **only four keys**, all
-  receivables-shaped: `max_extension_days`, `extension_owner_approval_days`,
-  `min_days_between_contacts`, `invoice_owner_approval_amount`. Its rule logic is
-  hard-coded to the `send_email` tool.
+- `runtime.GatedAgentRuntime` runs the loop: authorize the task, offer the model
+  only what was granted, turn every side-effect call into a proposal, adjudicate
+  it through the bridge, then execute / hold / deny. Holds are resumable by id,
+  and a run that exhausts its turn cap is an error rather than a silent success.
+- `model_driver.ModelDriver` drives Qwen over DashScope's OpenAI-compatible
+  endpoint with stdlib `urllib` — no SDK, no dependency tree. It returns a
+  proposal and stops, so the gate cannot be bypassed by an off-the-shelf helper
+  running the loop for you.
+- `wiring.build_integration()` assembles the auditor, the bridge and the runtime
+  in one call. `cli.py` gives you `demo`, `doctor`, `run`, `inspect`, `manifest`
+  and `selfcheck`.
+
+`qwen_agent` is **not** what the loop is built on, and no file imports it except
+a lazy optional import in `audit_agent/advisory.py` behind the `advisory` extra.
+Any doc that says the runtime is "built on Qwen-Agent" is wrong: the loop is an
+OpenAI-compatible tool-calling loop driven by Qwen.
+
+**Consequence for you:** you do not have to supply a loop. Use
+`build_integration()`, or the example's pattern of driving the runtime from
+deterministic code when you want an offline demo. The gate underneath is the same
+either way — that is the point of the split.
+
+### 3. The standalone audit agent is the authoritative gate
+
+This was the most important open item; it is now decided (see
+`specs/decisions.md`).
+
 - `audit_agent.AuditAgent` — standalone, declarative rules from a YAML manifest,
-  signed scoped grants, fact sources, hash-chained log.
+  signed scoped time-boxed grants, fact sources, hash-chained log. **This is the
+  in-app gate.**
+- `agent_toolkit.audit.AuditGate` — in-process, checks a `Proposal` against a
+  static `Mandate`. **Legacy and not in any run path.** Its `MandateLimits`
+  accepts only four receivables-shaped keys (`max_extension_days`,
+  `extension_owner_approval_days`, `min_days_between_contacts`,
+  `invoice_owner_approval_amount`) and its rule logic is hard-coded to
+  `send_email`, so a payables app cannot express its policy there at all. The
+  class is kept importable and marked deprecated in its docstring. Do not add
+  rules to it.
 
-**A payables app cannot express its policy in the in-process gate at all.** There
-is no way to declare "payment may not exceed the recorded invoice amount" or
-"deny when supplier details changed" in `MandateLimits`.
+The engine's audit sidecar (`platform/deployment/images/auditor`) is a *separate*
+second gate: fact-free, and it holds the tenant execution secret. It is not a
+substitute for the in-app auditor.
 
-`examples/invoice-payer/app.py` resolves this by making the standalone auditor
-authoritative and using the in-process gate for nothing. That is a *defensible
-choice, not a settled design* — it is the open question recorded in
-`platform/audit-agent-builder/README.md`, and `AGENTS.md` requires team approval
-for architecture changes. Do not silently bake it into your app; flag it.
+### 4. The tool contracts are adapted, not incompatible
 
-### 4. The two packages have incompatible tool contracts
-
-Both define a tool contract, and they are not the same shape:
+Both packages define a tool contract, and they are not the same shape:
 
 | | `agent_toolkit.contracts.ToolDefinition` | `fin_tools.contracts.ToolSpec` |
 |---|---|---|
@@ -81,89 +98,102 @@ Both define a tool contract, and they are not the same shape:
 | handler signature | `handler(args: Mapping)` | `handler(**kwargs)` |
 | schema shape | JSON Schema object | flat `{name: "type"}` strings |
 
-**Consequence:** the financial tools cannot be dropped into `agent_toolkit`'s
-registry without an adapter. The example sidesteps this by calling
-`registry.call(name, **kwargs)` directly and gating on the name list instead of
-the `side_effect` flag. If you build an app that uses both packages for real,
-write the adapter — and say so, because it is a platform gap worth closing.
+The adapters already exist — **you do not need to write one**:
 
-### 5. Shared services are declarations only
+- `fin_tools.toolkit_bridge.as_tool_definitions(bundle)` / `agent_tool_definitions(bundle)`
+  return the financial tools as real `agent_toolkit` `ToolDefinition`s, converting
+  the flat field map into JSON Schema and the kwargs handler into a
+  Mapping-taking one. `agent_tool_definitions` excludes the intent-issuing
+  operations (`intents.capture` / `confirm` / `revoke`), because an agent that
+  could mint and confirm its own intent could authorise itself.
+- `agent_integration.adapters.ToolContractView` closes the gap in the other
+  direction, so the auditor registers each tool with the correct side-effect flag
+  and schema. Without it a gated tool would register as read-only — and
+  read-only calls are never gated.
 
-The knowledge graph, Intent & Trust Service, shared events, and deployment engine
-do not exist as services. `fin_tools` provides *offline prototypes* of payments,
-email, graph and intent verification. Nothing touches a network, a database, or
-real money. `specs/decisions.md` still lists hosting, deployment artifacts and
-service authentication as open questions.
+Left unadapted, both fail *silently*: the schema gap means the auditor's argument
+validation never fires, and the flag gap means a side effect runs ungated. That
+is why these are tested rather than assumed.
 
-## Credential handling: a real gap you must work around
+### 5. Shared services: the deployment engine is real, the rest are not
 
-Verified 2026-10-14. `audit_agent.redact()` masks a fixed key set:
+- **Deployment engine: real.** `platform/deployment` — `helios.yaml` + an ASGI
+  entry + `GET /health`, built on golden base images, smoke-tested in a sandbox,
+  routed through nginx, with a per-app audit sidecar. Drives the Docker Engine
+  API via docker-py.
+- **Knowledge graph, Intent & Trust Service, shared events: declarations only.**
+  `fin_tools` provides *offline prototypes*. Nothing touches a network, a
+  database, or real money. `specs/decisions.md` still lists cross-app
+  subscription, service authentication and platform-wide mandate caps as open.
+
+## Credential handling
+
+`audit_agent.redact()` masks a fixed key set, and as of this session it includes
+the payment credential:
 
 ```
-access_token, api-key, api_key, apikey, authorization, client_secret, cookie,
-dashscope_api_key, passwd, password, private_key, refresh_token, secret, token
+access_token, api-key, api_key, apikey, auth_code, authorization,
+authorization_code, client_secret, cookie, dashscope_api_key, passwd, password,
+private_key, refresh_token, secret, token
 ```
 
-**`auth_code` is not in that set.** The Intent Verification service's `auth_code`
-is the single-use credential that authorises a payment, and when it is passed as
-a tool argument it is written to the audit log **in full**, inside the
-`owner_question` string that renders every argument.
+`auth_code` / `authorization_code` are the Intent Verification service's
+single-use credential that authorises a payment. They used to be missing from
+that set, so the credential reached the hash-chained audit log in full via the
+`owner_question` string, which renders every argument. **That is fixed** — both
+keys are in `REDACTED_KEYS`
+(`platform/audit-agent-builder/src/audit_agent/contracts.py`), and
+`_owner_question` therefore renders the masked value. Asserted by
+`test_a_held_payment_credential_never_reaches_the_owner_question` in the audit
+builder suite and by the invoice-payer example's own log test.
 
-This cannot be worked around by not sending it: a rule like
-`app.requires_verified_intent` must check `required_arguments: [auth_code]`, and
-`payments.send` must receive the real code to execute. So the credential
-genuinely has to flow through the proposal — which means **the auditor's log has
-to redact it**. That is an upstream fix, not an app-level one.
+Two consequences worth knowing:
 
-What the example does meanwhile:
-
-- Redacts `auth_code` (plus a few other credential shapes) before writing its own
-  action log, extending `REDACTED_KEYS` rather than replacing it.
-- Leaves the audit-side leak in place, because `platform/audit-agent-builder/` is
-  not ours to edit.
-
-**Recommended fix for whoever owns that package** (both files verified to exist at
-these paths on 2026-10-14):
-
-- Add `auth_code` and `authorization_code` to `REDACTED_KEYS`, defined at
-  `platform/audit-agent-builder/src/audit_agent/contracts.py:54`. It is a
-  `frozenset` of lowercased key names matched against argument keys, so the
-  addition is one line.
-- Redact argument values when composing the owner-facing text, in
-  `_owner_question` at
-  `platform/audit-agent-builder/src/audit_agent/agent.py:705`. That method renders
-  every argument into the question string, which is where the credential
-  currently leaks — redacting on the way to disk is not enough if the same value
-  is shown to a human through a channel that also logs it.
-
-Adding the key to `REDACTED_KEYS` closes the disk leak on its own and is the
-higher-value of the two.
-
-**Until then:** do not let a generated app put a real credential through a
-proposal that reaches the audit log. Prefer a short-lived reference the auditor
-can check for presence, and resolve the credential at execution time.
+- The gate checks **presence**, the tool checks **validity**. `payments.send`
+  still receives the real code at execution — the runtime executes the caller's
+  original arguments, not the redacted copy. Redaction protects the log, not the
+  call.
+- Because the credential is redacted before schema validation, a manifest must
+  not put a `minLength` or `pattern` on `auth_code`: the gate would only ever be
+  validating the 14-character `***REDACTED***` placeholder. The invoice-payer
+  manifest dropped its `minLength: 16` for exactly this reason.
 
 ## Environment notes
 
-- `audit-agent-builder` requires **Python >= 3.13**; the other two require
-  >= 3.10. Use one interpreter that satisfies the strictest (3.13+).
+- `audit-agent-builder` and `agent-integration` require **Python >= 3.13**; the
+  others require >= 3.10. `scripts/bootstrap-venv.sh` builds `.venv` on 3.13 and
+  refuses to fall back to an older `python3`.
+- **Model:** Qwen via DashScope. Defaults `qwen3.8-max` at
+  `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`. Token env vars in
+  priority order: `HELIOS_LLM_API_KEY`, `DASHSCOPE_API_KEY`, `OPENAI_API_KEY`.
+  Base URL also falls back to `OPENAI_BASE_URL` and model to `OPENAI_MODEL`,
+  because Qwen Code sets those. Competition rule: Qwen is the only generative
+  model allowed.
+- `enable_thinking: false` is sent **only** when the model id contains `qwen3`
+  (hybrid reasoning models, which refuse a non-streaming request while thinking
+  is on). For any other model id, neither thinking field is sent — an endpoint
+  that does not know the parameter rejects an unknown one.
+- No token is needed for anything offline: `demo`, `selfcheck`, `inspect`,
+  `run --offline` and the whole test suite. `agent-integration doctor` is the
+  connectivity check; it prints the token's shape, never its value.
 - `build_audit_agent()` raises `SigningKeyMissingError` unless
   `HELIOS_AUDIT_SIGNING_KEY` is set, or the manifest sets
-  `allow_unsigned_grants: true`. The example sets a dummy key via
-  `os.environ.setdefault` — **local development only.** Never ship that.
+  `allow_unsigned_grants: true`. `build_integration()` generates an ephemeral
+  process key when neither is configured and reports `ephemeral_key=True` —
+  **local development only.** Never ship that.
 - Grants are short-lived (default `ttl_seconds: 300`; the example uses 120 for
   money movement). A long-running agent must re-authorize per task, not once at
   startup.
 - Side-effect grants are **single-use**. Retrying a payment needs a fresh grant;
   reuse the same `idempotency_key` so a retry cannot pay twice.
-- **`idempotency_key` replays a cached outcome, including a rejection.** Verified
-  2026-10-14: repeating a key returns the stored record with its original
-  `reject_reason` and `payment_id` rather than re-evaluating, even if the
-  arguments have changed. That is what prevents a double payment, but it also
-  means an agent that *fixes* a rejected payment and retries under the same key
-  sees the old failure and may conclude its fix did not work. Reuse the key when
-  retrying the same payment; use a fresh one when the payment genuinely changed.
-  Asserted in `examples/invoice-payer/tests/test_controls.py::test_an_idempotency_key_replays_a_cached_rejection`.
+- **`idempotency_key` replays a cached outcome, including a rejection.**
+  Repeating a key returns the stored record with its original `reject_reason`
+  and `payment_id` rather than re-evaluating, even if the arguments have
+  changed. That is what prevents a double payment, but it also means an agent
+  that *fixes* a rejected payment and retries under the same key sees the old
+  failure and may conclude its fix did not work. Reuse the key when retrying the
+  same payment; use a fresh one when the payment genuinely changed. Asserted in
+  `examples/invoice-payer/tests/test_controls.py::test_an_idempotency_key_replays_a_cached_rejection`.
 - `payments.send` distinguishes an **absent** `auth_code` (`"missing verified
   intent auth code"`) from a **present but invalid** one (`"unknown auth code"`,
   or `"amount differs from confirmed intent"` on a mismatch). The gate checks
@@ -174,20 +204,35 @@ can check for presence, and resolve the credential at execution time.
   not select a record for fact resolution, and a fact-bound rule will then fail
   closed. This is the most common way a generated app's policy silently stops
   working.
+- **Contact counting is flag-driven, not name-driven.** A tool participates in
+  contact-frequency rules by setting `records_contact=True` on its
+  `ToolDefinition`; the runtime no longer matches a hard-coded `send_email`. A
+  tool that contacts a customer under any other name must set the flag, or the
+  rule under-counts and an agent can message past the cap.
 - Holds are **in-memory only** in the audit builder — lost on restart.
-  `InMemoryReplayGuard` is single-process. Both are documented gaps there.
+  `InMemoryReplayGuard` is single-process. Both are documented gaps there;
+  `specs/decisions.md` records that held state and replay guards persist to
+  SQLite under the app's data dir, which P2 implements.
 
 ## Where to check for changes
 
 This file is a snapshot and will go stale. Re-verify before relying on it:
 
 ```bash
-# Neither package is pip-installed in this checkout, so put src on the path.
-cd platform/audit-agent-builder && PYTHONPATH=src python3 -m pytest tests -q   # 79 pass
-cd platform/financial-tools     && python3 -m pytest tests -q                  # 44 pass
+# From the repo root, using the repo venv (scripts/bootstrap-venv.sh builds it).
+scripts/test-all.sh                                            # 803 passed, 7 suites
 
-python3 -c "import sys; sys.path.insert(0,'platform/financial-tools'); \
-from fin_tools import build_world; print(len(build_world().registry.list()))"  # expect 12
+.venv/bin/python -m pytest platform/audit-agent-builder/tests   #  81 pass
+.venv/bin/python -m pytest platform/financial-tools/tests       # 367 pass
+.venv/bin/python -m pytest platform/agent-integration/tests     # 136 pass
+.venv/bin/python -m pytest platform/deployment/tests            #  96 pass
+
+# How many financial tools does build_world() register? Expect 12.
+.venv/bin/python -c "from fin_tools import build_world; \
+print(len(build_world().registry.list()))"
+
+# What does the auditor actually govern, for a given app?
+.venv/bin/python -m agent_integration.cli inspect
 ```
 
-Python 3.13.9 was used for all of the above.
+Python 3.13.9 in the repo venv was used for all of the above.

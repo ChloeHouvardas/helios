@@ -348,8 +348,8 @@ Planner cannot yet forecast against these due dates.
 
 ## Checker warnings
 
-`python3 entry-point/checks/check_app.py apps/helios-collect` reports 0 errors and 3
-warnings. All three are expected:
+`python3 entry-point/checks/check_app.py apps/helios-collect` reports 0 errors and 4
+warnings. All four are expected:
 
 1. *`graph.publishes` entity 'negotiation' is not declared in `data.local`.* Correct
    and intentional. A negotiation is cross-app graph state, not a local table; its
@@ -358,7 +358,19 @@ warnings. All three are expected:
    and terms events rather than consuming them. The consumer is Helios Cash Planner,
    which would read `invoice` to forecast against real due dates — which is exactly
    why the verified publish matters.
-3. *rules depend on these trusted fact keys …* Informational; the checker can only
+3. *could not resolve side-effect flags for tool(s) `list_overdue_invoices`,
+   `record_agreed_extension`, `record_inbound_payment`.* Correct and unavoidable:
+   those three are defined in this app's own `tools.py`, so the checker cannot see
+   them in the `agent_toolkit` or `fin_tools` catalogs. The other two tools it
+   *does* resolve — `send_email` (platform, side-effecting) and `lookup_invoice`
+   (platform, read-only) — are checked and agree. **All five were verified by hand
+   against `agents/helios-collect-audit.yaml` and every flag matches**, so the
+   warning is informational here. It exists because the alternative — silently
+   passing a tool it could not resolve — would hide a real mismatch, and the
+   dangerous direction is a tool the app calls read-only while the audit manifest
+   gates it: the runtime gates on the action side's flag, so such a tool would run
+   without ever reaching the auditor.
+4. *rules depend on these trusted fact keys …* Informational; the checker can only
    see the names. `test_every_rule_fact_key_is_supplied_by_the_fact_source` asserts
    the running fact source actually supplies all seven, which is the property that
    matters: a fact-bound rule whose fact never resolves denies everything, and it

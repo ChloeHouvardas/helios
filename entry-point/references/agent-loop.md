@@ -1,23 +1,31 @@
-# The agent loop: what to write, and what already exists
+# The agent loop: what exists, and what to write if you need your own
 
-`specs/architecture-mermaid.md` says the Agent Toolkit runtime provides "the model
-calls tools in a loop, built on Qwen-Agent". **It does not yet.** This file says
-what is missing, what you must therefore write, and how to do it without breaking
-the gate.
+`specs/architecture-mermaid.md` used to say the runtime provides "the model calls
+tools in a loop, built on Qwen-Agent". **The loop exists now, and it is not built
+on Qwen-Agent** — no file in this repo imports `qwen_agent` except one lazy
+optional import in `audit_agent/advisory.py` behind the `advisory` extra.
 
-Verified 2026-10-14:
+Verified 2026-10-15:
 
-- `agent_toolkit` has **no loop and no CLI**, although its `pyproject.toml`
-  declares an `agent-toolkit = agent_toolkit.cli:main` script entry point. That
-  entry point will fail as written — there is no `cli.py`.
-- `qwen_agent` is declared as a dependency (`>=0.0.17`, and `0.0.34` appears in
-  `platform/action-agent-builder/uv.lock`) but **is not installed**.
-- No `DASHSCOPE_API_KEY` is configured.
-- No file in this repo imports `qwen_agent`. There is no working example to copy.
+- **The loop lives in `platform/agent-integration/`.** `runtime.GatedAgentRuntime`
+  authorizes the task, offers the model only what was granted, turns every
+  side-effect call into a proposal, adjudicates it through the bridge, then
+  executes / holds / denies. Holds resume by id, and exhausting the turn cap is an
+  error rather than a silent success.
+- **The model driver is `agent_integration.model_driver`.** Qwen over DashScope's
+  OpenAI-compatible endpoint, stdlib `urllib` only — no SDK, no dependency tree.
+  It returns a proposal and stops, which is what makes the gate unavoidable rather
+  than a hook someone could route around.
+- **`agent_toolkit` still has no `cli.py`.** Its `pyproject.toml` no longer
+  declares the `agent-toolkit = agent_toolkit.cli:main` script entry that used to
+  make `pip install -e .` fail; P3 writes the CLI and the entry comes back with it.
+- **No token is required for anything offline.** `demo`, `selfcheck`, `inspect`,
+  `run --offline` and the whole test suite all work with no key.
 
-So: **you supply the loop.** Everything below the loop — interception, gating,
-logging, holds — exists and works. That is the useful part, and it is the part
-that is hard to get right.
+So: **you do not have to supply a loop.** Use `build_integration()`. The rest of
+this file is for when you want your own — a different model transport, or
+deterministic code for an offline demo — which is still a legitimate thing to
+want, and still safe because of the seam below.
 
 ---
 
@@ -87,87 +95,92 @@ Path B.
 
 ## Path B: a real model loop
 
-Two sub-paths, and which one you can use depends on whether `qwen_agent` gets
-installed and a key configured. **Do not guess its API** — no file in this repo
-uses it, so there is nothing here to copy, and its surface differs between
-versions.
-
-### B1. With Qwen-Agent (intended design)
-
-Once `qwen_agent` is importable:
+**This is implemented.** `platform/agent-integration/` is the real loop, driving
+Qwen over DashScope's OpenAI-compatible endpoint with stdlib `urllib` — no SDK, no
+`qwen_agent`. Use it rather than writing your own:
 
 ```bash
-python3 -m pip install 'qwen-agent>=0.0.17'   # or use the package's uv.lock
-export DASHSCOPE_API_KEY=...                    # from the environment, never in code
-python3 -c "import qwen_agent; print(qwen_agent.__version__)"
+scripts/bootstrap-venv.sh
+cp platform/agent-integration/.env.example .env   # set DASHSCOPE_API_KEY
+set -a; source .env; set +a
+
+.venv/bin/python -m agent_integration.cli doctor          # is the model reachable?
+.venv/bin/python -m agent_integration.cli selfcheck       # do the two packages agree?
+.venv/bin/python -m agent_integration.cli run \
+    --task "Follow up on overdue invoice INV-1001"
 ```
 
-Then, and only then, read the installed version's own docs/source to learn the
-current function-calling agent class and how it accepts tool declarations. Wire it
-so that:
+`run --offline` uses `ScriptedDriver` instead of the model, so the same command
+works with no key — which is what Path A is, reached through the same code path.
 
-- `runtime.tool_specs()` is what you hand the model. Note that these are shaped for
-  Qwen-Agent function calling — `agent_toolkit.ToolDefinition.to_spec()` produces
-  `{"name", "description", "parameters"}` for exactly this reason.
-- **Tool execution is intercepted.** The model must never reach `fin_tools`'
-  registry directly. Every call goes through `read()` or `propose()` depending on
-  the tool's side-effect flag. This is the one place where a shortcut silently
-  destroys the platform's central claim, so it is worth a test of its own.
-- A `hold` returns to the model as "the action was held pending the owner's
-  decision" and ends the turn. A `deny` returns the reason as a tool result so the
-  model can adjust.
-- `max_turns` from the action manifest bounds the loop.
+### How the implemented loop keeps the gate unavoidable
 
-`specs/build1.md` step 2 describes this as "a Qwen-Agent agent calls both tools end
-to end, with no safety layer yet", then adds interception at step 3. That ordering
-is still the right way to build it: get a plain loop working, then interpose the
-gate, and confirm the same scenarios still produce the same verdicts.
+These are the properties to preserve if you ever write your own, and each is
+asserted by a test in `platform/agent-integration/tests/`:
 
-### B2. Without Qwen-Agent (any model, direct tool calling)
+- **The model only ever sees what was granted.** `runtime` narrows the tool list to
+  the auditor's grant before calling the driver, so an ungranted tool is not merely
+  refused — the model never learns it exists. Asking for an unknown tool comes back
+  as text naming the available ones, never as an execution.
+- **Tool execution is intercepted structurally, not by convention.**
+  `model_driver.next_calls()` returns a *proposal and stops*. It never executes
+  anything, so there is no code path by which a model reply reaches `fin_tools`'
+  registry directly. An off-the-shelf agent helper that runs the tool loop for you
+  would execute side effects before the gate saw them — which is exactly why the
+  driver does not do that.
+- **One tool call per turn.** Only the first call in a batch is honoured; a batch
+  would let the second one execute before the auditor adjudicated it. `GATE_NOTICE`
+  tells the model this, because an agent that understands the gate adjusts instead
+  of retrying.
+- **A `hold` stops the loop.** The run ends with status `held` and a resumable
+  `hold_id`; it does not continue while a proposal is queued, because an agent that
+  keeps going would double-act. Resume is a separate call and re-authorises nothing
+  beyond the exact action that was held.
+- **A `deny` returns the reason as a tool result** so the model can adjust. The
+  reason is written for a model to act on: it names the field, the problem, and
+  what to do instead.
+- **Facts come from the fact source, never from the model.** `resolved_facts` the
+  agent supplies are used only to *name* subjects worth looking up; their values are
+  not believed. The subject id must be one of the fixed keys — `invoice_id`,
+  `bill_id`, `customer_id`, `supplier_id`, `subject_id`, `payment_id` — or facts
+  will not resolve and every fact-bound rule will deny.
+- **A broken model is an error, never an allow.** A driver exception ends the run as
+  `error`. So does exhausting `max_turns`, which would otherwise look like success.
 
-If the dependency cannot be installed, write the loop yourself against whatever
-tool-calling API you have. It is ~60 lines and has no Helios-specific subtlety:
+`specs/build1.md` step 2 describes building a plain loop first and adding
+interception at step 3. That ordering is still the right way to build one from
+scratch, but you no longer have to: the gate is already interposed, and
+`selfcheck` is the CI guard that the two packages still agree about tool names,
+side-effect flags and schemas.
 
-```
-messages = [system = manifest.instructions]
-tools    = runtime.tool_specs()
-runtime.authorize(task_summary, subject_id)
-for turn in range(manifest.max_turns):
-    response = model(messages, tools)
-    if response has no tool calls: return response text
-    for call in response.tool_calls:
-        if not side_effecting(call.name):
-            result = runtime.read(call.name, **call.arguments)
-        else:
-            outcome = runtime.propose(call.name, call.arguments,
-                                      invoice_id=subject_of(call.arguments))
-            if outcome["decision"] == "hold":
-                → surface outcome["owner_question"] to the approval queue
-                → stop the turn; resume only after resolve_hold()
-            elif outcome["decision"] == "deny":
-                result = {"error": outcome["reason"]}      # fed back, not retried
-            else:
-                result = outcome["result"]
-        messages.append(tool_result(call.id, result))
-```
+### If you need a different model transport
 
-The only non-obvious parts: **`hold` must actually stop the loop** (an agent that
-keeps going while a proposal is queued will double-act), and **the subject id must
-be extracted from the arguments** so fact resolution can find the record. Use one
-of the fixed subject keys — `invoice_id`, `bill_id`, `customer_id`, `supplier_id`,
-`subject_id`, `payment_id` — or the facts will not resolve and every fact-bound
-rule will deny.
+Subclass or replace `model_driver.ModelDriver`; it is the only module that needs a
+token and the only one that imports an HTTP client. Keep the `Driver` protocol
+(`next_calls(*, task, instructions, tools, history)` returning one `ToolCall` list
+or a final string) and everything above still holds. Competition rule: Qwen is the
+only generative model allowed, so a different *transport* is fine and a different
+*provider* is not.
 
 ---
 
 ## Which to build
 
-For an 80-hour competition with a surprise task: **ship Path A, and build Path B
-only if the loop is genuinely what is being judged.**
+Neither — **both already exist**, and they are the same code path. `run --offline`
+gives you Path A (deterministic, no key, cannot fail on stage) and `run` gives you
+Path B (real Qwen, needs a key). `build_integration()` is underneath both.
 
-The reason is asymmetric. Path A costs an hour and cannot fail on stage. Path B
-costs most of a day, depends on a package that is not installed, and if it fails it
-fails in front of judges. The gate — the thing that is actually novel here — is
-identical in both.
+So the choice is now about **what you demo**, not what you write:
 
-If you do build Path B, keep Path A behind a flag so the demo can fall back.
+- **Demo Path A when the gate is what is being judged.** It needs no key, no
+  network and no quota, and it cannot fail in front of judges. Say out loud that
+  the agent is scripted and that swapping it for a model changes no verdict — that
+  is the architecture-defence point.
+- **Demo Path B when the model's reasoning is what is being judged**, or when the
+  surprise task needs an agent that can handle an unexpected invoice, a partial
+  payment, or a supplier who asks a question. Run `doctor` first; it makes one
+  minimal request and tells you exactly which setting is wrong.
+
+Keep `--offline` reachable in the demo either way. If the key or the network fails
+on stage, falling back to the scripted run takes one flag and shows the same
+controls firing — which is the thing actually worth proving.

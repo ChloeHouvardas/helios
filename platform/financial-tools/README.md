@@ -2,13 +2,15 @@
 
 The tool layer of Helios Layer 1 (whiteboard box ①): what Qwen-as-coding-agent and
 in-app agents call to do financial work. Everything is an offline, deterministic
-prototype — **no network, no DB, no real money**.
+prototype — **no real money, no live provider credentials needed to test**. The
+tools run in-process by default and can also be reached over a service boundary;
+see "Known simplifications" below.
 
 ## Run
 
 ```bash
 # from the repo root; scripts/bootstrap-venv.sh builds .venv first
-.venv/bin/python -m pytest platform/financial-tools/tests -q   # 86 tests, offline
+.venv/bin/python -m pytest platform/financial-tools/tests -q   # 367 tests, offline
 .venv/bin/python -m fin_tools.demo                             # end-to-end story
 ```
 
@@ -54,9 +56,8 @@ proof / go through proposals.
 
 - Personas are fixture cards, not interview-grounded; fidelity claims do not transfer.
 - Shadow sandbox is copy-on-write, not LM-emulated; it reports deterministic effects.
-- Single-process, in-memory; no persistence, no HTTP, no real SCA device.
-- The Action-gate vs Audit-auditor seam (open team question) is untouched: these
-  tools emit proposals/records that *either* gate could consume.
+- No persistence and no real SCA device. `fin_tools` itself is in-process by default — but it is not HTTP-free: `fin_tools/service.py` provides `HttpToolClient` + `ToolServer` over stdlib `http.server`, so the tools can be reached across a process or container boundary with only the server holding the signing secret. `spreadsheets/app.py` is a separate FastAPI service. No test needs either one running.
+- The Action-gate vs Audit-auditor seam is **settled**, not open: the standalone `audit_agent` is authoritative and `agent_toolkit.audit.AuditGate` is legacy (see `specs/decisions.md`). These tools emit proposals/records that the standalone auditor consumes, and `fin_tools.toolkit_bridge` adapts them to the action side's contract.
 
 ## Layout
 
@@ -64,9 +65,22 @@ proof / go through proposals.
 financial-tools/
   PLAN.md               build plan for this package
   README.md             this file
+  pyproject.toml        installs all five sibling packages below
   research/README.md    citations for intent verification + simulation choices
-  fin_tools/            the package (contracts, intent, payments, email,
-                        spreadsheets, graph, simulation, demo)
+  fin_tools/            the core package (contracts, intent, payments, email,
+                        spreadsheets, graph, simulation, service, toolkit_bridge,
+                        audit_manifest, demo)
+  helios_forecast/      Monte-Carlo cash-flow projection + scenarios + calibration
+  spreadsheets/         sheet rendering/reconciliation; FastAPI app; live engines
+                        (Feishu, WPS, Grist) served locally so tests need no creds
+  email_tool/           templated SMTP sender: schemas/, templates/, idempotency
+  payments_collect/     pydantic receivables model + in-memory PaymentStore
   fixtures/invoices.csv demo + test data (integer cents)
-  tests/                44 offline pytest tests
+  tests/                367 offline pytest tests
 ```
+
+Only `fin_tools` is described in the component table above; the four sibling
+packages are teammates' work imported into this directory and installed by the
+same `pyproject.toml`. Each keeps its own tests in `tests/`, prefixed with the
+package name (`test_forecast_*`, `test_email_*`, `test_payments_collect_*`,
+`test_spreadsheets.py`). See `entry-point/references/financial-tools.md`.

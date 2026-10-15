@@ -53,13 +53,14 @@ A generated app is four artifacts and a runtime:
 
 | Artifact | Format | Loaded by |
 |---|---|---|
-| App spec | `helios-app.yaml` | *(nothing yet — no validator exists)* |
+| App spec | `helios-app.yaml` | `checks/check_app.py` (stand-in validator; no pydantic model yet) |
 | Audit manifest | YAML | `audit_agent.manifest.AuditManifest` |
 | Action manifest | JSON | `agent_toolkit.manifest.validate_manifest` |
 | Fact source | Python | `audit_agent.FactSource` protocol |
 
-The runtime — interception, gating, logging, holds — already exists and works.
-**The agent loop does not.** See `references/agent-loop.md`.
+The runtime exists and works, including the agent loop: interception, gating,
+logging, holds and resumption all live in `platform/agent-integration/`, driven
+by Qwen over DashScope. See `references/agent-loop.md`.
 
 ## Run the example
 
@@ -129,11 +130,14 @@ wrong in code. Each is verified and asserted by a test.
   needs the owner to have confirmed that smaller amount. Upstream's
   `collect-reminder.yaml` binds on `fact:` instead, which *does* catch a lie about
   the value. Two shapes, two threats; do not conflate them.
-- **`auth_code` is not in the audit log's redaction key set.** A real payment
-  credential is written to the log in full. `audit_agent.redact()` covers
-  `password`, `token`, `secret` and friends but not this one. The example redacts
-  its own action log; it cannot fix the auditor's. Recommended upstream fix is in
-  `references/platform-status.md`.
+- **`auth_code` is redacted before it reaches the audit log.** `auth_code` and
+  `authorization_code` are now in `audit_agent`'s `REDACTED_KEYS`, so the payment
+  credential is masked before it can be written into the hash-chained log via
+  `owner_question`. The example's own action-log redaction is now
+  defence-in-depth rather than the only layer. One consequence: the auditor
+  redacts *before* schema validation, so a manifest must not put a `minLength` or
+  `pattern` on `auth_code` — it would only ever validate the `***REDACTED***`
+  placeholder. See `references/platform-status.md` §"Credential handling".
 - **An `idempotency_key` replays a cached rejection.** Repeating a key returns the
   stored record with its original `reject_reason`, even if the arguments changed.
   That is what prevents a double payment — but an agent that fixes a rejected

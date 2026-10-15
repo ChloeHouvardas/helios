@@ -400,12 +400,18 @@ Notes that will save you time:
 - **Grants expire** (your `ttl_seconds`) and side-effect grants are **single-use**.
   Authorize per task, not once at startup. Reuse the same `idempotency_key` on a
   retry so it cannot pay twice.
-- **There is no agent loop.** Supply one against Qwen-Agent once `qwen_agent` is
-  installed, or drive the runtime from deterministic code so the app runs offline
-  (as the example does). The gate underneath is identical either way — that
-  separability is the whole point, and it is worth saying so out loud in your demo.
-- **Redact credentials before logging them.** `audit_agent.redact()` does not
-  cover `auth_code`. See `platform-status.md` §"Credential handling".
+- **The agent loop exists — you do not supply it.** `platform/agent-integration/`
+  provides `GatedAgentRuntime` (the loop) and `model_driver.ModelDriver` (Qwen over
+  DashScope, stdlib HTTP). `build_integration()` wires the auditor, bridge and
+  runtime in one call. It is not built on Qwen-Agent — no file imports `qwen_agent`.
+  For an offline demo you can still drive the runtime from deterministic code (as
+  the example does); the gate underneath is identical either way, and that
+  separability is the whole point, worth saying out loud in your demo.
+- **Credentials are redacted before they reach the audit log.** `auth_code` and
+  `authorization_code` are in `audit_agent`'s `REDACTED_KEYS`, so the payment
+  credential no longer leaks via `owner_question`. Because redaction happens
+  before schema validation, do not put a `minLength`/`pattern` on `auth_code` in a
+  manifest. See `platform-status.md` §"Credential handling".
 - Use `agent_toolkit.action_log.ActionLog` for the app's own append-only log, and
   keep the auditor's hash-chained log separate. Two logs, two purposes: the action
   log is the app's record of what it did; the audit log is tamper-evident evidence
@@ -545,19 +551,21 @@ packages plus `pydantic` and `pyyaml`.
 
 `specs/tech-stack.md` fixes the monorepo layout as `platform/`, `services/`,
 `apps/`, and `specs/app-builder.md` says the scaffolder writes to
-`apps/<name>/`. There is no `apps/` directory yet and no scaffolder to create it.
+`apps/<name>/`. **`apps/` exists** — `apps/helios-collect/` is a real app in it.
+The scaffolder does not, so you create the directory and its contents yourself.
 
-**Check with the team before creating `apps/`.** Other agents are working in this
-repo simultaneously; `platform/agent-toolkit/`, `platform/action-agent-builder/`,
-`platform/audit-agent-builder/`, `platform/app-builder/` and
-`platform/financial-tools/` are theirs. Do not edit inside them. If you must add a
-generated app, put it under `apps/<name>/` and touch nothing else, or keep it
-inside your own working directory until the team agrees on the location.
+Put a generated app under `apps/<name>/` and touch nothing else. Other agents work
+in this repo simultaneously; `platform/action-agent-builder/`,
+`platform/audit-agent-builder/`, `platform/agent-integration/`,
+`platform/app-builder/`, `platform/deployment/` and `platform/financial-tools/` are
+theirs. Do not edit inside them. (Note the folder names are not the package names:
+`platform/action-agent-builder/` contains `agent_toolkit`.)
 
-`AGENTS.md` requires explicit approval before an architectural change. Discovering
-that the two audit gates conflict (Step 5, `platform-status.md` §3) is exactly
-such a moment: **flag it, recommend consulting the team, and do not resolve it
-silently in your app.**
+Which gate is authoritative is **settled**: the standalone `audit_agent`, per
+`specs/decisions.md`. `agent_toolkit.audit.AuditGate` is legacy, in no run path,
+and marked deprecated in its docstring. Build against the standalone auditor and do
+not add rules to the in-process gate — that is not an architectural change needing
+approval, it is following the recorded decision.
 
 ---
 

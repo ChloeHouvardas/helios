@@ -146,34 +146,51 @@ inspecting the fact source's method signatures for any way to pass a request in)
 
 This is a prototype. These are real, and none is hidden by the demo:
 
-- **No LLM.** `ScriptedPayerAgent` is deterministic code following the manifest's
-  instructions. `qwen_agent` is not installed in this checkout and no API key is
-  configured. See `../../references/agent-loop.md` for both paths and why the
-  offline one is the right first move.
+- **No LLM, by choice.** `ScriptedPayerAgent` is deterministic code following the
+  manifest's instructions. A real model loop *does* exist now —
+  `platform/agent-integration/`, driving Qwen over DashScope — but this example
+  deliberately runs offline so it needs no key, no network and no quota, and cannot
+  fail on stage. The point it demonstrates is the gate, not the model: swap the
+  agent, keep the runtime, and every control still fires. See
+  `../../references/agent-loop.md`.
 - **No web UI.** The `approval_queue` page declared in `helios-app.yaml` is the CLI
   `ScriptedOwner`, which prints the auditor's own `owner_question`. Five pages are
   declared; none is rendered.
 - **No database.** `InvoiceBook` reads a JSON file. In a generated app this is the
   schema the schema tool would have created from `data.local.entities`.
 - **`stacks.yaml` does not exist**, so `stack.use: helios-python-web-1` resolves to
-  nothing. `specs/tech-stack.md` still leaves web framework and data storage open.
-- **The two audit gates conflict.** `agent_toolkit`'s in-process `AuditGate` accepts
-  only four receivables-shaped limit keys, so this payables app cannot express its
-  policy there at all. This app makes the standalone auditor authoritative — a
-  defensible choice, **not a settled design**. The seam is unresolved and
-  `AGENTS.md` requires team approval to change it. See
-  `../../references/platform-status.md` §3.
-- **The audit log leaks `auth_code`.** `audit_agent`'s redaction key set does not
-  include it, so the credential is written in full inside `owner_question`. This app
-  redacts its own action log; it cannot fix the auditor's. See
-  `../../references/platform-status.md` §"Credential handling".
+  nothing. The stack itself is decided (`specs/tech-stack.md`: FastAPI + SQLite +
+  Jinja2/HTMX); the named-stack *mechanism* the spec describes is what is unbuilt.
+- **The gate question is settled, not open.** The standalone `audit_agent` is the
+  authoritative in-app gate per `specs/decisions.md`; `agent_toolkit.audit.AuditGate`
+  is legacy, in no run path, and deprecated in its docstring (its four
+  receivables-shaped limit keys could not express this payables app's policy
+  anyway). This app was already built that way — it just is no longer a judgement
+  call needing sign-off. See `../../references/platform-status.md`.
 - **Holds are in-memory only** in the audit builder — lost on restart. A
   long-running app needs them persisted before an owner can decide hours later.
+  `specs/decisions.md` records the answer (SQLite under the app's data dir); P2
+  implements it.
+
+### Fixed since this example was written
+
+- **The audit log no longer leaks `auth_code`.** `auth_code` and
+  `authorization_code` are now in `audit_agent`'s `REDACTED_KEYS`, so the credential
+  is masked before it can reach the hash-chained log via `owner_question`. This app's
+  own action-log redaction is now defence-in-depth rather than the only layer. One
+  consequence for your manifest: the auditor redacts *before* schema validation, so
+  `auth_code` must not carry a `minLength` or `pattern` — it would only ever be
+  validating the `***REDACTED***` placeholder. This app's manifest dropped its
+  `minLength: 16` for exactly that reason; presence is enforced by `required` plus
+  the critical `app.requires_verified_intent` rule, and validity by the
+  `payments.send` tool at execution. See
+  `../../references/platform-status.md` §"Credential handling".
 
 ## Where a real generated app would live
 
 `specs/tech-stack.md` fixes the monorepo layout as `platform/`, `services/`,
 `apps/`, and `specs/app-builder.md` says the scaffolder writes to `apps/<name>/`.
-Neither `apps/` nor the scaffolder exists yet. This example lives under
-`entry-point/examples/` so it does not collide with other agents' work — **check
-with the team before creating `apps/`.**
+**`apps/` exists** (`apps/helios-collect/` is a real app in it); the scaffolder
+still does not, so you create the app directory yourself. This example stays under
+`entry-point/examples/` because it is documentation of the build procedure, not a
+product app — put your own work in `apps/<name>/` and touch nothing else.
