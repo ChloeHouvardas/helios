@@ -206,6 +206,33 @@ def cmd_logs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_evidence(args: argparse.Namespace) -> int:
+    """Print every app's logs for a tenant, with chain verification."""
+    url = _engine_url(args)
+    try:
+        r = httpx.get(f"{url}/api/v1/tenants/{args.tenant}/logs",
+                      params={"app": args.app or "", "tail": args.tail}, timeout=60)
+    except httpx.HTTPError as exc:
+        print(f"engine unreachable at {url}: {exc}", file=sys.stderr)
+        return 3
+    if r.status_code != 200:
+        return _report_failure(r)
+    if args.json:
+        _print(r.json())
+        return 0
+    body = r.json()
+    for app_name, info in sorted(body.get("apps", {}).items()):
+        print(f"== {app_name} ({info.get('container')}) data_dir={info.get('data_dir')}")
+        if info.get("error"):
+            print(f"   ERROR {info['error']}")
+        for f in info.get("files", []):
+            chain = f.get("chain")
+            verdict = ("chain intact" if chain and chain.get("intact")
+                       else ("CHAIN BROKEN" if chain and chain.get("verified") else "no chain"))
+            print(f"   {f.get('path'):<48} {f.get('entries', 0):>6} entries  {verdict}")
+    return 0
+
+
 def cmd_undeploy(args: argparse.Namespace) -> int:
     url = _engine_url(args)
     try:
@@ -312,6 +339,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("container")
     p.add_argument("--tail", type=int, default=200)
     p.set_defaults(func=cmd_logs)
+
+    p = sub.add_parser("evidence", parents=[common],
+                       help="every app's action, audit and sidecar logs for a tenant")
+    p.add_argument("--tenant", required=True)
+    p.add_argument("--app", default="")
+    p.add_argument("--tail", type=int, default=200)
+    p.add_argument("--json", action="store_true", help="print the raw response")
+    p.set_defaults(func=cmd_evidence)
 
     p = sub.add_parser("undeploy", parents=[common],
                        help="remove a deployed app, tenant or container")

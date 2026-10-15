@@ -486,7 +486,12 @@ def test_a_missing_golden_image_is_built_from_its_dockerfile(env) -> None:
     client.images.get.side_effect = ImageNotFound("no such image")
     deploy(env)
     built = {c.kwargs["tag"] for c in client.images.build.call_args_list}
-    assert set(orchestrator.GOLDEN_IMAGES) <= built
+    digest = orchestrator.platform_hash()
+    # Golden images are keyed by the platform hash like app-base, so a
+    # platform change reaches the auditor and the core too.
+    for tag in orchestrator.GOLDEN_IMAGES:
+        repo = tag.partition(":")[0]
+        assert f"{repo}:{digest}" in built, (repo, built)
 
 
 def test_a_base_image_build_failure_surfaces_the_logs(env) -> None:
@@ -670,3 +675,157 @@ def test_a_tenant_network_is_internal(env) -> None:
     # tenant traffic or make every app unreachable.
     assert INGRESS_NET in created
     assert created[INGRESS_NET].internal is False
+
+
+# --- the tenant core is the tool service --------------------------------------
+
+def test_the_tenant_core_runs_the_tool_service_on_its_own_volume(env, monkeypatch) -> None:
+    monkeypatch.delenv("TUSHARE_TOKEN", raising=False)
+    monkeypatch.delenv("HELIOS_MARKET_MODE", raising=False)
+    deploy(env)
+    core = created(env, "helios-core-demo")
+    assert core["image"] == orchestrator.CORE_IMAGE
+    environment = core["environment"]
+    assert environment["HELIOS_TENANT"] == "demo"
+    assert environment["HELIOS_DATA_DIR"] == orchestrator.CORE_DATA_DIR
+    assert environment["HELIOS_MARKET_MODE"] == "fixture"
+    assert environment["HELIOS_EXECUTION_SECRET"]
+    assert environment["HELIOS_INTENT_SECRET"]
+    assert environment["HELIOS_INTENT_SECRET"] != environment["HELIOS_EXECUTION_SECRET"]
+    assert "TUSHARE_TOKEN" not in environment
+    assert core["volumes"] == {"helios-data-demo-core": {"bind": "/data", "mode": "rw"}}
+
+
+def test_a_token_in_the_engine_environment_turns_market_data_live(env, monkeypatch) -> None:
+    monkeypatch.setenv("TUSHARE_TOKEN", "tok")
+    monkeypatch.delenv("HELIOS_MARKET_MODE", raising=False)
+    deploy(env)
+    environment = created(env, "helios-core-demo")["environment"]
+    assert environment["HELIOS_MARKET_MODE"] == "auto"
+    assert environment["TUSHARE_TOKEN"] == "tok"
+
+
+def test_the_intent_secret_never_reaches_the_app_or_the_sidecar(env) -> None:
+    deploy(env)
+    holders = sorted(
+        c["name"] for c in env.client.containers.created
+        if "HELIOS_INTENT_SECRET" in (c.get("environment") or {})
+    )
+    assert holders == ["helios-core-demo"]
+
+
+def test_no_permissions_grants_no_family(env) -> None:
+    result = deploy(env, permissions=[])
+    assert result["audit"]["allowed_tools"] == []
+    audit = created(env, "demo-collect-audit-next")
+    assert audit["environment"]["ALLOWED_TOOLS"] == ""
+
+
+# --- undeploying a tenant removes its routes -----------------------------------
+
+def test_undeploying_a_whole_tenant_strips_every_app_route(env) -> None:
+    deploy(env, name="collect")
+    deploy(env, name="payables")
+    default_conf = orchestrator.NGINX_DIR / "default.conf"
+    text = default_conf.read_text()
+    assert "helios:begin collect-demo" in text and "helios:begin payables-demo" in text
+
+    def labelled(name, app):
+        c = MagicMock()
+        c.name = name
+        c.labels = {"helios.managed": "true", "helios.tenant": "demo",
+                    "helios.app": app, "helios.role": "app"}
+        return c
+
+    env.client.containers.list.return_value = [
+        labelled("demo-collect-app", "collect"), labelled("demo-collect-audit", "collect"),
+        labelled("demo-payables-app", "payables"), labelled("demo-payables-audit", "payables"),
+        labelled("helios-core-demo", ""), labelled("helios-redis-demo", ""),
+    ]
+    result = env.orch.undeploy("demo")
+    assert result["routes_removed"] == ["collect-demo", "payables-demo"]
+    assert result["data_volumes_kept"] is True
+    text = default_conf.read_text()
+    assert "helios:begin" not in text
+    assert not (orchestrator.NGINX_DIR / "collect-demo.conf").exists()
+    assert not (orchestrator.NGINX_DIR / "payables-demo.conf").exists()
+
+
+# --- central evidence ------------------------------------------------------------
+
+def _tar_bytes(files: dict[str, bytes]) -> bytes:
+    import io
+    import tarfile
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w") as tar:
+        for name, payload in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
+    return buffer.getvalue()
+
+
+def test_tenant_logs_reads_every_jsonl_and_verifies_the_chains(env, tmp_path) -> None:
+    from audit_agent.audit_log import AuditLog, EventType
+    from audit_agent.contracts import Decision
+
+    chain = tmp_path / "chain.jsonl"
+    log = AuditLog(chain)
+    for i in range(3):
+        log.append(EventType.ACTION_DECIDED, app_id="collect", agent_id="a", principal="demo",
+                   tool="send_email", request_id=f"r{i}", decision=Decision.ALLOW,
+                   findings=[], details={"i": i})
+    action_log = b'{"event": "run_started"}\n{"event": "tool_call", "tool": "lookup_invoice"}\n'
+    archive = _tar_bytes({
+        "data/runs/run-1/action-log.jsonl": action_log,
+        "data/audit/collect-audit-log.jsonl": chain.read_bytes(),
+        "data/notes.txt": b"ignored",
+    })
+
+    container = MagicMock()
+    container.name = "demo-collect-app"
+    container.labels = {"helios.managed": "true", "helios.tenant": "demo",
+                        "helios.app": "collect", "helios.role": "app",
+                        "helios.data_dir": "/data"}
+    container.get_archive.return_value = (iter([archive]), {})
+    env.client.containers.list.return_value = [container]
+
+    out = env.orch.tenant_logs("demo")
+    assert set(out["apps"]) == {"collect"}
+    files = {f["path"]: f for f in out["apps"]["collect"]["files"]}
+    assert set(files) == {"data/runs/run-1/action-log.jsonl", "data/audit/collect-audit-log.jsonl"}
+    assert files["data/runs/run-1/action-log.jsonl"]["entries"] == 2
+    assert "chain" not in files["data/runs/run-1/action-log.jsonl"]
+    audit = files["data/audit/collect-audit-log.jsonl"]
+    assert audit["entries"] == 3
+    assert audit["chain"] == {"verified": True, "intact": True, "problems": []}
+    container.get_archive.assert_called_once_with("/data")
+
+
+def test_tenant_logs_reports_a_tampered_chain(env, tmp_path) -> None:
+    from audit_agent.audit_log import AuditLog, EventType
+    from audit_agent.contracts import Decision
+
+    chain = tmp_path / "chain.jsonl"
+    log = AuditLog(chain)
+    for i in range(2):
+        log.append(EventType.ACTION_DECIDED, app_id="c", agent_id="a", principal="demo",
+                   tool="t", request_id=f"r{i}", decision=Decision.DENY, findings=[],
+                   details={"i": i})
+    lines = chain.read_text().splitlines()
+    first = json.loads(lines[0])
+    first["tool"] = "something_else"          # edit a hashed field, keep the hash
+    lines[0] = json.dumps(first)
+    tampered = ("\n".join(lines) + "\n").encode()
+
+    container = MagicMock()
+    container.name = "demo-c-app"
+    container.labels = {"helios.managed": "true", "helios.tenant": "demo",
+                        "helios.app": "c", "helios.role": "app", "helios.data_dir": "/data"}
+    container.get_archive.return_value = (iter([_tar_bytes({"data/audit/c.jsonl": tampered})]), {})
+    env.client.containers.list.return_value = [container]
+
+    out = env.orch.tenant_logs("demo")
+    chain_report = out["apps"]["c"]["files"][0]["chain"]
+    assert chain_report["verified"] is True and chain_report["intact"] is False
+    assert chain_report["problems"]

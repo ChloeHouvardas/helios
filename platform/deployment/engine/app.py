@@ -212,6 +212,20 @@ def app_logs(container_name: str, tail: int = Query(200, ge=1, le=10000)):
         raise HTTPException(exc.status, exc.detail) from exc
 
 
+@app.get("/api/v1/tenants/{tenant}/logs")
+def tenant_logs(tenant: str, app_name: str = Query("", alias="app"),
+                tail: int = Query(200, ge=1, le=10000)):
+    """Central evidence: every app's action log, audit chain and sidecar log.
+
+    Read from the named data volumes through the running containers, with
+    each hash chain verified by audit_agent's own walker.
+    """
+    try:
+        return orch().tenant_logs(tenant, app_name or None, tail)
+    except DeployError as exc:
+        raise HTTPException(exc.status, exc.detail) from exc
+
+
 @app.delete("/api/v1/apps/{name}")
 def undeploy(name: str, tenant: str = Query("")):
     """Remove a deployed app, or every app of one tenant.
