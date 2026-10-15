@@ -79,8 +79,17 @@ All three carry `helios.yaml`, build lazily behind a constant `/health`, and ann
 
 ## Live run
 
-Filled in by `scripts/demo-check.sh T3 T4 T5 T6` on this machine (Docker Desktop).
-See the observed values recorded in `DEMOFLOW.md` §4.
+`scripts/demo-check.sh all` on this machine (Docker Desktop), 2026-10-15:
+T0 5/5 · T1 10/10 · T2 8/8 · T3 17/17 · T4 8/8 · T5 4/4. Observed: the three
+golden images built from this tree; the sample app and all three flagships
+deployed under tenant `demo` at once; redeploy without downtime; a failing smoke
+test left the previous deployment serving; a bundled `.env` refused before upload;
+a hard-coded key caught by the static audit; hold approve then a second approve
+404; a container restart kept its route and its logs; the tenant core answered
+40 tools behind a bearer token and refused a payment with no intent code; the
+central evidence endpoint returned every app's logs with intact chains; Collect's
+extension event reached the cash planner over the bus and it re-projected;
+Payables held a payment on the forecaster's payroll fact.
 
 ---
 

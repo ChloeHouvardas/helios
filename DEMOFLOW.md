@@ -15,15 +15,16 @@ demo shape · **[todo]** must be built · **[open]** needs a decision.
 | Decision | Status |
 |---|---|
 | Apps never call each other. Cross-app state flows only through the shared knowledge graph and the tenant event bus. | settled 2026-10-15 |
-| Financial tools run **on the platform**, not inside each app. The tenant core container runs `fin_tools`' bearer-authenticated HTTP service; the mock core is replaced. | settled 2026-10-15 — **[todo]** |
-| Logs are central. The action log, the auditor's hash-chained log and the sidecar log for every app of a tenant are readable from one endpoint on the **deployment engine** (`GET /api/v1/tenants/<t>/logs`), which reads each app's `/data` volume through docker-py. Chosen over the core service because core never sees the sidecar log. | settled 2026-10-15 — **[todo]** |
-| Three flagships: Collect, Payables, **Cash Planner**. All three are **fully deployed under one tenant at the same time**, and that is a test (T3.18). Cash Planner is being built now. | settled 2026-10-15 — **[in progress]** |
+| Financial tools run **on the platform**, not inside each app. The tenant core container runs `fin_tools`' bearer-authenticated HTTP service; the mock core is replaced. | settled 2026-10-15 — **[built]**; the flagships still execute their own money movement in-process (see G3) |
+| Logs are central. The action log, the auditor's hash-chained log and the sidecar log for every app of a tenant are readable from one endpoint on the **deployment engine** (`GET /api/v1/tenants/<t>/logs`), which reads each app's `/data` volume through docker-py. Chosen over the core service because core never sees the sidecar log. | settled 2026-10-15 — **[built]** |
+| Three flagships: Collect, Payables, **Cash Planner**. All three are **fully deployed under one tenant at the same time**, and that is a test (T3.18). | settled 2026-10-15 — **[built]** |
 | "Apps cannot reach each other" is a convention, not a network property. We do not enforce it with Docker networking; we document it and never write app-to-app calls. | settled 2026-10-15 |
-| The p5 scaffolder defects are cleared on the builder branch before the surprise-task stage is rehearsed. | settled 2026-10-15 — **[in progress]** |
+| The p5 scaffolder defects are cleared before a surprise task is attempted. | settled 2026-10-15 — **[built]** |
+| The surprise-task rung (T6) and the hold-persistence phase are **dropped** from this plan. | settled 2026-10-15 |
 | Demos run on the scripted driver. Live Qwen is tested separately, later. | settled |
 | Standalone `audit_agent` is the authoritative gate; the sidecar may deny or forward, never approve. | settled (p2, `specs/decisions.md`) |
 | Money is simulated; integer cents; never float. | settled |
-| p1's `market_data/` package survives the merge; chloe-dev's `daily_quotes`, `trading_calendar` and its ledger-isolation grep test are folded in. | settled 2026-10-15 |
+| p1's `market_data/` package survives the merge; chloe-dev's `daily_quotes`, `trading_calendar` and its ledger-isolation grep test are folded in. | settled 2026-10-15 — **[built]** |
 
 ---
 
@@ -84,20 +85,20 @@ Nothing but the repo and Python 3.13. `scripts/bootstrap-venv.sh`, then
 `platform/deployment/bootstrap.sh` → nginx + engine on :8100.
 `cli/helios.py doctor` → daemon, base image, nginx, deployed apps.
 
-### Stage 2 — build an app from one sentence **[partial]**
+### Stage 2 — build an app from one sentence **[built]**
 
 The surprise-task path. A stub agent (us, following only `entry-point/SKILL.md`
 and `BUILD.md`) runs intake → spec → scaffold → policy → validate → deploy.
-p5's rehearsal reached validate 0 errors and 16/16 controls but could not deploy.
-Blockers to clear are in §5.
+The rehearsal blockers are fixed: a fresh scaffold validates clean on arrival, its
+generated tests fail rather than skip without a policy, and `BUILD.md` documents the
+real deploy path. Cash Planner was built this way (`apps/helios-cash-planner/intake.yaml`).
 
-### Stage 3 — deploy the three flagships **[partial]**
+### Stage 3 — deploy the three flagships **[built]**
 
 `helios deploy` for Collect, Payables and Cash Planner under one tenant, **all three
 running at once**. Each returns a URL; each `/health` is 200; each approval queue
-renders; `helios apps` lists three app + audit pairs. Collect and invoice-payer
-were deployed live by p2. Payables is deploy-ready, never deployed. Cash Planner
-is being built.
+renders; `helios apps` lists three app + audit pairs. Observed 2026-10-15 (T3.18):
+all three running under tenant `demo`, every page 200, one core and one redis.
 
 ### Stage 4 — the control moments **[built]**
 
@@ -111,7 +112,7 @@ The four moments a judge should see, one screen each:
 | Payables | BILL-2012 agent lies about `amount_cents` to slip under the threshold → still held | rule binds on the fact `bill_amount_cents`, never the agent's number |
 | Platform | duplicate payment proposed twice → second one `held_for_review` by the sidecar; both in `/audit-log` | the platform gate works without the app's cooperation |
 
-### Stage 5 — the apps work together, after each works alone **[todo]**
+### Stage 5 — the apps work together, after each works alone **[built]**
 
 Each flagship demos on its own first (Stages 3 and 4). Working together is an
 added feature, shown last, and nothing in it is an app calling another app.
@@ -133,7 +134,7 @@ added feature, shown last, and nothing in it is an app calling another app.
    warning from the graph; the forecast fact in step 1 now reflects Collect's
    extension, and a non-urgent bill is held for rescheduling.
 
-### Stage 6 — tools and logs are central **[todo]**
+### Stage 6 — tools and logs are central **[built]**
 
 - `GET /tools` on the tenant core lists the 38-tool catalog with side-effect flags;
   `/call` requires the bearer secret; `payments.send` without an `auth_code` is
@@ -141,10 +142,9 @@ added feature, shown last, and nothing in it is an app calling another app.
 - One platform endpoint returns the action log, audit log and sidecar log of every
   app in the tenant; the hash chain verifies.
 
-### Stage 7 — surprise task, end to end **[partial]**
+### Stage 7 — surprise task **[dropped]**
 
-Stage 2 again, timed, against a sentence we have not rehearsed, ending at a
-deployed URL and a passing control test.
+Not part of this plan. The path exists (Stage 2) and Cash Planner walked it.
 
 ---
 
@@ -152,10 +152,15 @@ deployed URL and a passing control test.
 
 Run in this order. A rung is green before the next is attempted. All commands run
 from the repo root with `.venv/bin/python` unless stated. **Every rung is scripted**
-as `scripts/demo-check.sh <rung>` (T0..T6, or `all`), including the Docker rungs,
+as `scripts/demo-check.sh <rung>` (T0..T5, or `all`), including the Docker rungs,
 so the ladder runs unattended and prints one line per check: id, PASS/FAIL, and the
 observed value. "Expect" is what must be
 observed, not inferred.
+
+**Last full run, 2026-10-15, `integration` branch, Docker Desktop on this machine:**
+T0 5/5 · T1 10/10 · T2 8/8 · T3 17/17 · T4 8/8 · T5 4/4. The Docker run built the
+three golden images from this tree, deployed the sample app and all three flagships
+under tenant `demo`, and left them running.
 
 ### T0 — offline, no Docker, no keys
 
@@ -164,7 +169,7 @@ observed, not inferred.
 | T0.1 | `scripts/bootstrap-venv.sh` | ends with `ok agent_toolkit / audit_agent / agent_integration / fin_tools / engine / app_builder` |
 | T0.2 | `scripts/test-all.sh` | `all N suites green`, per-suite counts printed, exit 0. No suite collects zero tests. |
 | T0.3 | `.venv/bin/python -m agent_integration.cli selfcheck` | `seam check: OK` |
-| T0.4 | `.venv/bin/python -c "from fin_tools import build_world; r=build_world().registry; print(len(r.list()))"` | one catalog, one count (38 on p1, 16 on chloe-dev; the merged number is recorded here once decided) |
+| T0.4 | `.venv/bin/python -c "from fin_tools import build_world; r=build_world().registry; print(len(r.list()))"` | 40 |
 | T0.5 | `.venv/bin/python -m agent_integration.cli demo` | 5 scenarios, `chain verification: OK` |
 | T0.6 | `grep -rniE 'glm|zhipu|bigmodel' --exclude-dir=.venv --exclude-dir=.qwen --exclude-dir=OTHER-TEAMMATE-STUFF .` | no hits outside session notes |
 
@@ -175,8 +180,8 @@ observed, not inferred.
 | T1.1 | `cd apps/helios-collect && ../../.venv/bin/python app.py` | `{'done': 5, 'refused': 3, 'declined_by_owner': 2}`, 4 emails |
 | T1.2 | `cd apps/helios-collect && ../../.venv/bin/python app.py --scenario INV-1006 --trace` | `REFUSED`, rule `app.disputed_invoice`, never queued |
 | T1.3 | `cd entry-point/examples/invoice-payer && ../../../.venv/bin/python app.py` | `{'paid': 3, 'refused': 1, 'declined_by_owner': 1}`; INV-1003 refused after owner confirms |
-| T1.4 | `cd apps/helios-payables && ../../.venv/bin/python app.py` | 15 verdicts match the README table; BILL-2002 refused; BILL-2012 held |
-| T1.5 | `cd apps/helios-cash-planner && ../../.venv/bin/python app.py` | **[todo]** scenarios to be written with the app |
+| T1.4 | `cd apps/helios-payables && ../../.venv/bin/python app.py` | `{'done': 9, 'refused': 4, 'declined_by_owner': 2, 'rejected_by_ledger': 1}`; BILL-2002 refused; BILL-2012 held; BILL-2016 held on the forecaster's payroll fact |
+| T1.5 | `cd apps/helios-cash-planner && ../../.venv/bin/python app.py` | `{'done': 4, 'refused': 5, 'declined_by_owner': 2}`; WARN-INVENTED refused; WARN-INFLATED held; DRAW held then approved |
 | T1.6 | `helios-app validate apps/<each>` | exit 0 for all three flagships and the example |
 | T1.7 | `cd apps/<each> && ../../.venv/bin/python -m pytest tests -q` | each `test_controls.py` asserts every rule fires at least once; `test_server.py` asserts `/health` 200 with no Redis, sidecar, key or volume |
 
@@ -211,31 +216,31 @@ at the repo root holds tenant secrets and is gitignored.
 | T3.5 | `helios deploy platform/deployment/examples/sample-app --tenant demo` | `{"status":"deployed", ...}`; `curl -i localhost/apps/sample-collect-demo/health` → 200 |
 | T3.6 | `helios deploy apps/helios-collect --tenant demo` | 200 on `/`, `/holds`, `/runs`, `/audit`; `style.css` served as `text/css`; links carry the `/apps/<slug>` prefix |
 | T3.7 | `helios deploy apps/helios-payables --tenant demo` | same checks; sidecar `/health` reports `manifest.loaded: true` and lists delegated fact-bound rules |
-| T3.8 | `helios deploy apps/helios-cash-planner --tenant demo` | **[todo]** |
+| T3.8 | `helios deploy apps/helios-cash-planner --tenant demo` | `/`, `/holds`, `/health` all 200 |
 | T3.9 | redeploy T3.6 after editing a template | old container serves until the new pair passes health; zero 502s during the swap; nginx `default.conf` has exactly one block per slug |
 | T3.10 | deploy a copy of Collect with a deliberately failing `/health` | deploy fails at `stage: smoke_test`, response carries `logs` with the traceback; the previous deployment keeps serving |
 | T3.11 | deploy a bundle containing a `.env` | CLI refuses, exit 2, before upload |
 | T3.12 | deploy a bundle with a hard-coded `sk-...` string in a `.py` | fails at `stage: static_audit`, `problems` names the file |
 | T3.13 | `helios.yaml` with an unknown field or an unknown permission | fails at `stage: manifest`, every problem listed at once, each says what to write instead |
 | T3.14 | hold → approve on the deployed Collect `/holds` | approve 303 and queue empties; second approve on the same hold → 404; decline executes nothing |
-| T3.15 | `docker restart <tenant>-helios-collect-app` then reload `/runs` and `/audit` | logs survive (named volume). **Holds surviving restart is [todo]** — in-memory today |
+| T3.15 | `docker restart <tenant>-helios-collect-app` then reload `/runs` | logs survive (named volume) and the route survives (apps are routed by container name through Docker DNS, not by IP). Holds do not survive a restart; that phase was dropped |
 | T3.16 | `helios undeploy helios-collect --tenant demo` | containers gone, volume `helios-data-demo-helios-collect` still present |
 | T3.17 | `docker exec` into the app container: `env | grep -E 'SECRET|TOKEN'` | `HELIOS_ACTION_TOKEN` only; no `HELIOS_EXECUTION_SECRET`, no `TUSHARE_TOKEN` value unless declared under `env:` |
 | T3.18 | **All three flagships deployed together**: deploy Collect, Payables, Cash Planner under tenant `demo`; `helios apps` | three app + audit pairs running; every `/`, `/holds`, `/health` returns 200; one `helios-core-demo` and one `helios-redis-demo` shared by all three; nginx `default.conf` has exactly three marker blocks |
 
-### T4 — tools and logs central **[todo until §5 items land]**
+### T4 — tools and logs central **[built]**
 
 | # | Command | Expect |
 |---|---|---|
 | T4.1 | from the audit sidecar: `GET http://helios-core-demo:9000/health` | `{status, role, tool_count}` with no auth |
 | T4.2 | `GET .../tools` without bearer | 401; with bearer → the full catalog with `side_effects` flags |
-| T4.3 | `POST .../call {"tool":"payments.send", ...}` with bearer but no `auth_code` | rejected: `missing verified intent auth code`. A bearer token authenticates the caller; it does not authorise the payment |
+| T4.3 | `POST .../call {"tool":"payments.send", ...}` with bearer but no `auth_code` | the tool runs and the ledger refuses: `result.state == rejected`, `missing verified intent auth code`. A bearer token authenticates the caller; it does not authorise the payment. Through the sidecar the same call is recorded as a **denial**, never as executed |
 | T4.4 | the same with a confirmed intent's `auth_code` and integer `amount_cents` | `settled`; ledger moves; `world_state.sqlite3` on the volume changes |
 | T4.5 | restart `helios-core-demo` | ledger and verified graph nodes survive |
 | T4.6 | `GET 127.0.0.1:8100/api/v1/tenants/demo/logs` | action, audit and sidecar logs for every app in the tenant, grouped by app; each hash chain verifies |
 | T4.7 | app container `curl helios-core-demo:9000/tools` | refused or unreachable: only the sidecar may reach core |
 
-### T5 — cross-app **[todo]**
+### T5 — cross-app **[built]**
 
 | # | Command | Expect |
 |---|---|---|
@@ -245,26 +250,22 @@ at the repo root holds tenant secrets and is gitignored.
 | T5.3 | Payables run with the shortfall warning present | a reschedule proposal held for the owner, citing the warning |
 | T5.4 | `grep -rn 'helios-collect\|helios-payables\|helios-cash-planner' apps/*/server.py apps/*/app.py apps/*/tools.py` | no app names another app's URL or container. Convention, not a network control: every cross-app read goes through the graph or the bus |
 
-### T6 — surprise task **[todo]**
-
-Stage 2 on a fresh sentence, timed, with only `SKILL.md` and `BUILD.md` as input,
-ending at T3-style deploy checks and a passing `test_controls.py`.
-
 ---
 
 ## 5. Gaps that block the flow, in dependency order
 
-| # | Gap | Blocks | Source |
-|---|---|---|---|
-| G1 | Merge conflicts: p0 vs p1 (26 files in `financial-tools`), p0 vs p2 (`platform/deployment`), `scripts/` in all four, two market-data implementations | everything | p5 STATUS |
-| G2 | Scaffolder emits `mandate.allowed_tools: []`; `*_send` guessed read-only; `GATED_TOOLS = []` in generated tests; `tools:` format undocumented; `BUILD.md` deploy path wrong | Stage 2, 7; T2 | p5 rehearsal |
-| G3 | Mock core replaced by `fin_tools` service: sidecar must call `POST /call` with tool name, integer cents, tenant and `auth_code`; `HELIOS_DATA_DIR` must be the volume | Stage 6; T4 | p1 handoff §1 |
-| G4 | Central log endpoint on the platform (engine or core) aggregating per-app volumes | Stage 6; T4.6 | this doc |
-| G5 | Cash Planner app: forecast + market tools, subscribes to tenant events, publishes `cashplan[shortfall_warning]` | Stage 3, 5; T1.5, T3.8, T5 | not built anywhere |
-| G6 | Collect and Payables publish via `helios_sdk.publish_event` and the platform graph, not the in-process prototype | Stage 5 | p4 worktree §1 |
-| G7 | Holds and replay guard persisted to SQLite under `/data` (`GrantVerifier` / `ReplayGuard` seam) | T3.15 | p2 §9 |
-| G8 | `helios` console script; `fastapi`/`uvicorn` in `requirements-dev.txt` | T2, T3 | p3, p5 |
-| G9 | Base images from a registry the team controls, or digests verified | judged demo | p5 |
+| # | Gap | Status |
+|---|---|---|
+| G1 | Merge conflicts across the six worktrees | **done** — `integration` branch, 14 suites green |
+| G2 | Scaffolder defects from the rehearsal | **done** — stated side-effect flags, end-aware verb guess, populated mandate and gated tests, BUILD.md corrected, validator warns on the import-time `parents[N]` trap |
+| G3 | Mock core replaced by the `fin_tools` service; sidecar forwards named tools to `/call` | **done** for the platform; the three flagships still execute `pay_bill` / `send_email` in-process inside their container. Routing those through `helios_sdk.propose_action` is the remaining step |
+| G4 | Central evidence endpoint | **done** — `GET /api/v1/tenants/<t>/logs`, `helios evidence` |
+| G5 | Cash Planner | **done** — built through the builder, 11 scenarios, 41 tests, deployed |
+| G6 | Collect and Payables publish on the bus | **done** — `invoice.extension_agreed`, `invoice.payment_applied`, `bill.rescheduled`, `bill.paid`; the flagships' graph writes stay in-process (see G3) |
+| G7 | Holds persisted across a container restart | **dropped** |
+| G8 | `helios` console script; `fastapi`/`uvicorn` pinned | pins done; the CLI is still invoked as `python platform/deployment/cli/helios.py` |
+| G9 | Base images pulled through a mirror | **open** — verify digests before a judged demo |
+| G10 | Payables declares a read of `cashplan[shortfall_warning]` and does not act on it; its payroll fact comes from its own book | **open** |
 
 ---
 
@@ -294,6 +295,6 @@ forbidden-import / `_cents` grep test. Payables' `funding.py` then migrates to
 
 ## 7. Open questions
 
-1. Is the sample-app's `propose_action("payments", amount=250.0)` shape retired once
-   the real service is in core, so every proposal is a named tool with integer cents?
-   (Assumed yes: the sample app becomes a thin example of the named-tool shape.)
+None blocking. The sample app proposes named tools with integer cents: `email.send`
+executes through core; `payments.send` without an intent code is recorded by the
+sidecar as a denial carrying the ledger's reason.
