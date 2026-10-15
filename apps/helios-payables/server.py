@@ -86,10 +86,17 @@ class State:
     One `App` per run, kept open so the pages can read the book it mutated. Each
     scenario still runs against a FRESH instance (see `run_all`), because a shared
     book would let one bill's payment change another's facts.
+
+    The app is built LAZILY, on first use of a real page. That is a deployment
+    requirement, not a preference: the engine's smoke test runs the container on an
+    isolated network with no Redis, no audit sidecar, no model key and no data
+    volume, polling `GET /health` up to 45 times. An app built at import time — or
+    built inside `/health` — makes the container fail that check and is therefore
+    not deployable (`platform/deployment/README.md`, "Why /health must be constant").
     """
 
     def __init__(self) -> None:
-        self.app: App = build_app(run_dir=HERE / "runs")
+        self._app: App | None = None
         self.outcomes: list[Any] = []
         self.owner_decisions: list[dict[str, Any]] = []
         self.owner_declines = False
@@ -101,6 +108,20 @@ class State:
         #: checkpoint survives, which is what makes "re-verify lifts the denial"
         #: demonstrable from the UI and not only from a test.
         self.reverified: set[str] = set()
+
+    @property
+    def app(self) -> App:
+        """The display app, built on first use. Never built at import time."""
+        if self._app is None:
+            self._app = build_app(run_dir=HERE / "runs")
+            self._apply_reverified(self._app)
+        return self._app
+
+    @property
+    def built(self) -> bool:
+        """Whether the app has been built yet. Reported by `/health` so a reviewer
+        can tell "healthy and idle" from "healthy and serving"."""
+        return self._app is not None
 
     def _apply_reverified(self, instance: App) -> None:
         for supplier_id in sorted(self.reverified):
@@ -117,9 +138,11 @@ class State:
         the pages show the current fixtures rather than the accumulated state of
         fifteen separate runs.
         """
-        self.app.close()
-        self.app = build_app(run_dir=HERE / "runs")
-        self._apply_reverified(self.app)
+        if self._app is not None:
+            self._app.close()
+            self._app = None
+        # Rebuilt on the next page that asks for it, so this stays lazy. Re-verified
+        # suppliers are re-applied by the `app` property when it rebuilds.
 
     def run_all(self) -> None:
         """Run every scenario, each against its own fresh app."""
@@ -144,7 +167,10 @@ class State:
         self.last_run = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     def close(self) -> None:
-        self.app.close()
+        """Close the display app if one was ever built. Never builds one."""
+        if self._app is not None:
+            self._app.close()
+            self._app = None
 
 
 STATE = State()
@@ -166,20 +192,47 @@ def _ctx(request: Request, active: str, subtitle: str = "") -> dict[str, Any]:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    """Liveness that means something: the auditor and the book are both usable."""
+    """Liveness for the deploy smoke test. CONSTANT — it must not build the app.
+
+    The engine runs the container on an isolated network with no Redis, no audit
+    sidecar, no model key and no data volume, polling this endpoint up to 45 times
+    at 1s intervals. Anything that touches the app, the fixtures, the auditor or a
+    volume here makes the container fail that check and the deploy fail at the
+    `smoke_test` stage. So this returns static values read from the manifest and
+    config, which are known at import time and need no environment.
+
+    An earlier version of this endpoint reported rules loaded and bills counted. That
+    was a better health check in principle — it proved the auditor had actually
+    compiled — and it is exactly what made the app undeployable. The honest place for
+    it is a separate diagnostic endpoint, not the liveness probe.
+    """
+    return {"status": "ok", "app": config.APP_ID, "built": STATE.built}
+
+
+@app.get("/diagnostics")
+def diagnostics() -> dict[str, Any]:
+    """The real readiness check, kept off the liveness path.
+
+    Reports whether the auditor compiled its rules and whether the book loaded. It
+    builds the app on first call, so it must never be what the smoke test polls —
+    but it is the endpoint worth looking at when a deployed app answers `/health`
+    and then 500s on every page.
+    """
     try:
-        loaded = bool(STATE.app.audit_manifest.rules)
-        bills = len(STATE.app.book.bill_ids())
+        loaded = STATE.app.audit_manifest
+        return {
+            "status": "ok",
+            "app_id": config.APP_ID,
+            "rules_loaded": len(loaded.rules),
+            "tools_declared": len(loaded.tools),
+            "tasks": sorted(loaded.tasks),
+            "bills": len(STATE.app.book.bill_ids()),
+            "suppliers": len(STATE.app.book.supplier_ids()),
+            "ephemeral_signing_key": bool(STATE.app.integration.ephemeral_key),
+        }
     except Exception as exc:  # a broken app must not report healthy
-        return {"status": "unhealthy", "detail": f"{type(exc).__name__}: {exc}"}
-    return {
-        "status": "ok" if (loaded and bills) else "unhealthy",
-        "app_id": config.APP_ID,
-        "rules_loaded": len(STATE.app.audit_manifest.rules),
-        "tools_declared": len(STATE.app.audit_manifest.tools),
-        "bills": bills,
-        "suppliers": len(STATE.app.book.supplier_ids()),
-    }
+        return {"status": "unhealthy", "app_id": config.APP_ID,
+                "detail": f"{type(exc).__name__}: {exc}"}
 
 
 @app.get("/", response_class=HTMLResponse)
