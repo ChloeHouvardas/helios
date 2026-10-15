@@ -1,7 +1,7 @@
 """Test configuration: keep the suite offline, permanently.
 
 A driver test once pointed at ``DEFAULT_BASE_URL`` and made a real request to
-the public model endpoint, which answered with a live 401. The assertion failed
+the public GLM endpoint, which answered with a live 401. The assertion failed
 for the right reason but for the wrong cause, and the suite was not hermetic.
 
 So socket connections are blocked for every test, with an explicit allowance

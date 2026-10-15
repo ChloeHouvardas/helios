@@ -16,7 +16,7 @@ to know about both:
 - ``bridge``      — authorize a task, then adjudicate every side effect.
 - ``runtime``     — the gated agent loop Build 1 specified but never shipped.
 - ``wiring``      — ``build_integration()``, one call to assemble it all.
-- ``model_driver``— the real model (Qwen via DashScope, OpenAI-compatible), stdlib HTTP, imported lazily.
+- ``model_driver``— the real model (GLM-5.3, OpenAI-compatible), stdlib HTTP, imported lazily.
 - ``cli``         — demo, run, inspect, manifest, selfcheck.
 
 Start with ``build_integration()``, or ``python -m agent_integration.cli demo``.

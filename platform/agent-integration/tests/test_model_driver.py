@@ -1,4 +1,4 @@
-"""Tests for the Qwen (DashScope OpenAI-compatible) model driver.
+"""Tests for the GLM-5.3 model driver.
 
 Everything here is offline. The wire protocol is exercised against a local
 ``http.server`` that mimics the endpoint's documented request and response
@@ -17,7 +17,6 @@ Three properties matter most and each has a test:
 
 from __future__ import annotations
 
-import inspect
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -28,13 +27,10 @@ import pytest
 from agent_integration import ToolCall
 from agent_integration.model_driver import (
     DEFAULT_BASE_URL,
-    DEFAULT_ENABLE_THINKING,
     DEFAULT_MODEL,
-    DEFAULT_THINKING_BUDGET,
     GATE_NOTICE,
     ModelDriver,
     ModelError,
-    TOKEN_ENV_VARS,
     api_key_present,
     as_chat_messages,
     parse_arguments,
@@ -54,13 +50,10 @@ from agent_toolkit.contracts import ToolDefinition
 class _MockServer:
     """Records requests, replies with a canned payload.
 
-    Deliberately strict about the documented DashScope contract: it rejects a
-    missing Authorization header, a ``thinking_budget`` outside the documented
-    1-32768 range, and a legacy GLM-shaped ``thinking`` key — the last so a
-    driver that was never migrated off the old provider fails here rather than
-    in production. Disabling thinking is *allowed*: ``qwen3.8-max`` is a
-    hybrid-thinking model, and ``doctor`` relies on turning it off to send a
-    cheap ping.
+    Deliberately strict about the documented contract: it rejects a missing
+    Authorization header and a request that tries to disable thinking, because
+    GLM-5.3 does both and a driver that got either wrong should fail here
+    rather than in production.
     """
 
     def __init__(self, replies: list[dict[str, Any]], *, expect_token: str = "tok") -> None:
@@ -96,23 +89,9 @@ class _MockServer:
                     outer.errors.append("token did not match")
                     self._send(401, {"error": {"code": "auth", "message": "bad token"}})
                     return
-                if "thinking" in payload:
-                    outer.errors.append(
-                        "sent the legacy GLM-shaped 'thinking' key; DashScope "
-                        "uses the top-level 'enable_thinking' boolean"
-                    )
-                    self._send(400, {"error": {"code": "bad", "message": "unknown field 'thinking'"}})
-                    return
-                if "reasoning_effort" in payload:
-                    outer.errors.append(
-                        "sent 'reasoning_effort'; DashScope uses 'thinking_budget'"
-                    )
-                    self._send(400, {"error": {"code": "bad", "message": "unknown field 'reasoning_effort'"}})
-                    return
-                budget = payload.get("thinking_budget")
-                if budget is not None and not (1 <= int(budget) <= 32768):
-                    outer.errors.append(f"thinking_budget {budget!r} outside 1-32768")
-                    self._send(400, {"error": {"code": "bad", "message": "thinking_budget out of range"}})
+                if payload.get("thinking", {}).get("type") == "disabled":
+                    outer.errors.append("tried to disable thinking on GLM-5.3")
+                    self._send(400, {"error": {"code": "bad", "message": "thinking cannot be disabled"}})
                     return
 
                 if not outer.replies:
@@ -135,9 +114,7 @@ class _MockServer:
 
     @property
     def base_url(self) -> str:
-        # Mirrors DashScope's OpenAI-compatible shape: the driver appends
-        # /chat/completions to whatever base URL it is given.
-        return f"http://127.0.0.1:{self.port}/compatible-mode/v1"
+        return f"http://127.0.0.1:{self.port}/api/paas/v4"
 
     def start(self) -> "_MockServer":
         self._thread.start()
@@ -242,28 +219,13 @@ def _tool_reply(name: str, arguments: Any) -> dict[str, Any]:
 
 
 def test_defaults_match_the_documented_endpoint() -> None:
-    """Qwen via DashScope OpenAI-compatible mode is the only permitted model,
-    so the defaults point there and name no other provider."""
-    assert DEFAULT_BASE_URL == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert DEFAULT_MODEL == "qwen3.8-max"
-    assert DEFAULT_BASE_URL.endswith("/compatible-mode/v1")
-    assert "/chat/completions" not in DEFAULT_BASE_URL
-    assert DEFAULT_ENABLE_THINKING is True
-
-
-def test_no_legacy_provider_reference_survives() -> None:
-    """Compliance rule: Qwen is the only allowed generative model, and any
-    reference to the legacy provider must be gone. This pins the rule down so a
-    reverted default fails a test instead of shipping."""
-    import agent_integration.model_driver as md
-
-    source = inspect.getsource(md)
-    for banned in ("glm", "zhipu", "bigmodel"):
-        assert banned not in source.lower(), f"legacy reference {banned!r} remains"
+    assert DEFAULT_BASE_URL == "https://open.bigmodel.cn/api/paas/v4"
+    assert DEFAULT_MODEL == "glm-5.3"
 
 
 def test_token_is_read_from_the_environment(monkeypatch) -> None:
-    for name in TOKEN_ENV_VARS:
+    for name in ("HELIOS_LLM_API_KEY", "LLM_API_TOKEN", "GLM_API_KEY",
+                 "ZHIPUAI_API_KEY", "DASHSCOPE_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     assert resolve_token() == ""
     assert api_key_present() is False
@@ -272,27 +234,6 @@ def test_token_is_read_from_the_environment(monkeypatch) -> None:
     assert resolve_token() == "L2secret1Y"  # stripped
     assert api_key_present() is True
     assert token_env_var_name() == "LLM_API_TOKEN"
-
-
-def test_dashscope_api_key_is_accepted(monkeypatch) -> None:
-    """DASHSCOPE_API_KEY is the name Alibaba Cloud Model Studio documents for
-    its own key, so a user who sets only that variable must be picked up."""
-    for name in TOKEN_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-dashscope")
-    assert resolve_token() == "sk-dashscope"
-    assert token_env_var_name() == "DASHSCOPE_API_KEY"
-
-
-def test_no_legacy_provider_env_vars_are_consulted(monkeypatch) -> None:
-    """A legacy provider key in the environment must never authenticate a run."""
-    for name in TOKEN_ENV_VARS:
-        monkeypatch.delenv(name, raising=False)
-    monkeypatch.setenv("GLM_API_KEY", "legacy")
-    monkeypatch.setenv("ZHIPUAI_API_KEY", "legacy")
-    assert resolve_token() == ""
-    assert "GLM_API_KEY" not in TOKEN_ENV_VARS
-    assert "ZHIPUAI_API_KEY" not in TOKEN_ENV_VARS
 
 
 def test_token_priority_prefers_the_helios_name(monkeypatch) -> None:
@@ -307,42 +248,22 @@ def test_a_blank_token_counts_as_absent(monkeypatch) -> None:
 
 
 def test_environment_overrides_model_and_base_url(monkeypatch) -> None:
-    monkeypatch.setenv("HELIOS_LLM_MODEL", "qwen3.8-flash")
-    monkeypatch.setenv("HELIOS_LLM_BASE_URL", "https://gateway.example.com/compatible-mode/v1/")
-    monkeypatch.setenv("HELIOS_LLM_ENABLE_THINKING", "false")
-    monkeypatch.setenv("HELIOS_LLM_THINKING_BUDGET", "1024")
+    monkeypatch.setenv("HELIOS_LLM_MODEL", "glm-5.3-flash")
+    monkeypatch.setenv("HELIOS_LLM_BASE_URL", "https://gateway.example.com/v4/")
+    monkeypatch.setenv("HELIOS_LLM_REASONING_EFFORT", "low")
     monkeypatch.setenv("HELIOS_LLM_MAX_TOKENS", "512")
 
     driver = ModelDriver(token="tok")
-    assert driver.model == "qwen3.8-flash"
-    assert driver.base_url == "https://gateway.example.com/compatible-mode/v1"  # trailing / stripped
-    assert driver.enable_thinking is False
-    assert driver.thinking_budget == 1024
+    assert driver.model == "glm-5.3-flash"
+    assert driver.base_url == "https://gateway.example.com/v4"  # trailing / stripped
+    assert driver.reasoning_effort == "low"
     assert driver.max_tokens == 512
 
 
-def test_an_explicit_false_enable_thinking_beats_the_environment(monkeypatch) -> None:
-    """`enable_thinking` is a real bool, so an explicit False must not fall
-    through to a truthy default the way `or` would."""
-    monkeypatch.setenv("HELIOS_LLM_ENABLE_THINKING", "true")
-    assert ModelDriver(token="tok", enable_thinking=False).enable_thinking is False
-
-
-def test_an_unparsable_enable_thinking_falls_back(monkeypatch) -> None:
-    """Unrecognised truthy text must not guess its way into thinking mode."""
-    monkeypatch.setenv("HELIOS_LLM_ENABLE_THINKING", "maybe")
-    assert ModelDriver(token="tok").enable_thinking == DEFAULT_ENABLE_THINKING
-
-
-def test_an_unparsable_thinking_budget_falls_back(monkeypatch) -> None:
-    monkeypatch.setenv("HELIOS_LLM_THINKING_BUDGET", "lots")
-    assert ModelDriver(token="tok").thinking_budget == DEFAULT_THINKING_BUDGET
-
-
 def test_explicit_arguments_win_over_the_environment(monkeypatch) -> None:
-    monkeypatch.setenv("HELIOS_LLM_MODEL", "qwen3.8-flash")
-    driver = ModelDriver(model="qwen3.8-max", token="tok")
-    assert driver.model == "qwen3.8-max"
+    monkeypatch.setenv("HELIOS_LLM_MODEL", "glm-5.3-flash")
+    driver = ModelDriver(model="glm-5.3", token="tok")
+    assert driver.model == "glm-5.3"
 
 
 def test_a_non_numeric_max_tokens_falls_back(monkeypatch) -> None:
@@ -367,8 +288,8 @@ def test_no_token_is_a_clear_local_error_not_a_network_call() -> None:
 
 
 def test_request_is_a_plain_bearer_with_no_jwt(mock_server) -> None:
-    """DashScope expects the API key as a plain Bearer value. The token must go
-    out exactly as supplied, never signed or encoded into a JWT."""
+    """GLM-5.3 rejects the legacy JWT-shaped credential. The token must go
+    out exactly as supplied."""
     driver = ModelDriver(token="tok", base_url=mock_server.base_url)
     driver.next_calls(
         task="t", instructions="i", tools=[],
@@ -377,49 +298,20 @@ def test_request_is_a_plain_bearer_with_no_jwt(mock_server) -> None:
     assert mock_server.errors == []
     auth = mock_server.headers[0]["authorization"]
     assert auth == "Bearer tok"
-    assert auth.count(".") < 2, "looks like a JWT; DashScope wants a plain key"
+    assert auth.count(".") < 2, "looks like a JWT, which GLM-5.3 rejects"
 
 
-def test_request_sends_thinking_as_a_dashscope_top_level_flag(mock_server) -> None:
-    """enable_thinking is a DashScope extension sent top-level, not the legacy
-    GLM-shaped ``thinking`` object; thinking_budget is omitted when 0."""
+def test_request_enables_thinking_and_never_disables_it(mock_server) -> None:
     driver = ModelDriver(token="tok", base_url=mock_server.base_url)
     driver.next_calls(
         task="t", instructions="i", tools=[],
         history=[{"role": "user", "content": "hello"}],
     )
     payload = mock_server.requests[0]
-    assert payload["enable_thinking"] is True
-    assert "thinking" not in payload
-    assert "reasoning_effort" not in payload
-    assert "thinking_budget" not in payload  # 0 budget -> omitted
-    assert payload["model"] == "qwen3.8-max"
+    assert payload["thinking"] == {"type": "enabled"}
+    assert payload["reasoning_effort"] in {"low", "high", "max"}
+    assert payload["model"] == "glm-5.3"
     assert payload["stream"] is False
-
-
-def test_thinking_budget_is_sent_when_configured(mock_server) -> None:
-    driver = ModelDriver(token="tok", base_url=mock_server.base_url, thinking_budget=2048)
-    driver.next_calls(
-        task="t", instructions="i", tools=[],
-        history=[{"role": "user", "content": "hello"}],
-    )
-    payload = mock_server.requests[0]
-    assert payload["enable_thinking"] is True
-    assert payload["thinking_budget"] == 2048
-    assert mock_server.errors == []
-
-
-def test_thinking_can_be_disabled_for_a_cheap_ping(mock_server) -> None:
-    """doctor turns thinking off to send one cheap request; the driver must
-    send enable_thinking=false rather than the flag it defaults to."""
-    driver = ModelDriver(token="tok", base_url=mock_server.base_url, enable_thinking=False)
-    driver.next_calls(
-        task="t", instructions="i", tools=[],
-        history=[{"role": "user", "content": "hello"}],
-    )
-    payload = mock_server.requests[0]
-    assert payload["enable_thinking"] is False
-    assert mock_server.errors == []
 
 
 def test_tools_are_wrapped_in_the_documented_envelope(mock_server) -> None:
@@ -525,9 +417,8 @@ def test_plain_text_is_returned_as_the_final_answer(mock_server) -> None:
 
 
 def test_reasoning_content_is_not_mistaken_for_an_answer() -> None:
-    """With thinking on, Qwen returns a reasoning trace alongside the answer.
-    The trace is not the answer, and treating it as one would end the run
-    early on a half-finished thought."""
+    """GLM-5.3 returns a thinking trace alongside the answer. The trace is
+    not the answer, and treating it as one would end the run early."""
     assert text_of({"content": "Sent.", "reasoning_content": "Let me think..."}) == (
         "Sent."
     )
