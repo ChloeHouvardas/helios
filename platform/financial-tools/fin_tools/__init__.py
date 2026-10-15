@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from .contracts import (
     REGISTRY,
@@ -40,6 +40,7 @@ from .market_data import tools as _market_mod
 from .market_data import build_resolver as _build_market_resolver
 from . import payments as _pay_mod
 from . import spreadsheet_tools as _sheet_mod
+from . import sheets as _sheets_mod
 from . import knowledge_graph as _graph_mod
 from . import simulation as _sim_mod
 from .service import (
@@ -78,6 +79,11 @@ class Bundle:
     #: yet": tenant-scoped tools refuse rather than silently defaulting, because
     #: a wrong default writes one tenant's money into another's books.
     tenant: Optional[str] = None
+    #: Statement-reconciliation facade over the imported `spreadsheets` package.
+    #: Optional because a bundle built without it (an older call site, or a test
+    #: that only wants payments) still works; the `sheets.*` tools refuse at call
+    #: time rather than reaching a shared default tenant.
+    sheets: Optional[Any] = None
     #: Directory for state that must outlive the process. `None` keeps
     #: everything in memory, which is what tests want.
     data_dir: Optional[str] = None
@@ -130,6 +136,10 @@ def build_world(*, registry: Optional[ToolRegistry] = None,
     # Market data resolves per this bundle's mode/data_dir; market.rate publishes
     # into this bundle's graph, so the rate service gets the same `graph`.
     market_resolver = _build_market_resolver(data_dir=resolved_data_dir)
+    # Statement reconciliation shares this bundle's tenant; its service is built
+    # lazily with a NullQwen client so no tool here can reach a model or read
+    # QWEN_API_KEY. Constructing the facade is cheap and needs no pydantic.
+    sheets = _sheets_mod.Sheets(tenant=resolved_tenant)
 
     _pay_mod.register(reg, payments)
     _email_mod.register(reg, email)
@@ -139,10 +149,11 @@ def build_world(*, registry: Optional[ToolRegistry] = None,
     _collect_mod.register(reg, collect)
     _forecast_mod.register(reg)
     _market_mod.register(reg, market_resolver, graph)
+    _sheets_mod.register(reg, sheets)
     return Bundle(world=world, registry=reg, intents=intents,
                   payments=payments, email=email, graph=graph, collect=collect,
                   tenant=resolved_tenant, data_dir=resolved_data_dir,
-                  profiles=profiles)
+                  profiles=profiles, sheets=sheets)
 
 
 __all__ = [

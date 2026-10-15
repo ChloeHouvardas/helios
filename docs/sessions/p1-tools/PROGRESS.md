@@ -264,3 +264,68 @@ weakening the gate to match a mock.
 
 **State:** green — financial-tools 527 passed + 1 skipped (511 + 16 new). Full
 `scripts/test-all.sh` exit 0, `seam check: OK`. 29 tools.
+
+## 7. Statement reconciliation (`sheets.*`) — closes the §E spreadsheet gap
+
+**Did:** §E asks the registry to expose the teammates' "email, receivables,
+forecasting and spreadsheet work". The first three were wired; `spreadsheets` was
+imported and its tests passed but reached the registry through nothing at all —
+the pre-existing `spreadsheet.load/save/aggregate` are unrelated standalone CSV
+helpers. Added `fin_tools/sheets.py`: nine `sheets.*` tools over the teammate
+`SheetsService`, bound per bundle. Read-only: `records`, `list_proposals`. Gated:
+`upload`, `import_sheet`, `reconcile`, `resolve_match`, `render_sheet`,
+`write_cell`, `resolve_proposal`. All `tenant_scoped`. Distinct namespace, so no
+collision with `spreadsheet.*`.
+
+Three properties held deliberately: `NullQwen` is injected unconditionally, so no
+tool can reach a model or read `QWEN_API_KEY` (mapping is deterministic
+`infer_mapping`; when it cannot decide the tool reports `mapping_ambiguous`
+instead of guessing). Money is integer fen already — no conversion boundary, so
+no float anywhere. `render_sheet` defaults to `target="csv"`, not the package's
+own live `"feishu"`, so nothing silently depends on credentials.
+
+**Bugs found and fixed — two upstream, one mine:**
+
+1. *Upstream, silently wrong financials.* `SheetsService._unmatched` injected
+   `_range: {}` into the transaction query whenever a date range was passed.
+   `KnowledgeGraph._record_matches_query` compares an unknown key via
+   `dump.get(key)` → `None`, so nothing ever matched and **every transaction was
+   dropped**: a scoped reconcile reported zero matches where an unscoped one
+   found them. No error, and "nothing to match" reads as a quiet book rather than
+   a broken query. `_in_scope` on the next line already applies the range
+   correctly, so the injection was redundant as well as fatal. Removed
+   (commit 2f8cef0). Verified both directions: a range covering today now applies
+   the match; a non-matching counterparty still applies nothing.
+2. *Upstream, approval applied nothing.* `resolve_proposal` set status to
+   "approved" but `proposal_sink` is **never assigned anywhere** in the package,
+   so the value was never written — the record kept its old amount while the
+   caller saw success. For a protected column (money/dates/payee) that is a
+   silently wrong financial answer. Wired the sink from the facade rather than
+   editing their service; it runs only after the engine's own checks pass, so it
+   completes the control instead of bypassing it.
+3. *Mine, a control hole.* My first `resolve_proposal` did not forward
+   `resolved_by_kind`, so it defaulted to `"user"` — an agent could approve its
+   own edit to an invoice amount, defeating the exact check the proposal queue
+   exists for. Now passed explicitly and defaulted to `"agent"` (fail closed): a
+   caller must assert human authority. Tested: an agent self-approval raises
+   `permission_denied` and the amount is untouched.
+
+Also closed a usability trap: the engine filters on `query["type"]` while the rest
+of this family says `record_type`, and a misspelled key silently renders an empty
+sheet. `_normalise_query` accepts the alias, validates the record type, and
+refuses unknown keys with the field named. Valid keys are derived from the
+pydantic models, not hardcoded, so they cannot drift.
+
+Also accepted both decision spellings (`confirm`/`confirmed`, `approve`/
+`approved`, `reject`/`rejected`): rejecting a correct decision on tense alone
+wastes a turn and reads like a real refusal.
+
+**Learned:** I exposed `list_proposals`/`resolve_proposal` without any way to
+*create* a proposal — only `write_cell` does that — so the propose→approve loop
+was unreachable through the registry. A test caught it; added `sheets.write_cell`.
+Views are read-only unless `editable_columns` names a column, which is a safe
+default worth documenting rather than papering over.
+
+**State:** green — financial-tools 566 passed + 1 skipped (527 + 39 new), 38
+tools. `scripts/test-all.sh` exit 0, `seam check: OK`. Manifest validates with all
+38 tools, 21 rules, 18 gated.
