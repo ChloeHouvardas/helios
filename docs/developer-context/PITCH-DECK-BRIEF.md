@@ -1,29 +1,35 @@
-# Helios pitch deck brief (v4) — instructions for the slide builder
+# Helios pitch deck brief — instructions for the slide builder
 
-Written 2026-10-15. This brief replaces `helios-pitch-draft-3.pptx` in full. It is
-the only input the slide-building agent needs, together with
-`docs/developer-context/INVESTMENT-CONTEXT.md` for background facts and
-`specs/architecture-mermaid.md` for the component diagram.
+Written 2026-10-15. This is the complete content specification for the Helios
+investor pitch deck for the Chengdu 80 2026 fintech hackathon. You are building
+the deck from scratch. There is no existing deck to edit; every slide below is
+specified in full. Background facts live in
+`docs/developer-context/INVESTMENT-CONTEXT.md` and the component diagram in
+`specs/architecture-mermaid.md`; you do not need anything else.
 
 ## 0. Instructions to the slide builder
 
 Read this whole file before starting. Then, before you build anything, reply with
 a short list of the assumptions you are making about the author and the deck
-(audience, tone, visual style, what you will leave out), and ask any question whose
-answer would change the slides. Build only after the author confirms.
+(audience, tone, how you will apply your style guide, what you will leave out),
+and ask any question whose answer would change the slides. Build only after the
+author confirms.
 
 Hard rules:
 
-1. **Rebuild every slide from this brief.** Do not reuse draft 3's layouts or
-   wording except where this brief quotes them.
+1. **Build every slide from this brief.** Section 2 gives, for each slide, the
+   title, the layout, the exact content, the footer, the speaker notes and the
+   reason the slide exists. Use the titles and content as written; the layout
+   descriptions say what must be on the slide and roughly where, and your style
+   guide decides how it looks.
 2. **One message per slide.** The title is the message, written as a sentence a
    judge could repeat. Never a topic label like "Market".
 3. **Michelle is the thread.** She appears on the persona slide, the problem slide,
    the three-apps slide, the before/after slide and the closing line. Same
    illustration or photo treatment every time.
-4. **Every number has a source line** at the foot of the slide, 10 to 11 pt,
-   muted. Illustrative numbers are labelled "illustrative". Do not invent any
-   number that is not in this brief.
+4. **Every number has a source line** at the foot of the slide, small and muted.
+   Illustrative numbers are labelled "illustrative". Do not invent any number
+   that is not in this brief.
 5. **Never claim** real money moves, live Qwen in the demo, cross-app coordination
    between the three flagship apps, or investment advice. Section 9 of
    INVESTMENT-CONTEXT.md lists the safe claims.
@@ -34,14 +40,17 @@ Hard rules:
    one line; the detail goes in speaker notes. 17 slides including title and
    team; slides marked *(cuttable)* can be dropped for a shorter slot. Body text
    never below 14 pt; slide titles 36 pt or larger.
-7. **Visual system.** Dark title and closing slides, light content slides. One
-   motif: rounded "bubbles" (pill-shaped cards) used for components, apps, tiers
-   and alternatives. No accent bars, no underlines under titles, no bullet walls.
-   Use the deck's existing Helios colour family if there is one; otherwise a deep
-   navy primary, warm off-white content background, one amber accent for
-   "money / Michelle", one green for "approved", one red for "refused".
-8. **Charts are native** (PowerPoint charts or the slide tool's native chart), not
-   images. Same label style on every chart.
+7. **Visual system comes from your style guide.** Where this brief names a
+   colour, a shape or a size, treat it as intent, not a spec: it tells you what
+   must read as "money", "approved", "refused", "platform" or "app", and your
+   guide supplies the actual tokens. The one structural request is a single
+   repeated motif for components, apps, tiers and alternatives (the brief calls
+   these "bubbles"; use whatever your guide's equivalent is). Dark or
+   high-contrast treatment for the title and closing slides, light for content,
+   if your guide allows the contrast. No accent bars, no underlines under titles,
+   no bullet walls.
+8. **Charts are native** to the slide tool, not images. Same label style on every
+   chart.
 9. **Logos** of third-party products on the "what they've tried" slide are used
    nominatively to identify alternatives. Use official marks at small size, grey
    or monochrome, never altered. If a logo cannot be sourced, use the product name
@@ -91,9 +100,12 @@ Listed · Beijing Stock Exchange / Market cap · ~¥2B / Employees · ~220 /
 Revenue · ¥250M a year. Below the grid one line: "Makes precision parts for
 state-owned manufacturers and EV makers, Chengdu."
 **Footer:** Mingda Precision and its people are fictional; figures are illustrative.
-**Notes:** Keep draft 3's notes. Add one sentence at the end: "And ¥89M of
-receivables on ¥250M of revenue means her customers are taking about 130 days to
-pay. Hold that number."
+**Notes:** "This is Michelle. She's the CFO of Mingda Precision, a parts maker
+in Chengdu listed on the Beijing Stock Exchange. A ¥2 billion company with about
+220 people, growing every year. On paper, business is good. But right now, ¥89
+million of Mingda's money is sitting in its customers' bank accounts. And ¥89M
+of receivables on ¥250M of revenue means her customers are taking about 130 days
+to pay. Hold that number."
 **Why this slide:** It makes the market real. A listed, growing, well-run company
 still has this problem. That kills the "only tiny businesses" objection before it
 is raised.
@@ -144,8 +156,9 @@ wasn't there on the day."
 Do not use the "82% of businesses fail because of cash flow" line. Its primary
 source cannot be located.
 
-**Why this slide:** Draft 3's version said the work is annoying. This version says
-the work, done badly, destroys value, and quantifies it. Consequence first, stat
+**Why this slide:** A problem slide that only says the work is tedious does not
+create urgency. This one says the work, done badly, destroys value, and
+quantifies it. Consequence first, stat
 second, mechanism third.
 
 ### Slide 4 — What they've tried
@@ -181,7 +194,13 @@ Under each failure reason, one line of 12 pt text and one proof number:
 (Chinese custom-dev rates), Panorama 2025 (ERP overruns) · Esker CFO Trust Index,
 Sep 2026, n=338. Third-party marks identify alternatives only.
 
-**Notes:** Draft 3's notes, plus: "Notice the right-hand stack. The models are
+**Notes:** "They've looked for a fix. Off-the-shelf software is generic: it
+treats every supplier, customer and cash rhythm the same, so the owner still
+makes every judgment call. Custom software would fit, but it costs more than the
+business can justify. And 'just let an AI do it' is dead on arrival: if the AI
+decides what's allowed, no owner, accountant or regulator will let it touch the
+money. So the work stays manual, and it stays with the owner. Notice the
+right-hand stack. The models are
 excellent. The problem isn't intelligence, it's accountability. In May 2026 a
 prompt injection on X made Grok instruct a financial agent to move about $150k
 of tokens with no extra verification. OWASP now ranks 'excessive agency' the
@@ -220,14 +239,22 @@ permission. The agent that runs it can't change its own policy.
 **Footer:** TechNode Apr 2026 · The Asian Banker on NFRA [2026] No. 8 · Cloud
 Security Alliance on OWASP LLM Top 10 2026.
 
-**Notes:** Draft 3's notes, prefixed with: "Why now? Three things changed in the
-last eighteen months. Coding agents can build real software. Payment networks
-are opening to agents. And the regulator has said, in writing, that high-risk AI
-needs human supervision and that the deploying business is responsible. Helios
-is what you build when all three are true."
+**Notes:** "Why now? Three things changed in the last eighteen months. Coding
+agents can build real software. Payment networks are opening to agents. And the
+regulator has said, in writing, that high-risk AI needs human supervision and
+that the deploying business is responsible. Helios is what you build when all
+three are true. Here's the insight. The unlock isn't an AI that pays bills. It's
+a platform on which an AI can build a custom financial app that's safe to run.
+Generic and expensive: a coding agent turns one sentence from the owner into a
+custom app, so custom becomes cheap. Unaccountable AI: the agent in the app can
+only propose. Fail-closed code approves, holds for the owner, or denies, using
+facts the agent can't forge. No LLM makes the decision. The agent that writes
+the app can't grant it permission, and the agent that runs it can't change its
+own policy. And the grunt work: once the app is live, its agents do the chasing,
+paying and forecasting, under those controls."
 
-**Why this slide:** Sequoia, First Round and a16z all ask for a "why now" and
-draft 3 had none. Pairing it with the insight line turns the pivot slide into an
+**Why this slide:** Sequoia, First Round and a16z all ask for a "why now".
+Pairing it with the insight line turns the pivot slide into an
 argument instead of a slogan. If cut, move the two-line title to the top of slide
 6 and the three "why now" rows to the notes of slide 4.
 
@@ -406,8 +433,8 @@ Every overdue invoice chased inside policy. The fake bank-details wire refused
 even after she approved it. The payroll gap seen three weeks early. And the
 evidence trail is already there."
 
-**Why this slide:** Keeps draft 3's message, converts money into percentages as
-requested, adds a chart that shows the forecasting value visually.
+**Why this slide:** The payoff of the Michelle story. Percentages travel better
+than raw yuan, and the chart shows the forecasting value visually.
 
 ### Slide 11 — Market
 
@@ -483,8 +510,8 @@ per customer and the micro tiers sit near ¥2.5k, so Starter is priced with the
 market and Growth is about 50% above it. We can charge that because Helios
 replaces a custom build, not a ledger."
 
-**Why this slide:** Same model as draft 3, reworded so the value ratio is the
-message and the tiers are evidence.
+**Why this slide:** The value ratio is the message; the tiers are evidence that
+there is a price for every size of customer.
 
 ### Slide 13 — Go-to-market
 
@@ -515,8 +542,9 @@ the Starter tier to accounting firms, who already have the trust and the client
 list, and who become the people who certify our policy files. Then the policy
 library makes Helios a platform other builders sell on."
 
-**Why this slide:** Draft 3 mixed unit economics, channels and a flywheel in one
-grid with no order. This version is a sequence with a timeframe per step.
+**Why this slide:** A go-to-market slide must read as a sequence with a
+timeframe per step, not a grid of channels. Unit economics are support, not the
+message.
 
 ### Slide 14 — Financial projections
 
@@ -636,15 +664,18 @@ safe. Thank you."
 **Why this slide:** One number, three outcomes, one line. The team moved to its own
 slide so this one breathes.
 
-## 3. Deleted from draft 3
+## 3. Deliberately not in this deck
 
-- Slide 10 "Already real: a platform, not a prototype". The technical demo
-  covers these numbers.
-- Slide 16 "Roadmap & risks". Milestones moved to the Ask; risks are handled in
+Do not add these even if they seem to be missing:
+
+- A traction or "already built" slide listing tool counts, test counts and
+  deploy times. The hackathon's technical demo covers them; slide 6 carries one
+  small fact per component and that is enough.
+- A roadmap or risks slide. Milestones live on the Ask; risks are handled in
   Q&A and the technical defence.
-- Slide 15 "Harder to copy every month" as a standalone; folded into slide 15
-  "Why we win".
-- The "money in / money out / money ahead" framing everywhere.
+- A separate "moat" slide. Slide 15 covers it.
+- A "money in / money out / money ahead" framing for the apps. Slide 8's message
+  is platform leverage, not three product categories.
 
 ## 4. Open items only the author can supply
 
@@ -663,8 +694,8 @@ All research slots are filled. These remain:
 - **Problem slide** now leads with consequences and sourced numbers. The "82%
   of businesses fail from cash flow" line is banned: its primary source does not
   exist. The Brex-style artefact (a fake bank-details email) is recommended.
-- **Why now** was missing from draft 3. Every canonical structure (Sequoia,
-  First Round, a16z) asks for it. It now shares slide 5 with the insight line.
+- **Why now** is included because every canonical structure (Sequoia, First
+  Round, a16z) asks for it. It now shares slide 5 with the insight line.
 - **Competition** uses the category-columns layout the research recommends for
   "three alternatives, three failure reasons". No 2x2, no checkmark grid; a
   checkmark grid "is a feature a rival could add in a quarter".
