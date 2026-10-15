@@ -1,0 +1,330 @@
+# Audit manifest: Helios Cash Planner
+#
+# THIS FILE IS THE AUDIT AGENT. There is no Python policy in this app; every
+# control below is data `build_audit_agent()` compiles into deterministic rules.
+#
+# What makes this app governable: the FORECAST is a fact. `facts.py` hands the
+# auditor the projection the app computed — whether a week is short, by how
+# much, what the credit facility has left — and every rule about a week reads
+# those values. The agent may name a week; it never gets to state what that
+# week looks like. So:
+#
+#   * a warning for a week the projection does not mark short is DENIED
+#     (the agent cannot invent a shortfall);
+#   * a warning claiming more than the projected gap is HELD
+#     (the agent cannot inflate one);
+#   * a follow-up for a customer in dispute is DENIED
+#     (the owner paused collections; the agent cannot route around that);
+#   * payroll is never recommended for rescheduling: DENIED;
+#   * a credit-draw recommendation is ALWAYS held and capped at the facility.
+#
+# This app moves no money and sends nothing to a customer. Its side effects are
+# a verified warning node, observation nodes for recommendations, and one
+# digest email to the owner.
+
+manifest_version: "1"
+app_id: helios-cash-planner
+name: Helios Cash Planner Audit Agent
+description: >
+  Governs the planning agent inside Helios Cash Planner: projecting thirteen
+  weeks of cash, warning about short weeks, recommending one action per
+  shortfall, and sending the owner a weekly digest. Reading the book and the
+  forecast is free. Every warning, recommendation and digest is gated per call
+  against the projection the app itself computed.
+
+tools:
+  # --- read-only ---------------------------------------------------------------
+  - name: cash_position
+    description: >
+      Today's balance, receivables and payables over the horizon, the credit
+      headroom and the first week the forecast marks short. Read-only.
+    side_effect: false
+    input_schema: { type: object, properties: {}, additionalProperties: false }
+
+  - name: project_cash
+    description: >
+      The deterministic thirteen-week projection, one row per week with the
+      minimum and closing balance and whether the week is short. Read-only.
+    side_effect: false
+    input_schema: { type: object, properties: {}, additionalProperties: false }
+
+  - name: simulate_cash
+    description: >
+      Seeded Monte Carlo over the same inputs: probability of dipping below the
+      buffer and when. Read-only.
+    side_effect: false
+    input_schema: { type: object, properties: {}, additionalProperties: false }
+
+  - name: what_if
+    description: A plain-language what-if over the projection. Read-only.
+    side_effect: false
+    input_schema:
+      type: object
+      properties:
+        kind: { type: string, enum: [customer_pays_late, move_bill, drop_inflow] }
+        target_id: { type: string, minLength: 1 }
+        days: { type: integer, minimum: 0, maximum: 120 }
+      required: [kind, target_id]
+      additionalProperties: false
+
+  - name: customer_behavior
+    description: >
+      How a customer actually pays, with the evidence level behind it. Read-only.
+      Does not report whether the customer is in dispute.
+    side_effect: false
+    input_schema:
+      type: object
+      properties:
+        customer_id: { type: string, minLength: 1 }
+      required: [customer_id]
+      additionalProperties: false
+
+  - name: compare_funding
+    description: >
+      Price the ways to cover a gap against the public reference rate, with the
+      arithmetic and provenance returned. Read-only; recommends nothing.
+    side_effect: false
+    input_schema:
+      type: object
+      properties:
+        amount_cents: { type: integer, minimum: 1 }
+        days: { type: integer, minimum: 1, maximum: 180 }
+        customer_id: { type: string }
+      required: [amount_cents, days]
+      additionalProperties: false
+
+  - name: reference_rate
+    description: One public reference rate with its provenance. Read-only.
+    side_effect: false
+    input_schema:
+      type: object
+      properties:
+        series: { type: string, enum: [lpr_1y, lpr_5y, shibor_1m, shibor_3m] }
+      additionalProperties: false
+
+  # --- gated -------------------------------------------------------------------
+  - name: publish_shortfall_warning
+    description: >
+      Publish a shortfall warning for one horizon week as a VERIFIED graph node.
+      Side effect on shared state.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        subject_id: { type: string, pattern: "^W([1-9]|1[0-3])$" }
+        shortfall_cents: { type: integer, minimum: 1 }
+      required: [subject_id, shortfall_cents]
+      additionalProperties: false
+
+  - name: recommend_follow_up
+    description: >
+      Recommend chasing one receivable for a short week; recorded as an
+      observation for Collect and the owner. Side effect.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        subject_id: { type: string, pattern: "^W([1-9]|1[0-3])$" }
+        invoice_id: { type: string, minLength: 1 }
+        reason: { type: string, minLength: 12 }
+      required: [subject_id, invoice_id, reason]
+      additionalProperties: false
+
+  - name: recommend_reschedule
+    description: >
+      Recommend moving one supplier bill later for a short week; recorded as an
+      observation for Payables and the owner. Side effect.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        subject_id: { type: string, pattern: "^W([1-9]|1[0-3])$" }
+        bill_id: { type: string, minLength: 1 }
+        new_date: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}$" }
+        reason: { type: string, minLength: 12 }
+      required: [subject_id, bill_id, new_date, reason]
+      additionalProperties: false
+
+  - name: recommend_credit_draw
+    description: >
+      Recommend drawing on the credit line for a short week, costed at the
+      public rate plus the spread. Side effect; always the owner's decision.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        subject_id: { type: string, pattern: "^W([1-9]|1[0-3])$" }
+        amount_cents: { type: integer, minimum: 1 }
+        reason: { type: string, minLength: 12 }
+      required: [subject_id, amount_cents, reason]
+      additionalProperties: false
+
+  - name: send_owner_digest
+    description: Email the owner the weekly cash digest. Side effect.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        subject_id: { type: string, enum: [owner] }
+        subject: { type: string, minLength: 4 }
+        body: { type: string, minLength: 12 }
+      required: [subject_id, subject, body]
+      additionalProperties: false
+
+tasks:
+  cashplan.plan:
+    description: >
+      Project the thirteen weeks, publish a warning for each week the forecast
+      marks short, and recommend one action per short week.
+    allowed_tools:
+      - cash_position
+      - project_cash
+      - simulate_cash
+      - what_if
+      - customer_behavior
+      - compare_funding
+      - reference_rate
+      - publish_shortfall_warning
+      - recommend_follow_up
+      - recommend_reschedule
+      - recommend_credit_draw
+    ttl_seconds: 300
+    tool_overrides:
+      recommend_credit_draw:
+        max_calls: 1
+        condition: one draw recommendation per authorisation
+
+  cashplan.digest:
+    description: Send the owner the weekly digest of the position and the warnings.
+    allowed_tools:
+      - cash_position
+      - project_cash
+      - send_owner_digest
+    ttl_seconds: 300
+
+rules:
+  # --- warnings ----------------------------------------------------------------
+  - id: app.warning_only_when_short
+    description: A warning may only be published for a week the projection marks short
+    task_types: [cashplan.plan]
+    tools: [publish_shortfall_warning]
+    message: >
+      the projection does not mark this week short; a warning for it would be an
+      invented shortfall. Call project_cash and warn only about the weeks it flags
+    deny_if_fact_true: [week_not_short]
+    severity: critical
+
+  - id: app.warning_matches_projection
+    description: A warning may not claim more than the projected shortfall
+    task_types: [cashplan.plan]
+    tools: [publish_shortfall_warning]
+    message: >
+      the claimed shortfall exceeds the projected gap for this week; the owner must
+      look before an inflated warning is published
+    limits:
+      - argument: shortfall_cents
+        max_from_fact: projected_shortfall_cents
+        on_exceed: hold
+    severity: warn
+
+  - id: app.warning_is_identifiable
+    description: A warning names its week and its amount
+    task_types: [cashplan.plan]
+    tools: [publish_shortfall_warning]
+    message: a warning needs subject_id (the week) and shortfall_cents
+    required_arguments: [subject_id, shortfall_cents]
+    severity: warn
+
+  # --- recommendations ----------------------------------------------------------
+  - id: app.recommendation_only_for_short_week
+    description: A recommendation is only allowed for a week the projection marks short
+    task_types: [cashplan.plan]
+    tools: [recommend_follow_up, recommend_reschedule, recommend_credit_draw]
+    message: >
+      this week is not short in the projection, so there is nothing to fix; do not
+      recommend an action for it
+    deny_if_fact_true: [week_not_short]
+    severity: critical
+
+  - id: app.no_follow_up_in_dispute
+    description: Never recommend chasing a customer the owner has marked as in dispute
+    task_types: [cashplan.plan]
+    tools: [recommend_follow_up]
+    message: >
+      this customer is in dispute and collections contact is paused by the owner;
+      recommend a different action for this week
+    deny_if_fact_true: [customer_disputed]
+    severity: critical
+
+  - id: app.payroll_is_never_moved
+    description: Payroll is never recommended for rescheduling
+    task_types: [cashplan.plan]
+    tools: [recommend_reschedule]
+    message: payroll is never moved; recommend a supplier bill, a follow-up or a draw
+    deny_if_fact_true: [bill_is_payroll]
+    severity: critical
+
+  - id: app.only_reschedulable_bills
+    description: Only a bill marked reschedulable may be recommended for a later date
+    task_types: [cashplan.plan]
+    tools: [recommend_reschedule]
+    message: this bill is not reschedulable (rent, tax or payroll); pick a supplier bill
+    deny_if_fact_true: [bill_not_reschedulable]
+    severity: warn
+
+  - id: app.credit_draw_needs_owner
+    description: A credit-draw recommendation is always the owner's decision
+    task_types: [cashplan.plan]
+    tools: [recommend_credit_draw]
+    message: >
+      a credit draw is borrowing; the owner decides whether to draw, at the rate
+      and cost shown
+    approval_if_fact_true: [credit_draw_is_borrowing]
+    severity: warn
+
+  - id: app.credit_draw_within_facility
+    description: A recommended draw may not exceed the remaining facility
+    task_types: [cashplan.plan]
+    tools: [recommend_credit_draw]
+    message: >
+      the recommended draw exceeds the credit facility's remaining headroom; there
+      is nothing to approve, recommend a smaller draw or another action
+    limits:
+      - argument: amount_cents
+        max_from_fact: credit_line_headroom_cents
+        on_exceed: deny
+    severity: critical
+
+  - id: app.recommendation_has_reason
+    description: Every recommendation names its week and gives a reason
+    task_types: [cashplan.plan]
+    tools: [recommend_follow_up, recommend_reschedule, recommend_credit_draw]
+    message: a recommendation needs subject_id (the week) and a reason of at least 12 characters
+    required_arguments: [subject_id, reason]
+    severity: warn
+
+  # --- the digest ---------------------------------------------------------------
+  - id: app.one_digest_per_week
+    description: At most one digest to the owner in any rolling 7-day window
+    task_types: [cashplan.digest]
+    tools: [send_owner_digest]
+    message: the owner already received this week's digest; do not send another
+    max_contacts_in_days:
+      within_days: 7
+      max: 1
+    severity: warn
+
+  - id: app.digest_is_identifiable
+    description: A digest names its recipient subject, a subject line and a body
+    task_types: [cashplan.digest]
+    tools: [send_owner_digest]
+    message: a digest needs subject_id (owner), subject and body
+    required_arguments: [subject_id, subject, body]
+    severity: warn
+
+settings:
+  default_ttl_seconds: 300
+  contact_window_days: 7
+  log_path: helios-cash-planner-audit-log.jsonl
+  advisory: [heuristic]
+  allow_unsigned_grants: false
