@@ -14,8 +14,8 @@ scripts/test-all.sh          # every suite, offline; one line per suite
 
 Use `.venv/bin/python` for everything — never the system `python3` (not guaranteed to
 be 3.13, which `audit_agent` and `agent_integration` require, and it has none of the
-deps). No `PYTHONPATH=src`, no per-package venv; both superseded. Expect **all 7 suites
-green: 803 passed**, entirely offline: no network, Docker daemon, model token or
+deps). No `PYTHONPATH=src`, no per-package venv; both superseded. Expect **all 14 suites
+green**, entirely offline: no network, Docker daemon, model token or
 provider credential; a suite that collects nothing fails the run. Deps are pinned in
 `requirements-dev.txt`.
 
