@@ -501,9 +501,12 @@ class Orchestrator:
         return f"""
     {begin}
     location /apps/{slug}/ {{
-        rewrite ^/apps/{slug}(/.*)$ $1 break;
         resolver 127.0.0.11 valid=5s ipv6=off;
+        # `set` runs in the rewrite phase and `rewrite ... break` ends that
+        # phase, so the upstream must be set BEFORE the rewrite or it is
+        # uninitialised at proxy time (nginx answers 500 "invalid URL prefix").
         set $upstream http://{app_ip}:{port};
+        rewrite ^/apps/{slug}(/.*)$ $1 break;
         proxy_pass $upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
