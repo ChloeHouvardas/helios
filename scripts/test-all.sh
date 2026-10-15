@@ -48,6 +48,13 @@ for pattern in "platform" "apps" "entry-point/examples"; do
 done
 # entry-point/checks is not nested one level deeper than the others.
 add_suite "entry-point/checks/tests"
+# The teammate packages under financial-tools ship their own tests/ directories
+# (email_tool, payments_collect, helios_forecast); the package-level tests/ does
+# not include them, so they are discovered one level deeper.
+for parent in platform/financial-tools/*/; do
+  [[ -d "$parent" ]] || continue
+  add_suite "${parent%/}/tests"
+done
 
 if [[ ${#SUITES[@]} -eq 0 ]]; then
   echo "test-all.sh: discovered no test suites — discovery is broken." >&2

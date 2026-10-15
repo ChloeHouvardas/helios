@@ -294,17 +294,18 @@ def test_a_dry_run_does_not_create_the_directory(spec, tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def test_the_deployment_manifest_uses_only_accepted_fields(generated: Path) -> None:
-    """The engine does not forbid extra keys, so an unknown one is dropped silently.
+    """Emit exactly what the engine's Manifest declares, read at generation time.
 
-    Emitting `audit_manifest` / `data_dir` / `env` would produce a manifest that
-    looks configured and is not, which is the worst failure mode available here.
+    The engine rejects unknown fields, so an extra key is a deploy-time error;
+    a missing `audit_manifest` / `data_dir` / `env` would be a manifest that looks
+    configured and is not. Both directions are pinned against the real engine.
     """
     document = yaml.safe_load((generated / "helios.yaml").read_text(encoding="utf-8"))
-    from app_builder.deployment import DEFAULT_FIELDS
-    assert set(document) <= set(DEFAULT_FIELDS)
-    assert "audit_manifest" not in document
-    assert "data_dir" not in document
-    assert "env" not in document
+    from app_builder.deployment import discover_manifest_fields
+    fields = discover_manifest_fields(REPO)
+    assert set(document) <= set(fields.fields)
+    for key in ("audit_manifest", "data_dir", "env"):
+        assert (key in document) == fields.accepts(key)
 
 
 def test_the_deployment_manifest_names_the_asgi_entry(generated: Path) -> None:
@@ -328,8 +329,9 @@ def test_permissions_are_derived_from_the_tool_families(generated: Path) -> None
     assert "email" in document["permissions"]
 
 
-def test_an_unmappable_tool_family_is_dropped_with_a_review_note(tmp_path: Path) -> None:
-    """A family the engine does not know must not make the app undeployable."""
+def test_known_families_map_to_engine_permissions_and_unknown_ones_are_dropped(tmp_path: Path) -> None:
+    """A family the engine knows becomes a permission; one it does not must not
+    make the app undeployable, and is named in a REVIEW note instead."""
     from app_builder.scaffold import deployment_manifest
     from app_builder.deployment import discover_manifest_fields
     from app_builder.spec import AppSpec
@@ -349,11 +351,12 @@ agents:
 tools:
   - forecast.run
   - email.send
+  - bogus.run
 """)
     text = deployment_manifest(s, discover_manifest_fields(REPO))
     document = yaml.safe_load(text)
-    assert document["permissions"] == ["email"]
-    assert "forecast" in text  # named in the REVIEW comment
+    assert document["permissions"] == ["email", "forecast"]
+    assert "bogus" in text  # named in the REVIEW comment
     assert "REVIEW" in text
 
 

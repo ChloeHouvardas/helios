@@ -243,15 +243,16 @@ _PERMISSION_BY_FAMILY = {
     "kg": "knowledge-graph",
     "events": "events",
     "event": "events",
-    # Families the engine does not know yet. They are mapped to the closest
-    # existing permission rather than emitted as-is: an unknown permission is a
-    # hard ContractError at deploy time, while a missing one only means the audit
-    # sidecar does not pre-authorise that family.
-    "forecast": None,
-    "market": None,
-    "spreadsheet": None,
-    "collect": None,
-    "behavior": None,
+    # The remaining platform families. `permissions_for_tools` still filters the
+    # result against the engine's real ALLOWED_TOOLS at generation time, so a
+    # family the engine stops accepting is dropped with a REVIEW note rather than
+    # emitted as a hard ContractError at deploy time.
+    "forecast": "forecast",
+    "behavior": "forecast",
+    "market": "market-data",
+    "spreadsheet": "spreadsheets",
+    "sheets": "spreadsheets",
+    "collect": "collect",
 }
 
 
@@ -304,9 +305,9 @@ def deployment_manifest(spec: AppSpec, fields: ManifestFields) -> str:
         "# Deployment manifest for the Helios engine.\n"
         "#\n"
         f"# Field set: {fields.source}.\n"
-        "# The engine's manifest model does not forbid unknown keys, so a field it\n"
-        "# does not declare is dropped WITHOUT AN ERROR. Only accepted fields are\n"
-        "# emitted here, which is why this file looks shorter than the docs suggest.\n"
+        "# Only fields the engine's Manifest declares are emitted, read from\n"
+        "# engine/contracts.py at generation time: the engine rejects an unknown\n"
+        "# field, so emitting one would fail the deploy at the manifest stage.\n"
     )
     if not fields.discovered:
         header += (
@@ -331,13 +332,20 @@ def deployment_manifest(spec: AppSpec, fields: ManifestFields) -> str:
 
 
 def _all_wanted(tools: Iterable[str]) -> set[str]:
-    """Every permission a tool list would want, before engine filtering."""
+    """Every permission a tool list would want, before engine filtering.
+
+    Only namespaced names (`family.tool`) name a platform family. A snake_case
+    name is an app-local tool and wants no permission. A namespaced family this
+    module cannot map is returned as-is, so the REVIEW note in the generated
+    manifest names it instead of dropping it silently.
+    """
     out: set[str] = set()
     for tool in tools:
-        family = re.split(r"[._]", tool.strip())[0].lower()
-        permission = _PERMISSION_BY_FAMILY.get(family)
-        if permission:
-            out.add(permission)
+        name = tool.strip()
+        if "." not in name:
+            continue
+        family = name.split(".", 1)[0].lower()
+        out.add(_PERMISSION_BY_FAMILY.get(family) or family)
     return out
 
 
