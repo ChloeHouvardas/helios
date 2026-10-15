@@ -60,7 +60,7 @@ def http(method: str, url: str, body=None, headers=None, timeout: int = 60, form
             return resp.status, raw.decode("utf-8", "replace"), dict(resp.headers)
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", "replace"), dict(exc.headers)
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, OSError) as exc:
         return 0, str(exc), {}
 
 
@@ -81,7 +81,7 @@ def http_noredirect(method: str, url: str, form=None, timeout: int = 60):
             return resp.status, resp.read().decode("utf-8", "replace"), dict(resp.headers)
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", "replace"), dict(exc.headers)
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, OSError) as exc:
         return 0, str(exc), {}
 
 
@@ -264,7 +264,7 @@ def t3(args) -> None:
 
     # T3.9 redeploy keeps serving
     r = _deploy(args, APPS["helios-collect"], t)
-    status, _ = _page(_slug("helios-collect", t), "/")
+    status = _wait_page(_slug("helios-collect", t), "/")
     blocks_after = conf.read_text().count(f"# helios:begin {_slug('helios-collect', t)}") if conf.exists() else -1
     check("T3.9", r.returncode == 0 and status == 200 and blocks_after == 1, f"redeploy: / {status}, blocks for slug={blocks_after}")
 

@@ -78,7 +78,10 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
+# Derived defensively, NOT as parents[1]: in a deployed container this file is
+# /app/app.py, where Path("/app") has only one parent, so parents[1] raises at
+# IMPORT time and the deploy smoke test fails with an opaque traceback.
+REPO = HERE.parents[1] if len(HERE.parents) > 1 else HERE
 
 # The four platform packages. A generated app would declare these as dependencies;
 # this one imports them in place so it runs with no install step.
@@ -88,7 +91,9 @@ for _p in (
     REPO / "platform" / "agent-integration" / "src",
     REPO / "platform" / "financial-tools",
 ):
-    if str(_p) not in sys.path:
+    # Inside the golden base image the packages are pip-installed and these
+    # directories do not exist; only a real directory goes on the path.
+    if _p.is_dir() and str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))

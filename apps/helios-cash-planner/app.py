@@ -26,7 +26,10 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parents[1]
+# Derived defensively, NOT as parents[1]: in a deployed container this file is
+# /app/app.py, where Path("/app") has only one parent, so parents[1] raises at
+# IMPORT time and the deploy smoke test fails with an opaque traceback.
+REPO = HERE.parents[1] if len(HERE.parents) > 1 else HERE
 
 for _p in (
     REPO / "platform" / "audit-agent-builder" / "src",

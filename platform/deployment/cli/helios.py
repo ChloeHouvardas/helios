@@ -95,15 +95,18 @@ def _assert_no_env(app_dir: Path) -> None:
     ]
     if hits:
         rels = ", ".join(str(h.relative_to(app_dir)) for h in sorted(hits))
-        sys.exit(
+        # sys.exit(<str>) exits 1; the documented code for "a secret is in the
+        # bundle dir" is 2, so print and exit explicitly.
+        print(
             f"refusing to deploy: {rels} found in {app_dir}\n"
             f"A .env normally holds live credentials, and this CLI never uploads "
             f"secrets.\n"
             f"Move it out of the app directory, or add it to .gitignore and "
             f"delete it. The engine injects runtime secrets from its own "
             f"environment, declared by name in helios.yaml 'env:'.\n"
-            f"(exit 2)"
+            f"(exit 2)", file=sys.stderr,
         )
+        sys.exit(2)
 
 
 def _engine_url(args: argparse.Namespace) -> str:
