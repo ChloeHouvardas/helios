@@ -52,14 +52,15 @@ echo "== upgrading pip / setuptools / wheel"
 # Order matters only for readability; pip resolves the graph. These five are the
 # whole tracked platform: the action agent toolkit, the standalone audit agent,
 # the integration layer that imports both, the financial tools, and the
-# deployment engine.
+# deployment engine, plus the app builder.
 echo "== installing first-party packages (editable)"
 "$PY" -m pip install \
   -e platform/action-agent-builder \
   -e platform/audit-agent-builder \
   -e platform/agent-integration \
   -e platform/financial-tools \
-  -e platform/deployment
+  -e platform/deployment \
+  -e platform/app-builder
 
 # --- third-party, pinned ---------------------------------------------------
 echo "== installing pinned dependencies from requirements-dev.txt"
@@ -79,6 +80,7 @@ for module in (
     "agent_integration",
     "fin_tools",
     "engine",
+    "app_builder",
 ):
     importlib.import_module(module)
     print(f"   ok {module}")

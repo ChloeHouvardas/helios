@@ -248,82 +248,146 @@ Reads the spec's `data` section and generates the app's local schema.
   by it. The tool generates an access layer against the recorded source instead,
   and the validator refuses an entity that appears in both sections.
 
-The concrete database comes from the named stack — SQLite via SQLAlchemy by
-default (`tech-stack.md`). The type mapping above is what the schema tool
-translates through, so a later move to another database is a mapping change rather
-than a spec-format change.
+The concrete database comes from the named stack — SQLite via stdlib `sqlite3` by
+default, with no ORM (`tech-stack.md`). The type mapping above is what the schema
+tool translates through, so a later move to another database is a mapping change
+rather than a spec-format change: the mapping lives in `stacks.yaml` next to the
+CHECK fragments behind it, not in generated code.
 
 ## UI kit and component library
 
-A shared library of **prebuilt React components** that Qwen assembles pages from,
-plus the layout and visual conventions that make generated apps look like they
-belong to one platform.
+> **CHANGED 2026-10-15 — decided.** This section specified prebuilt **React**
+> components compiled by **Vite**. It is implemented as **Jinja2 templates plus
+> HTMX**, server-rendered by the app's own FastAPI process.
+>
+> **Why.** A generated app has to be buildable and debuggable by a model in
+> minutes. A Node toolchain is neither: it adds an install step, a build step, a
+> second language, and a class of failure (a bundle that builds but renders
+> nothing) that is invisible from the server logs. Server-rendered pages reach the
+> property this section actually wanted from Vite — **one process, one port, one
+> origin**, so the approval flow stays a same-origin call — without any of it.
+>
+> What survives unchanged is the *reason* this section gave for a component library:
+> consistency comes from a library of known-good parts rather than from the
+> generating model's taste. Templates and a token file do that job; React was one
+> way to deliver them, not the reason for them.
+>
+> What is given up is granularity. This section listed eleven components; what ships
+> is one template per pattern plus a base layout and a partial. That is the main
+> cost of the change, and it is why `align_with` is marked **tentative** below
+> rather than decided.
 
-The premise is that Qwen mixes and matches components rather than writing UI from
-scratch, and may modify a copy when nothing fits. This is what makes the frontend
-safe to be React: the model is choosing from known-good parts, not inventing
-markup that has to be right first time. It is also what makes generated apps look
-good — consistency comes from the library, not from the generating model's taste.
+A shared library of components that Qwen assembles pages from, plus the layout and
+visual conventions that make generated apps look like they belong to one platform.
 
-- **Components** are the unit Qwen works in: page shell, data table, record card,
-  stat/tile, form field, button, badge, modal, empty state, error state, and the
-  held-action card. Each ships with its own states handled — loading, empty,
-  error — because a generated app that renders "undefined" in an empty table
-  reads as broken however good the rest of it looks.
+The premise is that Qwen mixes and matches known-good parts rather than writing UI
+from scratch, and may modify a copy when nothing fits. It is also what makes
+generated apps look good — consistency comes from the library, not from the
+generating model's taste.
+
+- **Templates** are the unit Qwen works in: a base layout (page shell and nav), and
+  the six patterns below. Empty, loading and error states are built into each
+  template rather than left to the caller, because a generated app that renders
+  "undefined" in an empty table reads as broken however good the rest of it looks.
+  Every template renders with an empty context, which is tested.
 - **Patterns** are named page shapes the spec's `ui.pages[*].pattern` refers to.
-  The initial set: `summary` (headline numbers and status), `table` (records with
-  sorting and filtering), `detail` (one record, with an edit affordance),
-  `form` (input with validation), `approval_queue` (held actions awaiting the
-  owner's decision), `settings` (mandate limits and preferences). A pattern is a
-  documented composition of components, so Qwen can drop to components when no
-  pattern fits.
+  The set: `summary` (headline numbers and status), `table` (records with sorting
+  and filtering), `detail` (one record, with an edit affordance), `form` (input with
+  validation), `approval_queue` (held actions awaiting the owner's decision),
+  `settings` (mandate limits and preferences). The set is closed and defined in two
+  places that must agree — `app_builder.spec.UiPattern` and
+  `app_builder.kit.PATTERNS` — and `kit.validate_pattern_set()` fails if they drift.
 - **`approval_queue` is the pattern that matters most.** Every side-effect action
   can be held, so every app with agents needs somewhere for the owner to decide.
-  A generated app without one has agents that pause invisibly. Its held-action
-  card carries what the agent proposed, which rule held it, and the approve/reject
-  affordance — the clearest expression of *the model proposes, code decides*.
-- **Design tokens** — colour, spacing, typography, radius — are defined once and
-  consumed by every component. Restyling a generated app means changing tokens,
-  not components, which is also how `align_with` adopts an existing system's look.
+  A generated app without one has agents that pause invisibly. Its held-action card
+  (`_held_action.html.j2`) carries what the agent proposed, which rule held it and
+  why, and the approve/reject affordance — the clearest expression of *the model
+  proposes, code decides*. The intake **adds** this page when the answers omit one,
+  and the validator warns when a spec has none.
+- **Design tokens** — colour, spacing, typography, radius — are defined once in
+  `tokens.css` and consumed by every template. Restyling a generated app means
+  changing tokens, not templates. Light and dark come from `prefers-color-scheme`
+  over the same token set, so a template that reads `var(--surface)` gets both for
+  free.
 - **Guidelines** cover layout, when to use which pattern, and how a held action is
   presented. They are the defaults for a standalone app.
-- **When `ui.align_with` is set,** the recorded conventions replace the kit's
-  tokens and guidelines, and components restyle to match. Only patterns with no
-  equivalent in the existing system fall back to the kit's shape. The app should
-  look like it was always part of that system.
-- **Built with Vite, not Next.js.** The library compiles to a static bundle the
-  app's FastAPI server serves, so a generated app is one process on one origin.
-  That keeps the approval flow a same-origin call instead of a cross-boundary
-  protocol — see *Tech stack definitions*.
+- **When `ui.align_with` is set,** the recorded conventions should replace the kit's
+  tokens and guidelines. **Tentative — not implemented.** Token substitution is the
+  intended mechanism and `tokens.css` is written for it, but nothing reads
+  `align_with` yet beyond validating that `existing.ui` is populated.
+- **Relative URLs only, and flat routes.** The deployment host strips
+  `/apps/<slug>` before the request reaches the app, so an absolute
+  `/static/tokens.css` resolves to the host root and 404s. Every `href` and `src` in
+  the kit is relative. The consequence is that generated pages must be served at
+  flat routes (`/`, `/holds`, `/runs`) — a nested route like `/holds/123` would
+  resolve `static/...` against `/holds/`. A test asserts this against the template
+  *source*, not the rendered output, because an absolute URL inside a conditional
+  block would not appear in every render.
+- **HTMX is vendored, not fetched from a CDN.** The file ships at
+  `app_builder/kit/static/htmx.min.js` and is copied into each generated app, so a
+  generated app works offline and behind a path-stripping host. `stacks.yaml`
+  records its version, byte count and sha256, and a test verifies all three — a
+  swapped vendored file fails the build rather than passing silently.
+- **Masking extends the platform's redaction set.** `auth_code` is *not* in
+  `audit_agent.contracts.REDACTED_KEYS`, and it is exactly what a payment proposal
+  carries. The held-action card applies its own filter — the union of the platform's
+  set and the kit's additions — because this is the one page where a mistake puts a
+  credential on a screen in front of a human. A test asserts the platform's keys
+  remain a subset, so the kit cannot fall behind if that list grows. Masking is
+  shallow for the same reason `audit_agent.redact` is: a deep walk would rewrite a
+  nested key that happens to be named `token` for a legitimate business reason.
 
 ## Tech stack definitions
 
 Named, pinned stacks that the spec's `stack.use` refers to, plus the default used
 when a spec names none.
 
-- **`stacks.yaml`** holds them. Each entry names a language and version, a web
-  framework and version, a database, the type mapping the schema tool uses, and
-  the UI approach the component library builds for.
-- **The default stack** is FastAPI + SQLite (via SQLAlchemy) + Vite-built React.
-  When a spec omits `stack`, this applies — an undecided app still builds, which
-  is what "if not specified, use X" means in practice.
-- **Why FastAPI.** Python keeps the agent runtime, the audit gate, and the holds
-  in one process with the API. Held actions surface to the owner without becoming
-  a protocol between services.
-- **Why Vite over Next.js.** Next carries two runtimes, its own server, and cache
-  semantics — significant surface area for a generated app to get subtly wrong,
-  and it would put a network boundary across the approval flow. Vite emits one
-  static bundle that FastAPI serves: one process, one port, one origin.
-- **Why SQLite.** Generated apps run independently, so a file-based database needs
-  no server stood up per app. SQLAlchemy means Postgres later is a connection
-  string, not a rewrite.
-- **Pinned, not floating.** A stack names exact versions, so an app generated in
-  week one still builds in week ten. "Latest" is not a version.
+- **`stacks.yaml`** holds them, at `platform/app-builder/stacks.yaml`. Each entry
+  names a language and version, a web framework and version, a server, a database,
+  the type mapping the schema tool uses, the CHECK fragments behind that mapping,
+  and the frontend with its vendored asset digest.
+- **The default stack** is `helios-python-web-1`: **FastAPI + SQLite via stdlib
+  `sqlite3` (no ORM) + Jinja2 + HTMX**, Python 3.13. When a spec omits `stack`, this
+  applies — an undecided app still builds, which is what "if not specified, use X"
+  means in practice.
+- **Why FastAPI.** Python keeps the agent runtime, the audit gate, and the holds in
+  one process with the API. Held actions surface to the owner without becoming a
+  protocol between services.
+- **Why Jinja2 + HTMX over Vite-built React.** See the CHANGED note above. One
+  process, one port, one origin — the property Vite was chosen for — with no build
+  step, no second language, and no bundle that can build successfully and still
+  render nothing.
+- **Why SQLite, and why no ORM.** Generated apps run independently, so a file-based
+  database needs no server stood up per app. The generated data layer is a few dozen
+  statements of parameterised SQL that a model can read, debug and fix; an ORM layer
+  is one more thing that can be subtly wrong in generated code, and it hides the
+  parameterisation that stops SQL injection. **This supersedes the earlier
+  SQLAlchemy plan**, which assumed Postgres later would be "a connection string, not
+  a rewrite" — the DDL generator and the type map in `stacks.yaml` are where that
+  portability now lives, and moving to Postgres is a `stacks.yaml` entry rather than
+  a rewrite of generated code.
+- **Money is `TEXT` with a parse CHECK, never `REAL`.** A binary float cannot
+  represent 0.1 exactly, so a rounding error in an invoice total is a real financial
+  error rather than a display artefact. Note that **SQLite applies column affinity
+  before a CHECK constraint runs**, so binding the Python float `12.5` into a TEXT
+  column arrives as the string `'12.5'` and satisfies every constraint: no pure-SQL
+  rule can catch it. The generated store refuses a float at the Python boundary
+  instead, naming the field.
+- **An optional column's CHECK must allow NULL.** A CHECK is satisfied when it
+  evaluates to NULL, but `typeof(col) = 'text'` is *false* for NULL — so an unguarded
+  constraint makes every optional date/decimal/json column unwritable. Generated DDL
+  emits `CHECK (col IS NULL OR (...))` for optional columns only.
+- **Pinned, not floating.** A stack names exact versions, so an app generated in week
+  one still builds in week ten. "Latest" is not a version. Every version in
+  `stacks.yaml` was read from an installed distribution or a vendored file's own
+  banner, not recalled.
 - **`stack.match_existing: true`** is the other option: adopt whatever
-  `existing.stack` records, and generate only the parts the existing system lacks.
-  The validator requires `existing.stack` to be populated when this is set —
-  matching nothing is not matching. An existing non-React frontend means the
-  component library does not apply, and `ui.align_with` governs instead.
+  `existing.stack` records. The validator requires `existing.stack` to be populated
+  when this is set — matching nothing is not matching. **Open:** the scaffolder
+  refuses to generate from it, because an integration stack has no entry in
+  `stacks.yaml` and therefore no type map to generate DDL from. Generating SQLite
+  tables for an app joining a Postgres system would be wrong in a way that looks fine
+  until it runs.
 - **Adding a stack later** means adding an entry to `stacks.yaml`, not changing the
   spec format. The default is one entry among them, not a special case.
 
@@ -413,70 +477,148 @@ Validation reports all problems at once rather than failing on the first. Qwen
 fixing one error per round trip over a revision loop is slow, and the errors are
 independent.
 
-## Build order
+**Implementation notes (2026-10-15).** Shipped as `app_builder.validate.validate_app(dir)
+-> Report(errors, warnings, exit_code)`, over the pydantic models in
+`app_builder.spec`. `entry-point/checks/check_app.py` is now a thin wrapper over it.
 
-For the future implementation build. Each step produces something testable before
-the next begins.
+- `identity.id` **unique** across apps is **not implemented** — uniqueness needs a
+  registry of app ids, and nothing in this repo holds one. Kebab-case and agreement
+  with the audit manifest's `app_id` are both enforced; global uniqueness is open.
+- Four cross-file checks beyond the list above, each closing a failure mode that is
+  silent *and* safe-directioned, which is the kind that survives to the demo:
+  audit `side_effect` flags agree with the app's own `ToolDefinition`s; every fact
+  key a rule binds is produced by `facts.py`; every argument a rule binds exists in
+  that tool's `input_schema`; a gated tool whose schema has no subject key is
+  warned about.
+- "Side effect gated in both files" is reported in **both directions**, named
+  separately. A tool that is `side_effect: true` in code and `false` in the manifest
+  is a control bypass — it runs with no proposal and no owner — while the reverse is
+  a nuisance. One message covering both sends the reader to fix the wrong file.
+- The checks that read app code parse it as an **AST** rather than importing and
+  calling it. A fact source must return `None`/`{}` for a subject it does not know,
+  so calling `extra_facts_for("dummy")` yields no keys and would report every correct
+  app as broken. Modules are still imported in a subprocess (with `-B`, so no
+  bytecode lands in the directory being validated) to prove they import and to
+  resolve constant names.
+- Two checks in the list above are **unreachable through `AuditManifest.load()`**,
+  which already raises on an undeclared task/rule tool and on a side-effecting tool
+  with no `input_schema`. They are kept as defence in depth for a manifest built in
+  memory, and documented as such rather than presented as live coverage.
 
-1. **Spec models** — the pydantic models for `helios-app.yaml`, with
-   `extra="forbid"` and error messages written for a model to act on.
-2. **Shape validation** — the single-file checks, plus
-   `validate_spec_text()` returning `(ok, problems)` in the sibling packages'
-   style.
-3. **Cross-file validation** — read both manifests as data, run the consistency
-   checks. Start with action-tools ⊆ audit-tools; it is the one that protects
-   money.
-4. **Question phase guide** — the intake questions as a document Qwen works
-   through, with the answers mapped to spec fields.
-5. **`stacks.yaml`** — the named-stack mechanism plus the default entry
-   (FastAPI + SQLite + Vite-built React).
-6. **Schema tool** — `data.local` to DDL, and the access layer for
-   `data.integration`.
-7. **Component library** — the prebuilt React components, the six patterns as
-   documented compositions of them, the design tokens, and how `align_with`
-   restyles through tokens.
-8. **Graph wiring** — publish and subscribe call sites from the `graph`
-   declarations, against a stub transport.
-9. **Scaffolder** — spec to skeleton under `apps/<name>/`, skipping what
-   `existing` says is already there, never overwriting, idempotent.
-10. **End-to-end** — generate one app from a written spec, validate it, and run
-    it.
+## Build order — implemented
+
+This was the plan for the implementation build. It is written down as built, with
+each item marked **decided** (shipped and settled), **tentative** (shipped, likely
+to change) or **open** (not built). The package is `platform/app-builder`,
+importable as `app_builder`, with the console script `helios-app`.
+
+1. **Spec models — decided.** `app_builder.spec`: pydantic v2 models for
+   `helios-app.yaml`, `extra="forbid"` everywhere, error messages written for a
+   model to act on. `AppSpec.load(path)` / `AppSpec.parse(text)` raise `AppSpecError`
+   carrying **every** problem at once, each as `<yaml path>: <problem>; write <what
+   instead>`. Adds identifier safety the original plan did not name: entity and field
+   names must match `^[a-z_][a-z0-9_]*$`, because the schema tool interpolates them
+   into DDL.
+2. **Shape validation — decided.** In `spec.py` rather than a separate
+   `validate_spec_text()`. The plan's `(ok, problems)` signature became
+   `AppSpecError.problems`, which carries the same information and keeps the
+   success path free of tuple unpacking.
+3. **Cross-file validation — decided.** `app_builder.validate.validate_app(dir)`
+   returns a `Report` with `errors`, `warnings` and `exit_code`. Action-tools ⊆
+   audit-tools is implemented first and tested hardest; it is the check that
+   protects money. Four checks beyond the original list: audit `side_effect` flags
+   agree with the app's `ToolDefinition`s; every fact key a rule binds is produced by
+   `facts.py`; every argument a rule binds exists in that tool's `input_schema`; a
+   gated tool with no subject key gets a warning.
+4. **Question phase — decided.** `app_builder.intake`. `helios-app questions` prints
+   the 16 questions as a fillable YAML template with `answer` and `assumption` per
+   item; `helios-app spec-from-intake` builds a first spec from the answers it can
+   map, leaving `# TODO` markers naming the question that would fill each gap. An
+   unanswered question is recorded as `not sure` rather than guessed.
+5. **`stacks.yaml` — decided.** `helios-python-web-1`: FastAPI 0.143.1 + stdlib
+   `sqlite3` + Jinja2 3.1.6 + HTMX 2.0.11, Python 3.13, with the type map and the
+   CHECK fragments behind it. Not Vite-built React — see the CHANGED note above.
+6. **Schema tool — decided.** `app_builder.schema`: `ddl_for(spec)`,
+   `store_module_for(spec)`, `seed_from_json(conn, data_dir)`. `data.integration`
+   produces no DDL and a store whose accessors raise naming the source.
+7. **UI kit — tentative.** `app_builder/kit/`: base layout, `tokens.css`, one
+   template per pattern, and the `_held_action` partial. Jinja2 + HTMX rather than
+   React. `align_with` token substitution is **open**.
+8. **Graph wiring — tentative.** The scaffolder generates `graph.py` with a
+   `publish_<entity>_<event>()` per declared publish, against `fin_tools`'
+   `upsert_verified`. Subscribe is a stub that raises and says the transport is
+   unsettled; the shared graph's read interface is still **open**.
+9. **Scaffolder — decided.** `app_builder.scaffold.scaffold()` plus
+   `helios-app new`. 23 files, never overwrites, idempotent, `--dry-run`. Everything
+   is rendered before anything is written, so an aborted run cannot leave a
+   half-generated app.
+10. **End-to-end — decided.** Verified in tests: `invoice-payer`'s spec scaffolds
+    into a temp dir that validates with 0 errors and whose generated tests pass; the
+    same for `helios-collect`'s spec. An intake filled in for invoice-payer produces
+    a spec that scaffolds and validates clean.
 
 ## Done when
 
-- A hand-written spec for a standalone app validates, scaffolds, and runs.
-- The same spec with `existing` populated and `stack.match_existing: true`
-  scaffolds into an app that **fits the existing system** — adopting its stack,
-  reading its data rather than recreating it, and following its UI conventions.
-  This is the acceptance test for the adaptability principle, and the one that
-  predicts the surprise task.
-- An action manifest offering a tool the audit manifest has not declared is
-  rejected with a message naming the tool.
-- A spec missing a required section is rejected with a message naming the section
-  and what to write.
-- Regenerating from a revised spec produces the same tree, and never overwrites an
-  unexpected file.
-- Qwen can work through the question phase and produce a spec that passes the
-  validator on the first attempt.
+- **Met.** A hand-written spec for a standalone app validates and scaffolds, and the
+  generated app's own tests pass. "Runs" is partly met: `server.py` is generated with
+  health, dashboard, holds, runs and audit routes, but no generated app has been
+  served end to end, because `platform/deployment/` is not in the repo yet.
+- **Open — and this is the one that predicts the surprise task.** A spec with
+  `existing` populated and `stack.match_existing: true` does **not** scaffold. The
+  spec model validates it and `data.integration` generates a raising store, but the
+  scaffolder refuses: an integration stack has no `stacks.yaml` entry and therefore no
+  type map to generate DDL from, and generating SQLite tables for an app joining a
+  Postgres system would be wrong in a way that looks fine until it runs. Closing this
+  needs the `align_with` token path and a story for a foreign database.
+- **Met.** An action manifest offering a tool the audit manifest has not declared is
+  rejected with a message naming the tool — by both `helios-app validate` and
+  `agent-toolkit validate --audit`.
+- **Met.** A spec missing a required section is rejected naming the section and what
+  to write.
+- **Met.** Regenerating from a revised spec produces the same tree and never
+  overwrites an existing file; both are tested, and a dry run into
+  `apps/helios-collect` lists only files that do not exist there.
+- **Met.** A model can work through the question phase and produce a spec that passes
+  the validator on the first attempt — verified by the intake-to-scaffold-to-validate
+  test, in which nothing between the answers and the passing run is hand-written.
 
 ## Not in scope
 
 These belong to other components or to a later build:
 
-- **Financial tools** — the tool contract is in `interfaces.md` §6; individual
-  tools are still being defined. The spec names them; it does not implement them.
+- **Financial tools** — the tool contract is in `interfaces.md` §6; individual tools
+  are still being defined. The spec names them; it does not implement them.
 - **Agent runtime, interception, audit gate, action log, holds** — that is
   `platform/action-agent-builder/`, packaged into each generated app.
-- **Audit policy and mandate rules** — that is `platform/audit-agent-builder/`.
-  The app spec points at an audit manifest; it does not restate it.
-- **Build, audit feedback loop, and deployment** — the Build & Audit Agent Engine
-  and Automatic Deployment Engine (`architecture-mermaid.md` part 1,
-  `interfaces.md` §5).
+- **Audit policy and mandate rules** — that is `platform/audit-agent-builder/`. The
+  app spec points at an audit manifest; it does not restate it. The scaffolder
+  generates the *shapes* of the five rule kinds as a commented block and generates
+  **no rules**, because a generated ceiling would pass validation while capping the
+  wrong thing.
+- **Build, audit feedback loop, and deployment** — the Build & Audit Agent Engine and
+  Automatic Deployment Engine (`architecture-mermaid.md` part 1, `interfaces.md` §5).
+  The scaffolder emits a `helios.yaml` for the engine and reads the engine's accepted
+  field set at generation time, but it does not deploy.
 - **The shared services themselves** — knowledge graph storage, Intent & Trust
   Service, shared events. The spec declares an app's relationship to them; it does
   not implement them.
-- **Default stack selection** — FastAPI + SQLite + Vite-built React is fixed in
-  `tech-stack.md`. This document defines the mechanism that makes it swappable,
-  not the choice itself.
-- **Hosting model and deployment artifact format** — open questions in
-  `decisions.md`.
+- **Default stack selection** — the choice is fixed in `tech-stack.md`; this document
+  defines the mechanism that makes it swappable. `tech-stack.md` was updated on
+  2026-10-15 to match the CHANGED note above (Jinja2 + HTMX, stdlib `sqlite3`).
+- **Hosting model and deployment artifact format** — open questions in `decisions.md`.
+
+## Status summary
+
+| Area | Status |
+|---|---|
+| Spec model, shape validation | **decided** |
+| Cross-file validation | **decided** |
+| Intake and `spec-from-intake` | **decided** |
+| `stacks.yaml`, schema tool, generated store | **decided** |
+| Scaffolder, idempotency, never-overwrite | **decided** |
+| UI kit: six patterns, tokens, held-action card | **tentative** — Jinja2/HTMX, not React |
+| `ui.align_with` token substitution | **open** |
+| Graph publish | **tentative** — against `fin_tools.upsert_verified` |
+| Graph subscribe | **open** — no transport |
+| `stack.match_existing` scaffolding | **open** — refused, not generated |
+| Serving a generated app end to end | **open** — needs `platform/deployment/` |

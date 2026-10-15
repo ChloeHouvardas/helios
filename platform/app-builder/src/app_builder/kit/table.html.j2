@@ -1,0 +1,116 @@
+{#
+  Pattern: table — records with sorting and filtering.
+
+  `columns` is a list of {key, label, numeric}. `rows` is a list of mappings.
+  A row's link is built from `row_url` (a callable or a format string) when the
+  caller supplies one, so the first column becomes a link to the detail page.
+
+  Sorting and filtering are plain links that round-trip through query parameters
+  rather than client-side JS. That is deliberate: a generated app's table must be
+  correct in the HTML it serves, so it stays correct when HTMX has not loaded,
+  when JS is disabled, and when a model is reading the response to debug it.
+#}
+{% extends "base.html.j2" %}
+{% block title %}{{ heading | default(title | default('Records')) }} — {{ app_name | default('Helios app') }}{% endblock %}
+
+{% block content %}
+  {# Optional context normalised up front: under StrictUndefined a bare
+     `{% if x %}` on an unset variable raises, whereas `default` is safe. #}
+  {% set columns = columns | default([]) %}
+  {% set rows = rows | default([]) %}
+  {% set filters = filters | default([]) %}
+  {% set sort_href = sort_href | default('') %}
+  {% set sort_key = sort_key | default('') %}
+  {% set sort_dir = sort_dir | default('asc') %}
+  {% set request_path = request_path | default('') %}
+  {% set row_href = row_href | default('') %}
+  {% set row_key = row_key | default('id') %}
+  {% set total = total | default(none) %}
+
+  {% if filters %}
+    <form class="btn-row mb-4" method="get" hx-get="{{ request_path }}" hx-target="closest .table-wrap" hx-swap="outerHTML">
+      {% for filter in filters %}
+        <label class="field">
+          <span class="field__label">{{ filter.label | default(filter.name) }}</span>
+          {% if filter.options | default([]) %}
+            <select name="{{ filter.name }}">
+              <option value="">All</option>
+              {% for option in filter.options %}
+                <option value="{{ option }}" {% if option == filter.current %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
+          {% else %}
+            <input type="{{ filter.type | default('text') }}" name="{{ filter.name }}" value="{{ filter.current | default('') }}">
+          {% endif %}
+        </label>
+      {% endfor %}
+      <button class="btn btn--secondary" type="submit">Apply</button>
+    </form>
+  {% endif %}
+
+  {% if not columns %}
+    <div class="empty">
+      <p class="empty__title">This table has no columns</p>
+      <p class="empty__body">
+        The page declares a table pattern but no columns to show. Add them to the
+        spec's entity fields, or switch this page to a pattern that fits.
+      </p>
+    </div>
+  {% elif not rows %}
+    <div class="empty">
+      <p class="empty__title">{{ empty_title | default('Nothing here yet') }}</p>
+      <p class="empty__body">{{ empty_body | default('No records match. Once there are records they will appear in this table.') }}</p>
+    </div>
+  {% else %}
+    <div class="table-wrap">
+      <table class="data">
+        <caption class="sr-only">{{ heading | default(title | default('Records')) }}</caption>
+        <thead>
+          <tr>
+            {% for column in columns %}
+              <th scope="col" class="{{ 'num' if column.numeric | default(false) else '' }}">
+                {# A sort link is only useful where the server can act on it, so it
+                   is emitted when sort_href is provided and plain text otherwise. #}
+                {% if sort_href and column.sortable | default(true) %}
+                  <a href="{{ sort_href }}{{ column.key }}{% if sort_key == column.key and sort_dir != 'desc' %}&dir=desc{% endif %}">
+                    {{ column.label | default(column.key) }}{% if sort_key == column.key %} {{ '▼' if sort_dir == 'desc' else '▲' }}{% endif %}
+                  </a>
+                {% else %}
+                  {{ column.label | default(column.key) }}
+                {% endif %}              </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              {% for column in columns %}
+                {% set value = row[column.key] %}
+                <td class="{{ 'num' if column.numeric | default(false) else '' }}">
+                  {% if loop.first and row_href %}
+                    <a href="{{ row_href }}{{ row[row_key] }}">{{ value if value is not none else '—' }}</a>
+                  {% elif value is none %}
+                    <span class="faint">—</span>
+                  {% elif column.badge | default(false) %}
+                    <span class="badge badge--{{ column.badge(value) if column.badge is callable else 'info' }}">{{ value }}</span>
+                  {% else %}
+                    {{ value }}
+                  {% endif %}
+                </td>
+              {% endfor %}
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {# `total` was normalised to none above, so a plain `is not none` test is the
+       whole condition; `is defined` would now always be true. #}
+    {% if total is not none %}
+      <p class="tiny muted mt-4">
+        {{ rows | length }} shown
+        {%- if total != (rows | length) %} of {{ total }}{% endif %}.
+      </p>
+    {% endif %}
+  {% endif %}
+{% endblock %}

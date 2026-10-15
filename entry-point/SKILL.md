@@ -15,12 +15,24 @@ file is the orientation that makes it usable.
 
 | File | Why | When |
 |---|---|---|
-| `BUILD.md` | The 8-step procedure, end to end | **Read first, always** |
+| `BUILD.md` | The 11-step procedure, end to end | **Read first, always** |
 | `references/platform-status.md` | What actually exists vs. what is only designed | Before writing any code |
-| `references/financial-tools.md` | The real tool catalog, signatures, side-effect flags | Step 3, when picking tools |
-| `references/agent-loop.md` | How to drive the runtime with a real model, or offline | Step 6 |
+| `references/financial-tools.md` | The real tool catalog, signatures, side-effect flags | Step 5, when picking tools |
+| `references/agent-loop.md` | How to drive the runtime with a real model, or offline | Step 9 |
 | `examples/invoice-payer/` | A complete running app built from one sentence | Read alongside BUILD.md |
-| `checks/check_app.py` | Mechanised validation of a finished app | Step 8, and in CI |
+| `apps/helios-collect/` | The file layout `helios-app new` generates | After Step 4 |
+
+The three commands you will actually use:
+
+```bash
+helios-app questions > intake.yaml                       # the 16-question intake
+helios-app spec-from-intake intake.yaml > helios-app.yaml # a first spec
+helios-app new apps/<app> --spec helios-app.yaml          # the skeleton
+helios-app validate apps/<app>                            # shape + cross-file
+```
+
+`agent-toolkit` covers the action side: `inspect`, `validate --audit` (the
+cross-manifest invariants) and `demo` (the gate with no model and no network).
 
 ## The three things that decide whether the app is any good
 
@@ -47,57 +59,69 @@ and the user discovers it when they wonder why nothing happened.
 
 ## Build order (from BUILD.md — follow it, do not improvise)
 
-1. **Read** `references/platform-status.md`. Several things the specs describe
-   are not built yet; knowing which changes what you must write yourself.
-2. **Question phase** — the fixed 16-question intake from `specs/app-builder.md`.
-   Includes the integration block (*what already exists*), which is asked early on
-   purpose and is where the competition's surprise task is decided.
-3. **`helios-app.yaml`** — the app spec. Self-check the invariants; no validator
-   exists yet, so use `checks/check_app.py`.
-4. **Audit manifest first** — the policy. Before the action manifest, always: the
+1. **Read** `references/platform-status.md` and the Traps section of `BUILD.md`.
+   Several things the specs describe are still not built; knowing which changes what
+   you must write yourself.
+2. **Intake** — `helios-app questions`, answered with the user. Includes the
+   integration block (*what already exists*), which is asked early on purpose and is
+   where the competition's surprise task is decided. An unanswered question stays
+   unanswered.
+3. **Spec** — `helios-app spec-from-intake`, then **edit it**. The generated file
+   carries `# TODO` markers for everything the intake did not settle.
+4. **Scaffold** — `helios-app new`. 23 files, validator-clean, never overwriting
+   anything that already exists.
+5. **Audit manifest first** — the policy. Before the action manifest, always: the
    audit manifest is the registry of what may be granted at all, and writing policy
-   first makes the mandate the constraint the agent fits inside.
-5. **Fact source** — implements `audit_agent.FactSource`, reads the app's own
-   database, never the request.
-6. **Action manifest** — the agent's instructions and tool list. Write
-   `instructions` as an operating contract, not a description.
-7. **The app** — compose the three packages. Adapt `examples/invoice-payer/app.py`.
-8. **Approval queue** — where the owner decides. Show them the auditor's own
-   `owner_question`, never a summary the agent wrote about itself.
-9. **Verify and demo** — `checks/check_app.py`, then a test that *each control
-   fires*.
+   first makes the mandate the constraint the agent fits inside. **No rules are
+   generated for you**, because a rule with a made-up ceiling reads like a control
+   and caps the wrong thing.
+6. **Fact source** — implements `audit_agent.FactSource`, reads the app's own
+   database, never the request. Unknown is `None`, never zero.
+7. **Tools** — fill in the generated handlers, which raise `NotImplementedError`
+   until you do.
+8. **Action manifest** — the generated instructions carry the five-point contract;
+   make them specific to your app.
+9. **Scenarios and tests** — one per control, covering allowed / held-and-approved /
+   held-and-declined / denied / lying-agent-caught / undeclared-tool-refused.
+10. **Validate** — `helios-app validate` and `agent-toolkit validate --audit`.
+11. **Deploy and document** — `cli/helios.py deploy`, then the README scenario table.
 
 ## Critical warnings
 
-- **The agent loop exists; the scaffolder and validator do not.** Use
-  `agent_integration.build_integration()` for a real gated loop, or drive the
-  runtime from deterministic code for an offline demo (what the example does).
-  There is still no scaffolder or `helios-app.yaml` validator —
-  `checks/check_app.py` is the working stand-in. See `references/agent-loop.md`.
-- **The standalone audit agent is the authoritative gate — this is now decided.**
-  `agent_toolkit`'s in-process `AuditGate` is legacy and in no run path (its
-  four receivables-shaped limit keys cannot express a payables policy anyway).
-  Build against `audit_agent`; do not add rules to the in-process gate. See
-  `specs/decisions.md` and `references/platform-status.md`.
-- **`auth_code` is redacted before it reaches the audit log.** `auth_code` and
-  `authorization_code` are now in the audit builder's `REDACTED_KEYS`, so the
-  payment credential no longer leaks into the hash-chained log via
-  `owner_question`. Because redaction happens before schema validation, do **not**
-  put a `minLength`/`pattern` on `auth_code` in a manifest — the gate would only
-  validate the `***REDACTED***` placeholder. See `references/platform-status.md`
+- **The scaffolder and validator exist now; the agent loop exists too.** You are no
+  longer the scaffolder. What is still yours is the **policy** — `helios-app new`
+  generates tool declarations and a commented block of the five rule shapes, and
+  deliberately generates **no rules**, because a generated ceiling would pass
+  validation while capping the wrong thing.
+- **`platform/deployment/` is not in the repo yet.** The engine lives only in the
+  read-only `OTHER-TEAMMATE-STUFF/deployment-stuff/` copy. Its manifest accepts
+  `name`, `tenant`, `entry`, `port`, `permissions` — and does *not* forbid extra
+  keys, so anything else is dropped silently. The generated `helios.yaml` therefore
+  looks shorter than the docs suggest. That is correct, not a bug.
+- **The two audit gates conflict and nobody has resolved it.**
+  `agent_toolkit`'s in-process gate accepts only four receivables-shaped limit
+  keys, so a payables app cannot express its policy there at all. Both reference
+  apps make the standalone auditor authoritative. That is a defensible choice, **not
+  a settled design** — `AGENTS.md` requires team approval for architecture changes,
+  so flag it; do not resolve it silently.
+- **`auth_code` is not in the audit log's redaction key set.** A real payment
+  credential gets written to the log in full. Verified 2026-10-14; still unfixed
+  upstream. Redact before you log, and see `references/platform-status.md`
   §"Credential handling".
 - **Fact resolution is keyed on a fixed argument-name set** (`invoice_id`,
   `bill_id`, `customer_id`, `supplier_id`, `subject_id`, `payment_id`). Name an
   argument anything else and fact-bound rules **fail closed and deny everything** —
   which is why it goes unnoticed until the demo.
-- **Money is integer cents or `decimal` strings, never float.**
+- **Money is integer cents or `decimal` strings, never float.** The generated store
+  refuses a float outright, because SQLite applies column affinity before a CHECK
+  runs and no SQL constraint can catch one.
 - **Grants expire and side-effect grants are single-use.** Authorize per task, not
   once at startup. Reuse the same `idempotency_key` on a retry so it cannot pay
   twice.
 - **Do not edit inside other packages.** `platform/action-agent-builder/`,
-  `platform/audit-agent-builder/`, `platform/app-builder/`,
-  `platform/agent-integration/`, `platform/deployment/` and
-  `platform/financial-tools/` belong to other agents working concurrently.
+  `platform/audit-agent-builder/`, `platform/agent-integration/`,
+  `platform/app-builder/` and `platform/financial-tools/` belong to other agents
+  working concurrently.
 
 ## Non-negotiables (competition rules)
 

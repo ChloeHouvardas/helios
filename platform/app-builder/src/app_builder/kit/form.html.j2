@@ -1,0 +1,126 @@
+{#
+  Pattern: form — input with validation.
+
+  `fields` is a list of {name, label, type, required, value, hint, options, min,
+  max, step, readonly}. `type` maps to the spec's closed field set where it can,
+  so a generated form's inputs match the column types the store enforces.
+
+  Client-side validation is `required` and `pattern` attributes only — the server
+  re-validates everything. A form that trusts the browser is a form that can be
+  bypassed, and for an app whose whole premise is that controls live in code
+  rather than in good behaviour, that would be a strange place to weaken.
+
+  Errors are rendered per field from `field_errors` (a mapping of name to message)
+  so a failed submit shows what to fix, in the same page, with the values the user
+  already typed preserved.
+#}
+{% extends "base.html.j2" %}
+{% block title %}{{ heading | default(title | default('Form')) }} — {{ app_name | default('Helios app') }}{% endblock %}
+
+{% block content %}
+  {# Optional context normalised up front: under StrictUndefined a bare
+     `{% if x %}` on an unset variable raises, whereas `default` is safe. #}
+  {% set fields = fields | default([]) %}
+  {% set field_errors = field_errors | default({}) %}
+  {% set form_error = form_error | default('') %}
+  {% set method = method | default('post') %}
+  {% set action = action | default('') %}
+  {% set hx_post = hx_post | default('') %}
+  {% set hx_target = hx_target | default('closest form') %}
+  {% set hx_swap = hx_swap | default('outerHTML') %}
+  {% set submit_label = submit_label | default('Save') %}
+  {% set cancel_href = cancel_href | default('') %}
+
+  {% if not fields %}
+    <div class="empty">
+      <p class="empty__title">This form has no fields</p>
+      <p class="empty__body">
+        The page declares a form pattern but nothing to fill in. Add fields to the
+        spec's entity, or use a different pattern.
+      </p>
+    </div>
+  {% else %}
+    <form class="card stack" method="{{ method }}"
+          action="{{ action }}"
+          {% if hx_post %}hx-post="{{ hx_post }}" hx-target="{{ hx_target }}" hx-swap="{{ hx_swap }}"{% endif %}>
+
+      {# A page-level failure (the submit was refused) is shown above the fields so
+         it is read before the user starts re-checking each input. #}
+      {% if form_error %}
+        <div class="error" role="alert">{{ form_error }}</div>
+      {% endif %}
+
+      {% for field in fields %}
+        {% set error = field_errors.get(field.name) %}
+        <label class="field">
+          <span class="field__label">
+            {{ field.label | default(field.name) }}
+            {% if field.required | default(false) %}<span class="field__required" aria-hidden="true">*</span>{% endif %}
+          </span>
+
+          {% set value = field.value | default('') %}
+          {% set input_type = field.type | default('text') %}
+          {% set is_required = field.required | default(false) %}
+          {% set is_readonly = field.readonly | default(false) %}
+
+          {% if field.options | default([]) %}
+            <select name="{{ field.name }}" id="{{ field.name }}"
+                    {% if is_required %}required{% endif %}
+                    {% if is_readonly %}disabled{% endif %}>
+              {% if not is_required %}<option value="">— choose —</option>{% endif %}
+              {% for option in field.options %}
+                {% set option_value = option.value if option.value is defined else option %}
+                {% set option_label = option.label if option.label is defined else option_value %}
+                <option value="{{ option_value }}" {% if option_value == value %}selected{% endif %}>{{ option_label }}</option>
+              {% endfor %}
+            </select>
+
+          {% elif input_type == 'boolean' or input_type == 'checkbox' %}
+            <input type="checkbox" name="{{ field.name }}" id="{{ field.name }}"
+                   value="true" {% if value in (true, 'true', 1, '1') %}checked{% endif %}
+                   {% if is_readonly %}disabled{% endif %}>
+
+          {% elif input_type == 'textarea' %}
+            <textarea name="{{ field.name }}" id="{{ field.name }}"
+                      {% if is_required %}required{% endif %}
+                      {% if field.maxlength | default(0) %}maxlength="{{ field.maxlength }}"{% endif %}
+                      {% if is_readonly %}readonly{% endif %}>{{ value }}</textarea>
+
+          {% else %}
+            {# decimal and integer both use type=number so the browser offers a
+               numeric keyboard, but `decimal` allows a step and `integer` does not.
+               The store still refuses a float for a decimal field; this is
+               convenience, not validation. #}
+            <input type="{{ 'number' if input_type in ('integer', 'decimal') else ('date' if input_type == 'date' else ('datetime-local' if input_type == 'datetime' else ('email' if input_type == 'email' else 'text'))) }}"
+                   name="{{ field.name }}" id="{{ field.name }}"
+                   value="{{ value }}"
+                   {% if is_required %}required{% endif %}
+                   {% if field.min is defined %}min="{{ field.min }}"{% endif %}
+                   {% if field.max is defined %}max="{{ field.max }}"{% endif %}
+                   {% if input_type == 'decimal' %}step="{{ field.step | default('0.01') }}"{% endif %}
+                   {% if input_type == 'integer' %}step="1"{% endif %}
+                   {% if field.maxlength | default(0) %}maxlength="{{ field.maxlength }}"{% endif %}
+                   {% if field.pattern | default('') %}pattern="{{ field.pattern }}"{% endif %}
+                   {% if is_readonly %}readonly{% endif %}
+                   {% if error %}aria-invalid="true" aria-describedby="{{ field.name }}-error"{% endif %}>
+          {% endif %}
+
+          {% if field.hint | default('') %}<span class="field__hint">{{ field.hint }}</span>{% endif %}
+          {% if error %}
+            <span class="field__hint" id="{{ field.name }}-error" style="color: var(--danger);">{{ error }}</span>
+          {% endif %}
+        </label>
+      {% endfor %}
+
+      <div class="btn-row">
+        <button class="btn" type="submit">{{ submit_label }}</button>
+        {% if cancel_href %}<a class="btn btn--secondary" href="{{ cancel_href }}">Cancel</a>{% endif %}
+        <span class="htmx-indicator tiny muted" aria-live="polite">saving…</span>
+      </div>
+
+      {% if fields | selectattr('required') | list %}
+        <p class="tiny faint mt-4"><span class="field__required" aria-hidden="true">*</span> required. Values are checked again on the server.</p>
+      {% endif %}
+    </form>
+  {% endif %}
+{% endblock %}

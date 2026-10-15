@@ -1,18 +1,12 @@
 # BUILD.md — how to build a Helios application
 
-You are Qwen (or another LLM) acting as Helios's **coding agent**. A user has
-described a financial app they want. Your job is to produce a working application
-that runs on this platform.
+You are a coding agent. A user has described a financial app in one sentence. This
+is the procedure that turns that sentence into a deployed application.
 
-This is the operative document. `SKILL.md` is the short version for a harness that
-loads skills; this is the full procedure. Read `references/platform-status.md`
-before writing code — it says what actually exists, and several things the specs
-describe are not built yet.
-
-**Target: a working prototype, not a product.** The platform's own scaffolder does
-not exist yet, so *you are the scaffolder*. Write the app directly, make it run,
-make the controls demonstrable. Depth is secondary to an app that a judge can
-execute and watch refuse to do something it is not allowed to do.
+**The tools now exist.** `helios-app` scaffolds a complete, validator-clean app
+skeleton from a spec, and `helios-app validate` checks an app against its own
+manifests and code. You are no longer the scaffolder. What is still yours is the
+part that matters most: **the policy**.
 
 ---
 
@@ -41,476 +35,384 @@ the amount the agent says the invoice is" — and the second is not a control.
 
 ---
 
-## Procedure
+## The procedure
 
-### Step 0 — Read the platform's current state
+Eleven steps. Each one ends in something you can check.
 
+### Step 0 — Read
+
+| File | Why |
+|---|---|
+| `references/platform-status.md` | What actually exists vs. what is only designed |
+| `references/financial-tools.md` | The real tool catalog, signatures, side-effect flags |
+| `references/agent-loop.md` | How to drive the runtime with a model, or offline |
+| `examples/invoice-payer/` | A complete running app built from one sentence |
+| `apps/helios-collect/` | The same, larger, with a UI-shaped composition |
+| **Traps** (bottom of this file) | Everything that has already cost someone hours |
+
+Read the Traps section before you write anything, not after something breaks.
+
+### Step 1 — Answer the intake
+
+```bash
+helios-app questions > intake.yaml
 ```
-references/platform-status.md      # what exists, what does not, known gaps
-references/financial-tools.md      # the real tool catalog + signatures
+
+That prints the fixed 16 questions as a YAML template with `answer: null` and
+`assumption: null` per item. Work through them **with the user, in order**.
+
+Do not skip the integration block (questions 4-7). It comes early on purpose:
+whether something already exists changes every later answer, and discovering that
+after the data model is drafted means drafting it twice.
+
+Record `assumption` whenever you infer something the user did not quite say. An
+invisible assumption becomes an invisible bug.
+
+**An answer of "not sure" stays "not sure."** Do not invent a data model to make the
+file parse. The next step turns an unanswered question into a `# TODO` in the spec,
+and the validator reports the gap — which is the correct outcome, because a
+plausible-looking wrong entity is worse than an absent one. The absence gets
+noticed; the guess gets built on.
+
+### Step 2 — Generate the first spec
+
+```bash
+helios-app spec-from-intake intake.yaml > helios-app.yaml
 ```
 
-Also skim, in this order: `specs/helios-context.md` (what Helios is for),
-`specs/app-builder.md` (the app spec you will write), `specs/decisions.md` (what is
-settled). Do not skip `platform-status.md`: it records that there is **no agent
-loop, no scaffolder, and no validator** yet, which changes what you must write
-yourself.
+This maps what it can: identity, the `existing` block, entities with their fields
+and types, tools, pages and patterns, graph declarations. Everything else is left
+as a `# TODO` naming the question that would fill it.
 
-### Step 1 — Work the question phase
+The mapping rules worth knowing:
 
-`specs/app-builder.md` defines a fixed 16-question intake. Work through it. Its
-purpose is that two runs over the same idea produce comparable specs, and that a
-missing answer is visible rather than assumed.
+- `float` in an answer becomes `decimal`. Money is never a float, and an interview
+  answer of "float" almost always means "a number with a decimal point".
+- Page patterns are matched **positionally** against the page list.
+- An `approval_queue` page is **added** if your answers omit one. Every side-effect
+  action can be held, so an app without a queue has agents that pause invisibly and
+  the owner discovers it when they wonder why nothing happened.
 
-The questions, compressed:
+### Step 3 — Edit the spec
 
-1. **What the app does** — the job, in the user's words; who uses it; what success
-   changes for them.
-2. **What already exists** *(not optional, and asked early on purpose)* — is this
-   standalone or joining a system? its stack? where its data lives and how you may
-   access it? its UI conventions?
-3. **What data** — records and required fields; which already exist elsewhere;
-   what must be shared across apps.
-4. **What agents** — what work happens without being asked each time; per agent,
-   what it may do, its limits, and which actions need owner approval. *This is the
-   mandate.*
-5. **What tools** — which financial tools that work needs; **which have side
-   effects**. Each one becomes a gated proposal.
-6. **What pages** — what the user must see and act on; which UI pattern per page.
+Read the generated `helios-app.yaml` and fix it. This is a real editing step, not a
+formality: the intake is a conversation and the spec is a contract, and the
+distance between them is your judgement.
 
-If the user gave you one sentence ("make me an app that pays my invoices"), answer
-what you can from it, **state your assumptions explicitly**, and proceed. Do not
-stall on an interview you cannot conduct. Do not invent a data model to make a file
-parse — an incomplete answer gets recorded as incomplete.
+```bash
+helios-app validate .        # from inside the app dir; or point it at the dir
+```
 
-The integration block (2) is where the competition's surprise task is decided. A
-requirement handed to you after code lock may have to join a system with its own
-stack, data and UI. Ask it even when the answer looks obviously "standalone".
+Shape rules it enforces:
 
-### Step 2 — Write `helios-app.yaml`
-
-Follow `specs/app-builder.md` §"The app spec" exactly. Sections: `spec_version`,
-`identity`, `existing`, `stack`, `data`, `graph`, `agents`, `ui`, `tools`.
-
-There is no validator yet, so **self-check these invariants by hand** — they are
-the ones `specs/app-builder.md` says the validator will enforce:
-
+- `extra="forbid"` everywhere — an unknown key is an error, not something quietly
+  ignored. A typo'd `entites:` would otherwise generate an app with no tables.
 - Exactly one of `stack.use` / `stack.match_existing`.
 - Exactly one of `data.local` / `data.integration`.
-- `identity.id` is kebab-case and equals the audit manifest's `app_id`.
-- Every `ui.pages[*].pattern` is one of: `summary`, `table`, `detail`, `form`,
-  `approval_queue`, `settings`.
-- Every entity field type is in the closed set: `string`, `integer`, `decimal`,
-  `date`, `datetime`, `boolean`, `json`. **Money is always `decimal`, never float.**
-- No entity appears in both `data.local` and `data.integration`.
-- `stack.match_existing` requires populated `existing.stack`; `data.integration`
-  requires `existing.data`; `ui.align_with` requires `existing.ui`.
-- Both `agents` paths exist and parse under their own loaders.
-- **Action-manifest tools ⊆ audit-manifest declared tools.** This is the single
-  most important check in the whole build. A tool an action agent can call that the
-  auditor never declared is an ungated side effect waiting to happen.
-- The spec's `tools` is a superset of both manifests' tool lists.
-- Every graph entity the agents publish appears in `graph.publishes`.
+- `identity.id` is kebab-case and must equal the audit manifest's `app_id`.
+- Entity and field names match `^[a-z_][a-z0-9_]*$`. They are interpolated into
+  generated DDL, so a name like `x INTEGER); DROP TABLE invoice; --` is **refused**,
+  not escaped.
+- Field types are the closed set: `string`, `integer`, `decimal`, `date`,
+  `datetime`, `boolean`, `json`. **Money is always `decimal` or integer cents,
+  never float.**
 
-Write the file even though nothing reads it. It is the design record, it forces
-the decisions above, and it becomes machine-checkable the moment the validator
-lands.
+Every problem is reported at once, as `<yaml path>: <problem>; write <what
+instead>`. Fix them all in one pass; do not go one round trip at a time.
 
-### Step 3 — Write the audit manifest first
+### Step 4 — Scaffold
 
-**Before the action manifest.** This ordering is not stylistic.
-
-The audit manifest is the registry of what may be granted at all. If you write the
-action agent first, you will find yourself declaring tools you have not thought
-about gating, and then retro-fitting rules to cover them. Writing policy first
-makes the mandate the design constraint and the agent the thing that fits inside it.
-
-Format: `platform/audit-agent-builder/manifests/collect-reminder.yaml` and
-`payables.yaml` are the two working references. Read `payables.yaml` in full — its
-comments explain the reasoning behind each rule, including why one is a *deny*
-rather than a *hold*.
-
-Skeleton (every field below is real and validated by `AuditManifest.load`):
-
-```yaml
-manifest_version: "1"
-app_id: your-app-id              # must equal identity.id in helios-app.yaml
-name: Your App Audit Agent
-description: >
-  What this auditor governs, and the shape of the mandate.
-
-tools:
-  - name: your.read_tool
-    description: ...
-    side_effect: false           # runs directly
-  - name: your.write_tool
-    description: ...
-    side_effect: true            # every call is gated
-    input_schema:                # REQUIRED for side-effect tools
-      type: object
-      additionalProperties: false
-      required: [invoice_id]
-      properties:
-        invoice_id: { type: string, minLength: 1 }
-        amount_cents: { type: integer, minimum: 1 }
-
-tasks:
-  yourapp.task_name:
-    description: What one unit of authorised work is
-    allowed_tools: [your.read_tool, your.write_tool]   # the allowlist
-    ttl_seconds: 120               # 30..86400; short for money movement
-    tool_overrides:                # optional per-tool ceilings
-      your.write_tool: { max_calls: 3, condition: "..." }
-
-rules:
-  - id: app.your_rule            # must NOT start with "baseline."
-    description: ...
-    task_types: [yourapp.task_name]   # omit = every task
-    tools: [your.write_tool]          # omit = every tool
-    message: plain language, shown to the owner
-    severity: warn                    # info | warn | critical
-    # ...one or more of the rule primitives below
-
-settings:
-  default_ttl_seconds: 120
-  contact_window_days: 30
-  log_path: your-app-audit-log.jsonl
-  advisory: [heuristic]          # heuristic | qwen | none — never changes a verdict
-  allow_unsigned_grants: false   # true is LOCAL DEV ONLY
+```bash
+helios-app new apps/<your-app> --spec helios-app.yaml [--intake intake.yaml]
 ```
 
-**Rule primitives** — these are all the shapes a declarative rule can express.
-Anything you cannot say with these belongs in Python, reviewed by a human.
+Generates 23 files:
 
-| Primitive | What it does |
+| Path | What it is |
 |---|---|
-| `limits: [{argument, max, on_exceed}]` | cap a value the agent supplied |
-| `limits: [{argument, max_from_fact, on_exceed}]` | cap it against a **trusted ceiling** |
-| `limits: [{fact, max, on_exceed}]` | cap a trusted value |
-| `on_exceed: hold` / `deny` | route to the owner, or refuse |
-| `clamp: true` | reduce to the ceiling and allow (alternative to `hold`) |
-| `required_arguments: [...]` | refuse a call missing these |
-| `forbidden_values: {arg: [v1, v2]}` | refuse specific argument values |
-| `max_contacts_in_days: {within_days, max}` | frequency limit from trusted history |
-| `deny_if_fact_true: [flag]` | hard refusal on a trusted flag |
-| `approval_if_fact_true: [flag]` | hold for the owner on a trusted flag |
+| `helios-app.yaml` | Your spec, copied verbatim (comments included) |
+| `helios.yaml` | The deployment manifest the engine reads |
+| `agents/<id>-audit.yaml` | **The policy.** Tool declarations + a TODO rule block |
+| `agents/<id>-action.json` | The agent's instructions and mandate |
+| `facts.py` | A `FactSource` over the generated store |
+| `tools.py` | One `ToolDefinition` per spec tool |
+| `store.py` | Generated SQLite access layer, parameterised SQL only |
+| `graph.py` | Publish/subscribe call sites |
+| `app.py` | Composition: `build_integration` over your policy |
+| `server.py` | ASGI entry — health, dashboard, holds, runs, audit |
+| `data/schema.sql` | Generated DDL |
+| `templates/`, `static/` | The UI kit patterns you declared, plus tokens and htmx |
+| `tests/test_controls.py` | The invariants that hold before any policy exists |
+| `README.md` | With the scenario-table skeleton |
 
-Three things that catch people out:
+Three properties to rely on:
 
-- **`max` and `max_from_fact` are mutually exclusive, and one is required.** A
-  limit with neither has nothing to compare against and would silently never fire —
-  a control that looks configured and enforces nothing.
-- **`on_exceed: hold` and `clamp: true` are alternatives, not complements.** Every
-  rule evaluates the agent's *original* request independently, so a clamp in one
-  rule does not make a later hold rule see a reduced value. That order-independence
-  is deliberate: a rule's verdict must not depend on where it sits in the file.
-- **You may not reuse a baseline rule id, nor start one with `baseline.`** Both
-  raise `PolicyLooseningError` at parse time. Redefining a platform rule as
-  something permissive is the most damaging thing a generated manifest can do, so
-  it is refused rather than caught later. Use `app.<name>`.
+- **Never overwrites.** An existing file is reported as `skipped: <path> (exists)`
+  and left alone. Regenerating over your work is not a thing it does.
+- **Idempotent.** Running it twice writes nothing the second time. The revision
+  loop — edit the spec, regenerate — is the normal way this is used.
+- **The skeleton validates clean.** `helios-app validate` reports 0 errors on a
+  freshly generated app, and its own generated tests pass.
 
-**The pattern that matters most in finance** is *argument measured against a fact
-ceiling*: "the payment may not exceed the recorded invoice amount". The agent
-chooses the amount; the ledger chooses the ceiling; neither can move the other.
-Write it as:
+Use `--dry-run` to see what would be written without writing anything.
+
+The generated `side_effect` flags are **guessed from the tool names** and each
+carries a `# REVIEW` comment. Check them. A real side effect declared read-only
+runs with no gate at all — the validator catches the disagreement once `tools.py`
+is filled in, but only if you fill it in.
+
+### Step 5 — Write the audit manifest FIRST
+
+Policy before agent, always. The audit manifest is the registry of what may be
+granted at all, and writing policy first makes the mandate the constraint the agent
+fits inside. Write the instructions first and you describe an agent with no limits,
+then spend the rest of the session negotiating with yourself.
+
+The generated file declares every tool and contains the **five rule shapes** as a
+commented block with the exact YAML keys:
 
 ```yaml
-limits:
-  - argument: amount_cents
-    max_from_fact: invoice_amount_cents
-    on_exceed: hold
+rules:
+  # 1. Require the arguments that identify the action
+  - id: app.requires_identity
+    task_types: [<your task>]
+    tools: [<gated tool>]
+    message: >
+      this call is missing an argument the policy needs; supply it rather than
+      retrying without it
+    required_arguments: [invoice_id]
+    severity: critical
+
+  # 2. Cap an argument against a TRUSTED FACT, not against what the agent says
+  - id: app.amount_matches_record
+    task_types: [<your task>]
+    tools: [<gated tool>]
+    message: the amount exceeds what is recorded for this subject
+    limits:
+      - argument: amount_cents
+        max_from_fact: amount_cents
+        on_exceed: hold
+    severity: critical
+
+  # 3. Hold above an absolute ceiling
+  - id: app.large_amount_approval
+    task_types: [<your task>]
+    tools: [<gated tool>]
+    message: this amount needs owner approval before it proceeds
+    limits:
+      - argument: amount_cents
+        max: "1000000"          # integer cents; money is never a float
+        on_exceed: hold
+
+  # 4. Refuse outright when a trusted fact says so — deny, not hold
+  - id: app.refuse_when_flag_set
+    task_types: [<your task>]
+    tools: [<gated tool>]
+    message: >
+      this record is flagged; the action is refused until the owner clears the flag
+      out of band
+    deny_if_fact_true: [flag_set]
+    severity: critical
+
+  # 5. Ask the owner when a fact makes the action unusual rather than wrong
+  - id: app.unusual_case_approval
+    task_types: [<your task>]
+    tools: [<gated tool>]
+    message: this case is unusual enough to need a human decision
+    approval_if_fact_true: [unusual]
 ```
 
-Then make sure your fact source actually supplies `invoice_amount_cents` (Step 4).
+Plus a frequency cap if your app contacts anyone (`max_contacts_in_days: {within_days, max}`),
+which needs `contact_count_for` in your fact source.
 
-**Know which direction this guards, because it only guards one.** A ceiling on an
-*argument* catches **over**payment. It does not catch underpayment — paying $1.00
-against a $48,000 invoice is inside the ceiling, and the rule allows it. That is
-not a bug in the rule; it is the wrong rule for that threat. Understating is
-stopped by binding a credential to the exact amount (see the Intent Verification
-section of `references/financial-tools.md`), so a smaller payment requires the
-owner to have confirmed that smaller amount.
+**No rules are generated for you, and that is deliberate.** A generated rule with a
+made-up ceiling passes validation, reads like a control, and caps the wrong thing —
+so the owner believes the app is governed when the number came from a generator.
+Policy is the product. Write it.
 
-If your threat is "the agent misstates what a record says" rather than "the agent
-asks for too much", bind on the fact instead of the argument —
-`fact: amount_due, max: "10000.00"`, as `collect-reminder.yaml` does. That shape
-never reads the agent's number at all, so lying about it changes nothing.
+### Step 6 — Write the facts
 
-Choose deliberately, and write a test for the direction you actually care about.
-An app that claims "payments are capped at the invoice amount" while nothing stops
-an agent from paying a tenth of it is the kind of gap that is invisible in a demo
-and obvious under questioning.
-
-**Decide deny vs hold deliberately.** Deny when the agent should not proceed at all
-until a human fixes something out of band — changed supplier bank details is the
-canonical case. Hold when it might be legitimate and only the owner can tell — a
-duplicate-looking invoice, an unusually large but exactly-correct payment. Getting
-this backwards either annoys the owner with queue items they cannot act on, or
-silently permits fraud.
-
-### Step 4 — Write the fact source
-
-A class satisfying `audit_agent.FactSource`. This is where "facts are not claims"
-stops being a slogan. Five methods, all optional in practice:
+`facts.py` implements `audit_agent.facts.FactSource`:
 
 ```python
-class YourFactSource:
-    def amount_for(self, subject_id: str) -> Decimal | None: ...
-    def contact_count_for(self, subject_id: str, within_days: int) -> int | None: ...
-    def counterparty_for(self, subject_id: str) -> str | None: ...
-    def payment_details_changed_for(self, subject_id: str) -> bool | None: ...
-    def extra_facts_for(self, subject_id: str) -> dict[str, Any]: ...
+amount_for(subject_id) -> Decimal | None
+contact_count_for(subject_id, within_days) -> int | None
+counterparty_for(subject_id) -> str | None
+payment_details_changed_for(subject_id) -> bool | None
+extra_facts_for(subject_id) -> dict[str, Any]
+record_contact(subject_id, when) -> None     # required by the runtime
 ```
 
-Read from the app's own database. **Never from the request.**
+Two invariants the generated file states and you must not break:
 
-`extra_facts_for` is how policy refers to app-specific signals — a recorded invoice
-amount, a duplicate flag, an outlier score — without the fact source knowing which
-ones this app declared. Its keys are the names your rules use in `fact:` and
-`max_from_fact:`.
+1. **Unknown is `None`, never zero.** A missing fact is the auditor not knowing
+   something it needs, which fails closed and denies. Returning `0` for an unknown
+   balance would read as "no exposure" and quietly turn a fail-closed control into
+   a fail-open one.
+2. **Nothing here may consult the request.** Only a subject id arrives. If a method
+   accepted arguments, every claim the agent made would become a fact. There is a
+   test in the reference apps that asserts no public method has an `arguments` or
+   `request` parameter — write one.
 
-Two facts about resolution you must get right:
+`extra_facts_for` is the contract with your audit manifest. Every key a rule names
+— in `deny_if_fact_true`, `approval_if_fact_true`, `limits[].fact`,
+`limits[].max_from_fact` — must be returned here. `helios-app validate` checks it.
 
-- **Subject selection is by argument name, from a fixed set:**
-  `invoice_id`, `bill_id`, `customer_id`, `supplier_id`, `subject_id`,
-  `payment_id`. An argument named anything else (say `inv` or `bill_reference`)
-  will not select a record, the fact will not resolve, and a fact-bound rule will
-  **fail closed** — denying everything. This is the most common way a generated
-  app's policy silently stops working, and it fails in the safe direction, which
-  is why it is easy to miss until the demo.
-- **Absent fact ≠ absent argument.** An absent *argument* means "the agent did not
-  ask for that" and a cap on it does not fire. An absent *fact* means "the auditor
-  does not know something it needs" and the rule **denies**. Unknown is never read
-  as small.
+### Step 7 — Write the tools
 
-`StaticFactSource(amounts={...}, contacts={...}, ...)` is the test/demo
-equivalent. Use it to prototype, swap in a real one for the app.
+One `ToolDefinition` per spec tool, in `tools.py`:
 
-### Step 5 — Write the action manifest
-
-JSON, loaded by `agent_toolkit.manifest.validate_manifest`. Loading is strict and
-the strictness is the point:
-
-```json
-{
-  "name": "your-agent",
-  "version": "1",
-  "description": "One line: what this agent does.",
-  "instructions": "The agent's operating instructions. See below.",
-  "tools": ["your.read_tool", "your.write_tool"],
-  "mandate": {
-    "allowed_tools": ["your.read_tool", "your.write_tool"],
-    "limits": {}
-  },
-  "max_turns": 12
-}
+```python
+ToolDefinition(
+    name="payments.send",
+    description="...",             # non-empty, and written for the calling model
+    input_schema={...},            # non-empty; additionalProperties: false
+    output_schema={...},           # non-empty — REQUIRED, it will not construct without it
+    side_effect=True,              # must match the audit manifest
+    handler=handler,               # Callable[[Mapping], Any]
+)
 ```
 
-Allowed fields are exactly `name`, `version`, `description`, `instructions`,
-`tools`, `mandate`, `model`, `max_turns`. **`extra="forbid"` semantics apply — a
-`_comment` key is rejected.** Put commentary in a README next to the file, not in
-the JSON.
+The generated handlers raise `NotImplementedError` naming the tool, the arguments
+they received and the file to edit. Fill them in. Do not replace them with
+something that returns a plausible empty result: a stub that succeeds lets a demo
+pass while doing nothing at all.
 
-Constraints the loader enforces:
+Two rules that are not stylistic:
 
-- `name` must be kebab-case (`^[a-z0-9]+(?:-[a-z0-9]+)*$`).
-- `tools` non-empty, no duplicates.
-- Every tool in `mandate.allowed_tools` must appear in `tools`.
-- `mandate.limits` accepts **only four keys**, all receivables-shaped:
-  `max_extension_days`, `extension_owner_approval_days`,
-  `min_days_between_contacts`, `invoice_owner_approval_amount`.
+- **`additionalProperties: false`** on every input schema. Without it an extra
+  argument is ignored rather than refused, and "ignored" is how a smuggled
+  parameter gets through.
+- **Handlers call service instances directly** (`bundle.payments`, `bundle.graph`),
+  not `bundle.registry.call`. See the `build_world()` singleton trap below.
 
-That last point is a real limitation. **A payables app cannot express its policy
-here at all.** Your authoritative policy is the audit manifest from Step 3. Put
-only the limits that fit, and say so in a comment in your README — do not let a
-reader believe the action manifest is doing the work. See
-`platform-status.md` §3 for the unresolved seam this creates.
+### Step 8 — Write the action manifest
 
-**Write `instructions` as an operating contract, not a description.** The
-reference example's instructions do five things, and yours should too:
+The generated `agents/<id>-action.json` already carries the five-point operating
+contract. Read it and make it specific to your app:
 
-1. Read before acting, and never state a value you did not read from a tool.
-2. Obtain the human authorization the policy requires (for payments, an
-   `auth_code` from a confirmed intent).
-3. On a **hold**: stop and surface the owner's question. **Do not reword the
-   request and retry** — that is circumventing a control, and it is the specific
+1. Read before acting; never state a value you did not read from a tool result.
+2. Obtain the human authorization the policy requires before any side effect.
+3. On a **hold**: stop and surface the owner's question verbatim. **Do not reword
+   the request and retry it**, do not split it into smaller calls, do not route it
+   through another tool. That is circumventing a control, and it is the specific
    failure mode a judge will look for.
 4. On a **deny**: read the reason, fix what is actually wrong, or report that the
    work cannot be done and why. Never work around it.
-5. Report per item what happened: done, held, or refused with the reason.
+5. Report per item: done, held awaiting the owner, or refused with the reason.
 
-Points 3 and 4 are what make the agent *legible under constraint*. An agent that
+Points 3 and 4 are what make an agent *legible under constraint*. An agent that
 argues with its gate is a liability; one that reports it is a product.
 
-### Step 6 — Write the app
+`mandate.limits` accepts **only four keys**, all receivables-shaped:
+`max_extension_days`, `extension_owner_approval_days`,
+`min_days_between_contacts`, `invoice_owner_approval_amount`. Anything else is
+rejected by the loader. **A payables app cannot express its policy here at all** —
+the generated file leaves `limits` empty for exactly that reason. Your authoritative
+policy is the audit manifest from Step 5. Say so in your README; do not let a reader
+believe the action manifest is doing the work.
 
-Compose the three packages. `examples/invoice-payer/app.py` is a complete working
-reference — read it, then adapt it. The pieces:
+Allowed top-level keys are exactly `name`, `version`, `description`,
+`instructions`, `tools`, `mandate`, `model`, `max_turns`. **A `_comment` key is
+rejected.** Put commentary in the README next to the file.
 
-```python
-# 1. financial tools
-from fin_tools import build_world
-bundle = build_world()
-bundle.registry.catalog()          # expose to the agent
-bundle.registry.call(name, **kw)   # dispatch
+### Step 9 — Scenarios and tests
 
-# 2. audit agent, over YOUR fact source
-from audit_agent import (build_audit_agent, AuthorizationRequest, ActionRequest,
-                         Decision)
-from audit_agent.manifest import AuditManifest
+Fill in `scenarios()` in `app.py` and extend `tests/test_controls.py`. **One
+scenario per control**, and one for each of these six outcomes — they are the
+evidence that the gate works rather than that the agent is well behaved:
 
-auditor = build_audit_agent(
-    AuditManifest.load("agents/your-app-audit.yaml"),
-    fact_source=YourFactSource(...),
-    log_path=run_dir / "audit.jsonl",
-)
+| Outcome | What it proves |
+|---|---|
+| allowed | a normal call, inside every limit, executes |
+| held, approved | over a ceiling; the owner says yes; it runs with the **exact arguments that were held** |
+| held, declined | the owner says no; **nothing happens** |
+| denied | refused outright with the reason, and **the owner is never asked** |
+| lying agent | the agent claims a value the fact source contradicts, and **nothing changes** |
+| undeclared tool | a tool the auditor never declared is **refused** |
 
-# 3. authorize once per task, then adjudicate every side effect
-grant = auditor.authorize(AuthorizationRequest(
-    request_id=..., app_id=..., agent_id=..., principal="owner",
-    task_type="yourapp.task_name", task_summary="...",
-    requested_tools=[...], context={"invoice_id": "..."}))
+Plus: every step written to the action log, the audit log hash-chained, and no
+credential reaching either log.
 
-decision = auditor.adjudicate(ActionRequest(
-    request_id=..., app_id=..., agent_id=..., principal="owner",
-    task_type="yourapp.task_name", tool="payments.send",
-    arguments={...}, authorization=grant,
-    resolved_facts={"invoice_id": "..."}))
-
-decision.decision        # Decision.ALLOW | HOLD | DENY
-decision.reason
-decision.owner_question  # plain language, for the approval queue
-decision.findings        # which rules fired, with severity
-decision.hold_id         # when held
-
-# 4. execute only on ALLOW; on HOLD, pause for the owner
-auditor.resolve_hold(hold_id, approve=True, decided_by="owner")
-```
-
-Notes that will save you time:
-
-- **`resolved_facts` is a subject name, not evidence.** It selects which record to
-  look up. Its *values* are deliberately not merged into the facts the auditor
-  uses — an agent that sends `resolved_facts={"amount_due": "1.00"}` for a $24,500
-  invoice is still held.
-- **`build_audit_agent()` raises `SigningKeyMissingError`** unless
-  `HELIOS_AUDIT_SIGNING_KEY` is set or the manifest sets
-  `allow_unsigned_grants: true`. For local dev:
-  `os.environ.setdefault("HELIOS_AUDIT_SIGNING_KEY", "0"*64)`. Never ship that.
-- **Grants expire** (your `ttl_seconds`) and side-effect grants are **single-use**.
-  Authorize per task, not once at startup. Reuse the same `idempotency_key` on a
-  retry so it cannot pay twice.
-- **The agent loop exists — you do not supply it.** `platform/agent-integration/`
-  provides `GatedAgentRuntime` (the loop) and `model_driver.ModelDriver` (Qwen over
-  DashScope, stdlib HTTP). `build_integration()` wires the auditor, bridge and
-  runtime in one call. It is not built on Qwen-Agent — no file imports `qwen_agent`.
-  For an offline demo you can still drive the runtime from deterministic code (as
-  the example does); the gate underneath is identical either way, and that
-  separability is the whole point, worth saying out loud in your demo.
-- **Credentials are redacted before they reach the audit log.** `auth_code` and
-  `authorization_code` are in `audit_agent`'s `REDACTED_KEYS`, so the payment
-  credential no longer leaks via `owner_question`. Because redaction happens
-  before schema validation, do not put a `minLength`/`pattern` on `auth_code` in a
-  manifest. See `platform-status.md` §"Credential handling".
-- Use `agent_toolkit.action_log.ActionLog` for the app's own append-only log, and
-  keep the auditor's hash-chained log separate. Two logs, two purposes: the action
-  log is the app's record of what it did; the audit log is tamper-evident evidence
-  of what was authorised.
-
-### Step 7 — Give the owner somewhere to decide
-
-**Every app with side-effecting agents needs an `approval_queue` page.** Held
-actions pause the agent; without a queue they pause *invisibly*, and the user
-discovers it when they wonder why nothing happened. This is the UI pattern
-`specs/app-builder.md` singles out as the one that matters most.
-
-For a prototype, a CLI owner is fine — the example uses a `ScriptedOwner` that
-prints the auditor's `owner_question` and returns a decision. The important part
-is that the question shown to the owner is the one the **auditor generated**, not
-one the agent wrote about itself.
-
-Use `auditor.describe()` / `describe(manifest)` for a capability report, and
-`sandbox_run(...)` from `fin_tools` to show the owner what a side effect *would*
-do without doing it.
-
-### Step 8 — Verify, then demo
+The generated tests already cover what can be checked before policy exists: both
+manifests load under their own validators, the action-manifest subset invariant,
+identity agreement, every declared tool is implemented, `side_effect` flags agree
+between the two files, every gated tool has a schema and a subject key, and no rule
+id claims the `baseline.` namespace. The six outcomes are named as TODOs rather
+than written as tests that pass vacuously. **A test that asserts nothing is worse
+than no test, because it reads as coverage.**
 
 ```bash
-# 1. Both manifests parse under their real loaders
-python3 -c "
-import sys; sys.path.insert(0,'platform/audit-agent-builder/src')
-from audit_agent.manifest import AuditManifest
-m = AuditManifest.load('apps/your-app/agents/your-app-audit.yaml')
-print('audit OK', m.app_id, list(m.tasks), [r.id for r in m.rules])"
-
-python3 -c "
-import sys, json; sys.path.insert(0,'platform/action-agent-builder/src')
-from agent_toolkit.manifest import validate_manifest
-m = validate_manifest(json.load(open('apps/your-app/agents/your-app-action.json')))
-print('action OK', m.name, m.tools)"
-
-# 2. The cross-file invariant, by hand (no validator exists yet)
-python3 -c "
-import sys, json; sys.path.insert(0,'platform/audit-agent-builder/src')
-sys.path.insert(0,'platform/action-agent-builder/src')
-from audit_agent.manifest import AuditManifest
-from agent_toolkit.manifest import validate_manifest
-a = validate_manifest(json.load(open('apps/your-app/agents/your-app-action.json')))
-b = AuditManifest.load('apps/your-app/agents/your-app-audit.yaml')
-missing = sorted(set(a.mandate.allowed_tools) - {t.name for t in b.tools})
-assert not missing, f'UNGATED SIDE EFFECT: {missing}'
-assert a.name == b.app_id or True, 'check identity.id == audit app_id'
-print('cross-file OK')"
-
-# 3. Inspect what authority the manifest actually grants
-cd platform/audit-agent-builder
-PYTHONPATH=src python3 -m audit_agent.cli inspect ../../apps/your-app/agents/your-app-audit.yaml
-
-# 4. Run the app
-python3 apps/your-app/app.py
+helios-app validate apps/<your-app>
+agent-toolkit validate apps/<your-app>/agents/<id>-action.json \
+                       --audit apps/<your-app>/agents/<id>-audit.yaml
+agent-toolkit demo --run-dir /tmp/demo      # the gate, with no model and no network
 ```
 
-The CLI (`audit_agent.cli`) also has `validate` (exit 1 if unsound — use it in CI)
-and `demo` (watch it decide, with reasons). `serve` runs it as an HTTP service.
+### Step 10 — Deploy
 
-**Then write a test for each control.** Not a test that the app runs — a test that
-each rule fires. Model it on `platform/audit-agent-builder/tests/test_security.py`,
-which asserts every security property individually and is the file to show a judge.
-Minimum set:
+`helios.yaml` is generated with `entry: server:app`, `port: 3000`, and permissions
+derived from your tool families. Deploy with the engine's CLI:
 
-- a normal call is **allowed** and executes;
-- a call over a limit is **held**, and resumes only after the owner decides;
-- a call outside the mandate is **denied**, with a reason the agent can act on;
-- an agent that **lies about a fact** is still caught. Two shapes, and it is worth
-  testing both because they are guarded by different mechanisms:
-  - lying in `resolved_facts` about a recorded amount changes nothing, because
-    those values are never merged into the facts the auditor uses;
-  - paying **more** than the invoice is worth is held, because the ceiling is
-    `max_from_fact`. Paying *less* is inside that ceiling and is **allowed** by
-    the rule — it is stopped instead by `payments.send` refusing an `auth_code`
-    that is not bound to that exact amount, so the owner must have confirmed the
-    smaller sum. Do not write a test asserting understatement is caught by the
-    ceiling; it is not, and the test will fail for the right reason.
-- an action manifest offering an **undeclared tool** is rejected;
-- every step appears in the log.
+```bash
+.venv/bin/python cli/helios.py deploy apps/<your-app> --tenant acme
+curl -s localhost:8100/api/v1/apps                       # the registry
+curl -s localhost:8100/api/v1/apps/<app>/logs            # app logs
+```
 
-That fifth one is the demo. Run it in front of the judges.
+See `platform/deployment/README.md` if it exists. If it does not, the engine lives
+in `OTHER-TEAMMATE-STUFF/deployment-stuff/` and the commands above are current as
+of 2026-10-15.
+
+**The generated `helios.yaml` looks shorter than the docs suggest, and that is
+correct.** The engine's `Manifest` accepts only `name`, `tenant`, `entry`, `port`,
+`permissions`, and it does **not** forbid extra keys — so `audit_manifest`,
+`data_dir` and `env` would be silently dropped, producing a manifest that looks
+configured and is not. The scaffolder reads the engine's `contracts.py` at
+generation time and emits only what it declares; when the engine grows a field,
+regenerate and it appears.
+
+`ALLOWED_TOOLS` is a closed set of four — `payments`, `email`, `knowledge-graph`,
+`events` — and an unknown permission is a hard `ContractError` at deploy time. A
+tool family with no mapping (`forecast`, `market-data`, `spreadsheets`, `collect`)
+contributes nothing and is named in a `# REVIEW` comment instead.
+
+### Step 11 — The README
+
+Fill in the scenario table. It is the single most persuasive artifact in the
+pitch, because it maps each invoice to the control that decided it:
+
+```
+| Invoice | Supplier | Amount | Outcome | Control |
+|---|---|---|---|---|
+| INV-1001 | Northwind | $1,250.00 | **paid** | normal path, inside every limit |
+| INV-1002 | Delta Mills | $48,000.00 | **held → owner approves → paid** | `app.large_payment_approval` |
+| INV-1003 | Cinder Logistics | $760.00 | **denied** | `app.payee_details_changed` |
+| INV-1004 | Northwind | $1,250.00 | **held → owner declines** | `app.duplicate_invoice` |
+```
+
+Also state plainly: which audit gate you made authoritative and why, what the known
+limitations are, and anything the generator guessed that you confirmed.
 
 ---
 
 ## Worked example: "Make me an app that automatically manages and pays my invoices"
 
 `examples/invoice-payer/` is that request, built end to end and running. Read it
-with this document open.
+with this document open. It was hand-written before the generator existed, so its
+files are not laid out exactly as `helios-app new` lays them out — its fact source
+and data layer live inline in `app.py` rather than in `facts.py` and `store.py`.
+Read it for the *policy* and the *controls*, and read `apps/helios-collect/` for the
+file layout the generator produces.
 
 ```
 examples/invoice-payer/
 ├── README.md                          # what it demonstrates, how to run it
-├── helios-app.yaml                    # Step 2 — the app spec
-├── app.py                             # Steps 4, 6, 7 — fact source, runtime, owner
+├── helios-app.yaml                    # Step 3 — the app spec
+├── app.py                             # Steps 6, 7 — fact source, runtime, owner
 ├── agents/
-│   ├── invoice-payer-audit.yaml       # Step 3 — the policy (written first)
-│   └── invoice-payer-action.json      # Step 5 — the agent
+│   ├── invoice-payer-audit.yaml       # Step 5 — the policy (written first)
+│   └── invoice-payer-action.json      # Step 8 — the agent
 ├── data/invoices.json                 # the app's data, incl. fact-source fields
 └── runs/                              # generated: action log + hash-chained audit log
 ```
@@ -532,7 +434,10 @@ platform's central claim demonstrated rather than asserted: the control does not
 depend on the human noticing, and it does not depend on the agent behaving.
 
 Note also that INV-1003 is a *deny* while INV-1004 is a *hold*, and that the
-distinction is deliberate — see Step 3.
+distinction is deliberate — see Step 5, rule shapes 4 and 5. A changed payee is not
+something any amount of owner approval makes safe, so it is refused outright and the
+owner is never asked. A duplicate-looking invoice is genuinely ambiguous, so it goes
+to the human.
 
 ```bash
 cd entry-point/examples/invoice-payer
@@ -542,69 +447,257 @@ python3 app.py --invoice INV-1003   # one control path
 python3 app.py --json       # machine-readable
 ```
 
-Runs offline. No API key, no network, no dependencies beyond the three platform
-packages plus `pydantic` and `pyyaml`.
+Runs offline. No API key, no network, no dependencies beyond the platform packages
+plus `pydantic` and `pyyaml`.
+
+To see the same controls exercised with no app at all — just the gate, the store and
+the log:
+
+```bash
+agent-toolkit demo --run-dir /tmp/demo
+```
 
 ---
 
 ## Where to put a generated app
 
-`specs/tech-stack.md` fixes the monorepo layout as `platform/`, `services/`,
-`apps/`, and `specs/app-builder.md` says the scaffolder writes to
-`apps/<name>/`. **`apps/` exists** — `apps/helios-collect/` is a real app in it.
-The scaffolder does not, so you create the directory and its contents yourself.
+`apps/<app-id>/`, with the app id matching `identity.id`.
 
-Put a generated app under `apps/<name>/` and touch nothing else. Other agents work
-in this repo simultaneously; `platform/action-agent-builder/`,
-`platform/audit-agent-builder/`, `platform/agent-integration/`,
-`platform/app-builder/`, `platform/deployment/` and `platform/financial-tools/` are
-theirs. Do not edit inside them. (Note the folder names are not the package names:
-`platform/action-agent-builder/` contains `agent_toolkit`.)
-
-Which gate is authoritative is **settled**: the standalone `audit_agent`, per
-`specs/decisions.md`. `agent_toolkit.audit.AuditGate` is legacy, in no run path,
-and marked deprecated in its docstring. Build against the standalone auditor and do
-not add rules to the in-process gate — that is not an architectural change needing
-approval, it is following the recorded decision.
+**Check with the team before creating a directory under `apps/`.** Other agents work
+in this repo simultaneously. `platform/action-agent-builder/`,
+`platform/audit-agent-builder/`, `platform/app-builder/`,
+`platform/agent-integration/` and `platform/financial-tools/` are theirs — read
+them, do not edit inside them.
 
 ---
 
 ## Non-negotiables
 
-From `specs/helios-context.md` (competition rules) and `specs/tech-stack.md`:
+- **Money is integer cents or `decimal` strings. Never float.** Convert at
+  boundaries only. `Decimal(0.1)` bakes in binary rounding at the moment of
+  conversion, which is why the generated store refuses a float outright rather than
+  converting it.
+- **Qwen is the only generative model allowed.** Any reference to GLM, Zhipu or
+  `bigmodel.cn` is legacy and must be removed when you touch that file.
+- **Secrets come only from environment variables.** Never print, log, commit or
+  hard-code a key. A key in a log is a leak even if the log is local.
+- **No hidden prompts or model-specific tricks** in docs or interfaces.
+- Licence walls: no unlicensed investment advice; PIPL constrains behavioural
+  telemetry; compliance output is not a legal opinion.
+- **Do not weaken a control to make a test pass.** If a test fails because a gate
+  correctly refused, fix the test or the fixture — never the gate.
 
-- **Qwen is the only generative model allowed for development.**
-- Documentation and interfaces must not depend on hidden prompts or
-  model-specific tricks. If it needs a secret incantation, it is not built.
-- **No hard-coded API keys.** Credentials come from environment variables and stay
-  out of logs and packages.
-- Money is **integer cents or `decimal` strings, never float**.
-- Licence walls still apply: no unlicensed investment advice, PIPL constraints on
-  behavioural telemetry, and compliance output is not a legal opinion.
+---
 
 ## Scoring, and what it should change about your priorities
 
-| Stage | Weight | Focus |
-|---|---|---|
-| Investment pitch | **50%** | market opportunity, product innovation, value of the three flagship apps, business model |
-| Engineering verification | 25% | it runs, platform completeness, app delivered *through the platform*, surprise task |
-| Architecture defence | 25% | architecture, extensibility, security, usability, engineering design |
-
-The judges' guiding question: *what new financial capability becomes possible when
-AI, data and an extensible platform work together?*
+Investment pitch **50%** · engineering verification 25% · architecture defence 25%.
 
 Half the score is the pitch, so an app that works but cannot be explained in one
-sentence loses to one that can. The strongest architecture-defence material is not
-the UI or the forecast — it is the **Action/Audit split and the mandate concept**,
-and specifically *facts are not claims*. Lead with that. It is the part another
-team cannot copy in 80 hours, because it is a design decision rather than a
-feature.
+sentence loses to one that can. Lead the architecture defence with the
+Action/Audit split and *facts are not claims* — and demo the case where the human
+gets it wrong and the code still refuses.
 
-The surprise task is decided in Step 1's integration block. A requirement arrives
-after code lock and may have to join an existing system. A builder that can only
-produce one shape of app fails that test, which is why `helios-app.yaml` has
-`stack.match_existing`, `data.integration` and `ui.align_with` rather than three
-fixed shapes. A generated app is **Helios-compatible, not Helios-identical**:
-compatible means it declares its data, agents, tools and graph interactions in the
-app spec, runs the shared agent runtime, and passes the validator — not that it
-looks like the other apps.
+`examples/invoice-payer/` does exactly that: its scripted owner **confirms a
+payment to a supplier whose banking details just changed**, and the payment still
+does not go out. The control does not depend on the human noticing, and it does not
+depend on the agent behaving.
+
+---
+
+## Traps
+
+Everything below has already cost someone hours. Each is still true as of
+2026-10-15 unless it says otherwise.
+
+### Policy and the gate
+
+1. **Action-manifest tools must be a subset of audit-declared tools.** The single
+   most important check in the whole build. An undeclared tool is not denied — it
+   is never looked at, so it runs with no gate at all. `helios-app validate` and
+   `agent-toolkit validate --audit` both check it.
+
+2. **Fact resolution keys on a fixed argument-name set:** `invoice_id`, `bill_id`,
+   `customer_id`, `supplier_id`, `subject_id`, `payment_id`. An argument named
+   anything else (`inv`, `bill_reference`) will not select a record, the fact will
+   not resolve, and a fact-bound rule **fails closed and denies everything**. This
+   is the most common way a generated app's policy silently stops working, and it
+   fails in the safe direction — which is exactly why it survives until the demo.
+   The validator warns when a gated tool takes no subject key.
+
+3. **Absent fact ≠ absent argument.** An absent *argument* means "the agent did not
+   ask for that", and a cap on it does not fire. An absent *fact* means "the
+   auditor does not know something it needs", and the rule **denies**. Unknown is
+   never read as small.
+
+4. **A limit on an argument the tool does not take never matches.** Rule
+   `limits[].argument` and `required_arguments` must name properties that exist in
+   that tool's `input_schema`. A rule limiting `amount_cents` on a tool whose schema
+   calls it `amount` does not error — the control is simply gone, and nothing says
+   so. The validator checks this.
+
+5. **`max` and `max_from_fact` are mutually exclusive, and one is required.** A
+   limit with neither has nothing to compare against and would silently never fire.
+
+6. **`on_exceed: hold` and `clamp: true` are alternatives, not complements.** Every
+   rule evaluates the agent's *original* request independently, so a clamp in one
+   rule does not make a later hold rule see a reduced value. That order-independence
+   is deliberate: a rule's verdict must not depend on where it sits in the file.
+
+7. **You may not reuse a baseline rule id, nor start one with `baseline.`** Both
+   raise `PolicyLooseningError` at parse time. Redefining a platform rule as
+   something permissive is the most damaging thing a generated manifest can do, so
+   it is refused rather than caught later. Use `app.<name>`.
+
+8. **A ceiling on an argument guards one direction only.** It catches
+   **over**payment. It does not catch underpayment — paying $1.00 against a $48,000
+   invoice is inside the ceiling, and the rule allows it. Understating is stopped by
+   binding a credential to the exact amount, not by a limit.
+
+9. **Audit rules cannot express a two-argument pairing check.** `send_email` takes
+   `customer_id` *and* `invoice_id`, and the handler raises if they do not match —
+   but `limits` and `deny_if_fact_true` resolve facts for one subject at a time, and
+   the subject picker prefers `invoice_id`, so a valid invoice id makes a mismatched
+   customer id invisible. The gate **approves**, the handler **refuses**, nothing is
+   sent, and the run ends in `ERROR`. It fails loudly and safely, but the refusal
+   lands *after* approval. Needs a pairing fact or a new rule shape.
+
+10. **The auditor refuses a short `task_summary`.** `baseline.intent_stated`
+    requires ≥12 characters or the whole grant is denied. Use realistic task text
+    when driving runs.
+
+### Runtime and wiring
+
+11. **`fin_tools.build_world()` binds module-level singletons.** With two worlds in
+    one process the **last**-built one wins for every `registry.call` dispatch. Call
+    `bundle.payments` / `bundle.graph` directly instead. This matters because tests
+    build a fresh world per case. Verified 2026-10-15.
+
+12. **A fact source without `record_contact` takes the whole run down.** The gated
+    runtime calls `fact_source.record_contact(...)` after a successful contact, and
+    it does so **outside** its `try/except` — so a missing method is an
+    `AttributeError`, not a denial. Implementing it is not optional for an app that
+    reuses that runtime.
+
+13. **`ToolDefinition` requires a non-empty `output_schema`.** It is a frozen
+    dataclass whose `__post_init__` rejects an empty one. There is no
+    `records_contact` field. Fields are exactly: `name`, `description`,
+    `input_schema`, `output_schema`, `side_effect`, `handler`.
+
+14. **`build_audit_agent()` raises `SigningKeyMissingError`** unless
+    `HELIOS_AUDIT_SIGNING_KEY` is set or the manifest sets
+    `allow_unsigned_grants: true`. For local dev:
+    `os.environ.setdefault("HELIOS_AUDIT_SIGNING_KEY", "0"*64)`. **Never ship
+    that.** `build_integration()` generates an ephemeral key when the env var is
+    absent, so grants stay signed — the more honest demo, and one that cannot be
+    shipped by accident.
+
+15. **Grants expire** (your `ttl_seconds`) and side-effect grants are
+    **single-use**. Authorize per task, not once at startup. Reuse the same
+    `idempotency_key` when retrying the *same* payment so it cannot pay twice.
+
+16. **`idempotency_key` replays a cached rejection.** Repeating a key returns the
+    stored record with its *original* `reject_reason`, even if the arguments
+    changed. An agent that fixes a rejected payment and retries under the same key
+    sees the stale failure and may conclude its fix did not work. Use a fresh key
+    when the payment genuinely changed.
+
+17. **`resolved_facts` is a subject name, not evidence.** It selects which record to
+    look up. Its *values* are deliberately not merged into the facts the auditor
+    uses — an agent that sends `resolved_facts={"amount_due": "1.00"}` for a $24,500
+    invoice is still held.
+
+18. **Holds are in-memory only.** `AuditAgent` keeps holds in a dict and
+    `InMemoryReplayGuard` is single-process, so pending approvals and grant-replay
+    protection are **lost on restart**.
+
+19. **Two logs, two purposes.** `agent_toolkit.action_log.ActionLog` is the app's
+    own append-only record of what it did. The auditor's hash-chained log is
+    tamper-evident evidence of what was authorised. Keep them separate.
+
+20. **`Store` has no public invoice mutator.** It exposes mutators for contacts and
+    the outbox only — it was written for Build 1, where invoices are read-only.
+    `apps/helios-collect/book.py::_mutate_invoice` writes into the store's private
+    `_invoices` dict. That is reaching into a private attribute of a package this
+    app does not own; it is the only seam available, and it is confined to one
+    method so there is a single place to change if the platform grows a public
+    mutator.
+
+21. **The two audit gates overlap and nobody has decided which wins.**
+    `agent_toolkit.audit.AuditGate` is in-process and accepts only four
+    receivables-shaped limit keys. `audit_agent.AuditAgent` is standalone,
+    declarative, with signed scoped grants and a hash-chained log. Both reference
+    apps make the **standalone auditor authoritative**. That is a defensible choice,
+    **not a settled design** — `AGENTS.md` requires team approval for architecture
+    changes, so **flag it; do not resolve it silently in your app.**
+
+22. **The two packages have incompatible tool contracts.**
+    `agent_toolkit.contracts.ToolDefinition` uses `side_effect` and
+    `handler(args: Mapping)`; `fin_tools.contracts.ToolSpec` uses `side_effects`
+    (plural) and `handler(**kwargs)`. Use `fin_tools.toolkit_bridge` or
+    `adapters.ToolContractView`. A gated tool that registers as read-only because of
+    this mismatch **emails customers with no audit at all**, and nothing raises.
+
+### Credentials
+
+23. **`auth_code` is not in the audit log's redaction key set.** It is not in
+    `audit_agent.contracts.REDACTED_KEYS` (`src/audit_agent/contracts.py:54`), so a
+    real payment credential reaches the log **in full**, inside the `owner_question`
+    string that renders every argument. Seen live. Redact before you log. The UI
+    kit's `mask_arguments` extends the platform set with `auth_code`,
+    `bank_account`, `card_number` and friends for exactly this reason — but that
+    only protects the page, not the log.
+
+24. **`payments.send` distinguishes an absent `auth_code` from an invalid one**
+    (`"missing verified intent auth code"` vs `"unknown auth code"` /
+    `"amount differs from confirmed intent"`). The gate checks **presence**; the tool
+    checks **validity**. Two layers, so a test that only asserts a verdict can pass
+    while no money moves.
+
+### Reporting
+
+25. **`RunResult.summary()` miscounts side effects.** It reports
+    `side_effects_attempted` / `side_effects_executed` as `len(self.actions)` /
+    `len(self.executed)`, but read-only tool calls are also appended to
+    `result.actions`. The counters therefore include non-side-effect tools. **The
+    gate behaved correctly; the reported number is wrong.** Worth fixing before any
+    judging context, because it reads as "an email went out" when none did. The
+    action log is the accurate record; the summary is not.
+
+### Environment
+
+26. **Use the repo venv.** `.venv/bin/python`, which is 3.13. The system `python3`
+    is 3.14 and has none of the dependencies installed. Run
+    `scripts/bootstrap-venv.sh` once.
+
+27. **`python3 -m pytest` inside a platform package fails** with
+    `ModuleNotFoundError`. Use the venv interpreter. Note that the venv's
+    `fin_tools` comes from a `.pth` file, because that package is a flat layout with
+    no `[build-system]` and cannot be installed editable.
+
+28. **`platform/financial-tools` is P1's.** `platform/deployment/` and
+    `apps/helios-collect/` are P2's. Read them; do not edit them. Leave requests in
+    `docs/sessions/<your-session>/HANDOFF-TO-P1-P2.md`.
+
+### The generator itself
+
+29. **The generated `helios.yaml` is field-conservative on purpose.** See Step 10.
+    Adding a field the engine does not declare produces a manifest that looks
+    configured and is not, with no error anywhere.
+
+30. **Routes in a generated `server.py` must stay flat.** The kit's URLs are relative
+    because the deployment host strips `/apps/<slug>`. A nested route like
+    `/holds/123` would resolve `static/...` against `/holds/` and 404.
+
+31. **SQLite applies column affinity before a CHECK runs.** Binding the float `12.5`
+    into a `TEXT` column arrives as the string `'12.5'` and passes every constraint,
+    so no pure-SQL rule can catch a float in a decimal column. The generated store
+    refuses floats at the Python boundary instead. Also: an unguarded `CHECK` rejects
+    `NULL`, because `typeof(col) = 'text'` is false for `NULL` — optional columns get
+    `CHECK (col IS NULL OR (...))`.
+
+32. **GLOB is not regex.** `?` is exactly one character, never "optional", and
+    `[0-9]*` is one class character followed by anything. It also matches digit
+    *shape* only, so `'2026-13-45'` satisfies a date pattern unless you add explicit
+    range clauses. The CHECK fragments in `stacks.yaml` are written for GLOB's real
+    semantics and tested against SQLite 3.51.0.

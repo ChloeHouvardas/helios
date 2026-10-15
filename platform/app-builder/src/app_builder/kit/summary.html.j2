@@ -1,0 +1,70 @@
+{#
+  Pattern: summary — headline numbers and status.
+
+  The first page of most apps: what is the state of the world, in a few tiles.
+  `tiles` is a list of {label, value, hint, tone}. `tone` picks the left border
+  colour (ok / warn / danger / info / hold) so a number can carry its own
+  judgement — an overdue total in the default grey is a number the owner has to
+  interpret, and interpreting it is the app's job, not theirs.
+
+  `sections` optionally adds cards of {heading, items: [{label, value}]} beneath
+  the tiles, for context that is not a headline.
+#}
+{% extends "base.html.j2" %}
+{% block title %}{{ heading | default(title | default('Overview')) }} — {{ app_name | default('Helios app') }}{% endblock %}
+
+{% block content %}
+  {# Optional context normalised up front: under StrictUndefined a bare
+     `{% if x %}` on an unset variable raises, whereas `default` is safe. #}
+  {% set tiles = tiles | default([]) %}
+  {% set sections = sections | default([]) %}
+  {% set holds_count = holds_count | default(0) %}
+  {% set holds_href = holds_href | default('holds/') %}
+  {% if tiles %}
+    <div class="tiles">
+      {% for tile in tiles %}
+        <div class="tile{% if tile.tone %} tile--{{ tile.tone }}{% endif %}">
+          <p class="tile__label">{{ tile.label | default('') }}</p>
+          {# Values are pre-formatted strings. A tile that formats a Decimal in the
+             template would render 1234.5 as "1234.5" and lose the unit, and money
+             without a unit on screen is how a wrong number gets believed. #}
+          <p class="tile__value">{{ tile.value | default('—') }}</p>
+          {% if tile.hint %}<p class="tile__hint">{{ tile.hint }}</p>{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty">
+      <p class="empty__title">Nothing to summarise yet</p>
+      <p class="empty__body">
+        This page reports the numbers the app tracks. It has none right now —
+        either no records exist yet, or the page has not been wired to a data
+        source.
+      </p>
+    </div>
+  {% endif %}
+
+  {% for section in sections %}
+    <section class="card mt-5">
+      <h2 class="card__heading">{{ section.heading | default('') }}</h2>
+      {% if section.items | default([]) %}
+        <dl class="fields">
+          {% for item in section.items %}
+            <dt>{{ item.label | default('') }}</dt>
+            <dd>{{ item.value | default('—') }}</dd>
+          {% endfor %}
+        </dl>
+      {% else %}
+        <p class="tiny muted mt-0">Nothing recorded.</p>
+      {% endif %}
+    </section>
+  {% endfor %}
+
+  {% if holds_count %}
+    <p class="mt-5">
+      <a class="btn btn--secondary" href="{{ holds_href }}">
+        {{ holds_count }} action{{ 's' if holds_count != 1 else '' }} waiting for your decision
+      </a>
+    </p>
+  {% endif %}
+{% endblock %}

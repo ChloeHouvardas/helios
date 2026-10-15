@@ -19,33 +19,25 @@
   before execution. Not built on Qwen-Agent — no file imports `qwen_agent`.
 - **Secrets:** API keys are read from environment variables and never hard-coded or logged
 - **App spec format:** YAML (`helios-app.yaml`), validated with pydantic under `extra="forbid"` — see `specs/app-builder.md`
-- **Default generated-app stack:** FastAPI + SQLite + Jinja2/HTMX
-  server-rendered pages, when a spec does not name one. Holds and approvals stay
-  in-process with the agent runtime, so one process on one origin keeps the
-  approval flow same-origin with no CORS boundary.
+- **Default generated-app stack:** FastAPI + SQLite (stdlib `sqlite3`, no ORM) + Jinja2 + HTMX, when a spec does not name one. Named `helios-python-web-1` in `platform/app-builder/stacks.yaml`
 - **Web framework:** FastAPI — Python keeps holds and approvals in-process with the agent runtime
-- **Frontend:** React built with Vite. Chosen over Next.js deliberately: Vite emits a static bundle that FastAPI serves, so a generated app is one process on one origin, with no server/client runtime split and no CORS boundary on the approval flow
-- **UI:** a shared prebuilt component library — Qwen assembles from it rather than writing UI from scratch. Generated apps are expected to be clean and visually credible
-- **Market data transport:** stdlib `urllib` against the Tushare Pro HTTP API, returning plain dicts. No `tushare` SDK and no pandas, so `fin_tools` keeps `dependencies = []` and the package stays importable with nothing installed beyond the standard library
-- **Market data endpoint:** `https://api.tushare.pro`. The brief names the plain-HTTP form of the same host; HTTPS is the default because the token travels in the POST body and a plaintext request would put a live credential on the wire. HTTPS was verified working against the real API. The endpoint is overridable if plain HTTP is ever required
-- **Market data credentials:** `TUSHARE_TOKEN`, read from the environment at call time only. Never hard-coded, never logged, never stored on an instance, never present in `ToolSpec.declare()` output, and redacted from every error message. There is deliberately no `set_token()` — a token in a process global is a token in a traceback
-- **Market data endpoints are allow-listed:** `trade_cal`, `daily`, `shibor_lpr`, `shibor`, `stock_basic`, each verified against the live API before being listed. No tool accepts an `api_name`, so an agent cannot reach an endpoint nobody reviewed
-- **Data storage:** SQLite per app, under the app's own data dir. Held state and
-  replay guards persist there too (P2 implements).
-- **Money representation:** integer cents or decimal strings, never float.
-  Converted at boundaries only — a rounding error in an invoice total is a real
-  financial error.
+- **Frontend:** Jinja2 templates + HTMX, server-rendered by the app's own FastAPI process. *Changed 2026-10-15 from React built with Vite.* The property Vite was chosen for still holds — one process, one port, one origin, with no server/client runtime split and no CORS boundary on the approval flow — and server-rendered pages reach it without an install step, a build step, a second language, or a bundle that can build successfully and still render nothing. A generated app has to be buildable and debuggable by a model in minutes. See the CHANGED note in `specs/app-builder.md`
+- **UI:** a shared kit of Jinja2 templates — one per pattern (`summary`, `table`, `detail`, `form`, `approval_queue`, `settings`), a base layout, and a held-action partial — over one `tokens.css` design-token file. Qwen assembles from it rather than writing UI from scratch. *Narrower than the component library originally planned*: the trade for dropping React is granularity, not consistency. Generated apps are still expected to be clean and visually credible, and every template ships its own empty/loading/error states
+- **Data storage:** SQLite per app, accessed through generated parameterised SQL. *Changed 2026-10-15 from SQLAlchemy.* The generated data layer is a few dozen statements a model can read, debug and fix; an ORM is one more thing that can be subtly wrong in generated code, and it hides the parameterisation that stops SQL injection. Portability to Postgres now lives in the `stacks.yaml` type map rather than in an ORM, so moving database is still a mapping change and not a rewrite of generated code
+- **Money representation:** integer cents, or `decimal` stored as `TEXT` with a parse CHECK. Never float, and never `REAL`. SQLite applies column affinity *before* a CHECK runs, so binding a Python float into a TEXT column arrives as a string and passes every constraint — no pure-SQL rule catches it, and the generated store refuses a float at the Python boundary instead
+- **Package/build tooling:** hatchling with a `src/` layout, for every packaged platform module. `platform/financial-tools` and `platform/deployment` use setuptools with explicit package lists, and every package installs editable through `scripts/bootstrap-venv.sh`
+- **Vendored frontend assets:** HTMX 2.0.11 is vendored into `app_builder/kit/static/` rather than loaded from a CDN, with its version, byte count and sha256 recorded in `stacks.yaml` and asserted by a test. A generated app must work offline and behind a host that strips `/apps/<slug>`
 - **Deployment:** `platform/deployment` — `helios.yaml` manifest, an ASGI entry
   and `GET /health`, built and routed through the Docker Engine API (docker-py).
 - **Testing:** pytest, run by `scripts/test-all.sh`. Every suite is offline: no
   network, Docker daemon, model token or provider credential required.
 - **Dependency pinning:** `requirements-dev.txt` pins every version exactly, so
   two agents in two worktrees cannot drift into different dependency trees.
+- **Action log storage:** append-only JSONL files, one per run under `.runs/<run_id>/`; the auditor's own log is hash-chained
+- **Market data transport:** stdlib `urllib` against the Tushare Pro HTTP API, returning plain dicts. No `tushare` SDK and no pandas, so `fin_tools` keeps `dependencies = []` and the package stays importable with nothing installed beyond the standard library
+- **Market data endpoint:** `https://api.tushare.pro`. The brief names the plain-HTTP form of the same host; HTTPS is the default because the token travels in the POST body and a plaintext request would put a live credential on the wire. HTTPS was verified working against the real API. The endpoint is overridable if plain HTTP is ever required
+- **Market data credentials:** `TUSHARE_TOKEN`, read from the environment at call time only. Never hard-coded, never logged, never stored on an instance, never present in `ToolSpec.declare()` output, and redacted from every error message. There is deliberately no `set_token()` — a token in a process global is a token in a traceback
+- **Market data endpoints are allow-listed:** `trade_cal`, `daily`, `shibor_lpr`, `shibor`, `stock_basic`, each verified against the live API before being listed. No tool accepts an `api_name`, so an agent cannot reach an endpoint nobody reviewed
 
 ## Tentative
-- **Action log storage:** append-only JSONL files, hash-chained on the audit side
-- **Frontend:** Jinja2/HTMX is the default, but `specs/app-builder.md` still
-  describes a Vite-built React component library for richer apps. Which one the
-  scaffolder emits is not settled.
-- Package/build tooling is mixed: hatchling for the three agent packages,
-  setuptools for `financial-tools` and `deployment`.
+- Which of the two audit-gate implementations stays importable long term: `agent_toolkit.audit.AuditGate` is legacy and out of the loop.

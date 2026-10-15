@@ -1,0 +1,84 @@
+{#
+  Base layout for every kit template.
+
+  URLs are RELATIVE ("static/tokens.css", "holds"), never absolute
+  ("/static/tokens.css"). The deployment host strips /apps/<slug> before the
+  request reaches the app, so an absolute path resolves against the host root and
+  404s. The consequence: generated pages must be served at flat routes, not nested
+  ones, or "static/..." resolves against the wrong prefix.
+
+  Blocks:
+    title       the document title and the header
+    subtitle    one line of context under the title
+    content     the page itself
+    scripts     page-specific JS, appended after htmx
+#}
+{#-
+  Normalise the optional context once, here, so the patterns below can write
+  `{% if subtitle %}` instead of `{% if subtitle | default('') %}`.
+
+  This matters under StrictUndefined, which is how a generated app should run
+  during development. Referencing an undefined variable inside `{% if %}` calls
+  __bool__ on it and RAISES, whereas the `default` filter is safe because it
+  receives the Undefined object without touching it. Without these lines every
+  pattern that extends this layout fails under strict mode.
+-#}
+{% set app_name = app_name | default('Helios app') %}
+{% set pages = pages | default([]) %}
+{% set lang = lang | default('en') %}
+{% set title = title | default('') %}
+{% set heading = heading | default(title) %}
+{% set subtitle = subtitle | default('') %}
+{% set error = error | default('') %}
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  {# viewport is required or the responsive rules in tokens.css never apply #}
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}{{ app_name }}{% endblock %}</title>
+  <link rel="stylesheet" href="static/tokens.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="shell">
+    <nav class="shell__nav" aria-label="Primary">
+      <p class="shell__brand">{{ app_name }}</p>
+      <ul>
+        {# nav comes from the spec's ui.pages, so a generated app's menu matches
+           the pages it actually has rather than a hard-coded list. #}
+        {% for page in pages %}
+          <li>
+            <a href="{{ page.href | default(page.id ~ '/') }}"
+               {% if page.current | default(false) %}aria-current="page"{% endif %}>{{ page.title | default(page.id) }}</a>
+          </li>
+        {% endfor %}
+      </ul>
+    </nav>
+
+    <main class="shell__main">
+      <header class="shell__header">
+        <h1 class="shell__title">{% block heading %}{{ heading }}{% endblock %}</h1>
+        {% block subtitle %}
+          {% if subtitle %}<p class="shell__subtitle">{{ subtitle }}</p>{% endif %}
+        {% endblock %}
+      </header>
+
+      {# A page-level error is rendered here rather than inside each pattern, so
+         every pattern gets the same treatment and none has to remember it. #}
+      {% if error %}
+        <div class="error" role="alert">{{ error }}</div>
+      {% endif %}
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  {# HTMX is vendored and served from the app's own static directory. No CDN: a
+     generated app must work offline and behind a host that strips the path
+     prefix. #}
+  <script src="static/htmx.min.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
