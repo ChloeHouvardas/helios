@@ -283,4 +283,4 @@ no test can depend on a vendor endpoint or on whose shell it ran in.
 - `apps/helios-collect` — flagship 1, the composition pattern this app follows
 - `entry-point/examples/invoice-payer` — the payables policy shape, proven as an example
 - `entry-point/BUILD.md` — the procedure this app was built by
-- `HANDOFF.md` — what exists, what does not, and the traps
+- `docs/developer-context/HANDOFF.md` — what exists, what does not, and the traps

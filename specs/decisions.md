@@ -139,7 +139,7 @@ before the sidecar starts; the app has no volume and no exec access to that path
 so it cannot rewrite its own policy after deploy.
 
 This resolves the "which gate is authoritative" open question that
-`HANDOFF.md` §6 flagged for team sign-off, and the related overlap with
+`docs/developer-context/HANDOFF.md` §6 flagged for team sign-off, and the related overlap with
 `agent_toolkit.audit.AuditGate` (in-process, receivables-shaped only), which
 remains importable but out of the loop.
 

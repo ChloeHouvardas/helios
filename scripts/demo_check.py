@@ -1,4 +1,4 @@
-"""The DEMOFLOW.md test ladder, scripted. One line per check: id, PASS/FAIL, observed.
+"""The docs/developer-context/DEMOFLOW.md test ladder, scripted. One line per check: id, PASS/FAIL, observed.
 
 Rungs: T0 offline suites · T1 each app alone · T2 the builder path with a stub
 agent · T3 Docker on this machine · T4 tools and logs central · T5 cross-app.
@@ -102,8 +102,8 @@ def t0(args) -> None:
     r = run(["grep", "-rniE", "glm-5|zhipu|bigmodel", "--include=*.py", "--include=*.md", "--include=*.yaml",
              "--include=*.json", "--include=*.sh", "--include=*.toml", "--exclude-dir=.venv", "--exclude-dir=.qwen",
              "--exclude-dir=OTHER-TEAMMATE-STUFF", "--exclude-dir=.git", "--exclude-dir=docs", "."])
-    # DEMOFLOW.md states this check's pattern and is not a reference.
-    hits = [ln for ln in r.stdout.splitlines() if "demo_check.py" not in ln and "DEMOFLOW.md" not in ln]
+    # docs/developer-context/DEMOFLOW.md states this check's pattern and is not a reference.
+    hits = [ln for ln in r.stdout.splitlines() if "demo_check.py" not in ln and "docs/developer-context/DEMOFLOW.md" not in ln]
     check("T0.6", not hits, f"{len(hits)} legacy vendor reference(s)" + (": " + hits[0] if hits else ""))
 
 

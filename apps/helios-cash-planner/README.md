@@ -77,4 +77,4 @@ test needs. Deploy with
 - Customers with no payment history get the global prior; the forecast page
   says so (`evidence: default`).
 - Holds are in-memory; a container restart loses pending approvals (platform
-  gap, see `DEMOFLOW.md` G7).
+  gap, see `docs/developer-context/DEMOFLOW.md` G7).

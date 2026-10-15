@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# demo-check.sh — run the DEMOFLOW.md test ladder, one line per check.
+# demo-check.sh — run the docs/developer-context/DEMOFLOW.md test ladder, one line per check.
 #
 #   scripts/demo-check.sh all
 #   scripts/demo-check.sh T0 T1 T2          # offline rungs only

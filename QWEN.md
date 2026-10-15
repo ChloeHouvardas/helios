@@ -75,6 +75,6 @@ a model reply to a side effect without the auditor.
 
 ## 6. Where to read next
 
-`HANDOFF.md` (what exists, the traps, what's next) ·
+`docs/developer-context/HANDOFF.md` (what exists, the traps, what's next) ·
 `entry-point/references/platform-status.md` (verified: runs vs designed) · `AGENTS.md` ·
 `specs/decisions.md` · `specs/tech-stack.md` · `entry-point/SKILL.md` → `BUILD.md`. Keep a plan and a running log under `docs/sessions/<your-session>/`, commit them, and re-read both after any context compaction.

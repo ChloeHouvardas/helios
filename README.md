@@ -38,6 +38,6 @@ open http://localhost/apps/helios-payables-demo/
 - `entry-point/BUILD.md` — the step-by-step build procedure for a coding agent
 - `entry-point/references/financial-tools.md` — the tool catalog
 - `specs/` — architecture, interfaces, decisions, tech stack, app spec, context
-- `DEMOFLOW.md` — demo stages and the test ladder (`scripts/demo-check.sh`)
-- `STATUS.md`, `HANDOFF.md` — what exists, what is verified, what is open
+- `docs/developer-context/DEMOFLOW.md` — demo stages and the test ladder (`scripts/demo-check.sh`)
+- `docs/developer-context/STATUS.md`, `docs/developer-context/HANDOFF.md` — what exists, what is verified, what is open
 - `AGENTS.md` — conventions for working in this repository

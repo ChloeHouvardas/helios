@@ -2,7 +2,7 @@
 
 Written 2026-10-15 for a cold reader, against the `integration` branch (every
 overnight worktree merged). Every claim here was observed in tool output on that
-branch; where something was not run, it says so. `DEMOFLOW.md` holds the demo
+branch; where something was not run, it says so. `docs/developer-context/DEMOFLOW.md` holds the demo
 stages and the test ladder; `scripts/demo-check.sh` runs that ladder.
 
 Two claims carry the architecture. **The model proposes, code decides**: an action

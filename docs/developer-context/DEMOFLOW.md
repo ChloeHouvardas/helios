@@ -1,6 +1,6 @@
-# DEMOFLOW.md — what Helios demonstrates, and the tests that prove it
+# docs/developer-context/DEMOFLOW.md — what Helios demonstrates, and the tests that prove it
 
-Written 2026-10-15 from the specs, `HANDOFF.md`, `000demo-flow.md`, and the six
+Written 2026-10-15 from the specs, `docs/developer-context/HANDOFF.md`, `000demo-flow.md`, and the six
 worktree write-ups (`p0-foundation`, `p1-tools`, `p2-deploy`, `p3-builder`,
 `p4-payables`, `p5-verify`). This is the target state the merged tree must reach,
 and the test ladder that proves it. Merge sequencing is out of scope here.

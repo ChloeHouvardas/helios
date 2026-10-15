@@ -3,8 +3,8 @@
 **Audience:** an engineer or coding agent picking this repo up cold.
 **Basis:** the `integration` branch on 2026-10-15, after every overnight worktree was
 merged. Where a spec and the code disagree, the code is right and this file says so.
-`STATUS.md` has the component-by-component state and the numbers; `DEMOFLOW.md` has the
-demo stages, the test ladder and the gap list; `INVESTMENT-CONTEXT.md` is the pitch
+`docs/developer-context/STATUS.md` has the component-by-component state and the numbers; `docs/developer-context/DEMOFLOW.md` has the
+demo stages, the test ladder and the gap list; `docs/developer-context/INVESTMENT-CONTEXT.md` is the pitch
 writer's brief.
 
 > `docs/sessions/` holds each overnight session's notes and the per-branch

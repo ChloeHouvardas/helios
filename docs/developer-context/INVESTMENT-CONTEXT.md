@@ -1,10 +1,10 @@
-# INVESTMENT-CONTEXT.md — Helios, explained for a pitch writer
+# docs/developer-context/INVESTMENT-CONTEXT.md — Helios, explained for a pitch writer
 
 Written 2026-10-15 for an LLM (or a person) drafting the investment pitch. It
 describes what Helios is, every component, what is proven today versus what is
 scheduled, and the claims that are safe to make. Status tags: **[built]** verified
 running in this repo · **[in progress]** scheduled in the current build plan
-(`DEMOFLOW.md`, the plan file) · **[design]** specified, not implemented.
+(`docs/developer-context/DEMOFLOW.md`, the plan file) · **[design]** specified, not implemented.
 
 Competition: Chengdu 80 2026 Fintech Hackathon, 80 hours, team **Maple Queen's**.
 Scoring: 50% investment pitch, 25% engineering verification, 25% architecture and
@@ -226,6 +226,6 @@ Avoid, or qualify:
 ## 12. Where to read more
 
 `README.md`, `specs/helios-context.md` (competition and flagships),
-`specs/architecture-mermaid.md`, `specs/decisions.md`, `DEMOFLOW.md` (demo stages,
-test ladder, gaps), `HANDOFF.md` (verified flows and traps), `apps/*/README.md`
+`specs/architecture-mermaid.md`, `specs/decisions.md`, `docs/developer-context/DEMOFLOW.md` (demo stages,
+test ladder, gaps), `docs/developer-context/HANDOFF.md` (verified flows and traps), `apps/*/README.md`
 (scenario tables).

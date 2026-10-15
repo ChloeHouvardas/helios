@@ -108,7 +108,7 @@ refused in code without asking.
 
 ## 7. The test ladder
 
-`DEMOFLOW.md` defines the demo stages and the checks; `scripts/demo-check.sh`
+`docs/developer-context/DEMOFLOW.md` defines the demo stages and the checks; `scripts/demo-check.sh`
 runs them.
 
 ```bash
@@ -129,4 +129,4 @@ scripts/demo-check.sh all
 | The tool catalog | `entry-point/references/financial-tools.md` |
 | Agents, manifests, rules, facts | `docs/AGENT-GUIDE.md` |
 | Deployment engine | `platform/deployment/README.md` |
-| Status and handoff | `STATUS.md`, `HANDOFF.md` |
+| Status and handoff | `docs/developer-context/STATUS.md`, `docs/developer-context/HANDOFF.md` |
