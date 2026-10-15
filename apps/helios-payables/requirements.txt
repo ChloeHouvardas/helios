@@ -1,0 +1,28 @@
+# helios-payables runtime dependencies. All pinned.
+#
+# The four platform packages are NOT listed: they are imported in place from
+# ../../platform/*/src, so this app runs with no install step and cannot drift from
+# the versions its teammates are editing.
+#
+# `jsonschema` is the one that matters most and the easiest to miss. `audit_agent`
+# imports it lazily inside a try/except (policy.py:416) and, when it is absent,
+# DENIES EVERY SIDE EFFECT with "argument schema validation is unavailable". That is
+# the correct fail-closed behaviour, but it means a missing dependency presents as
+# "the policy is strict" rather than "the app is broken" — every payment refused, no
+# traceback. It is a declared dependency of both action-agent-builder and
+# agent-integration, so it is not a new third-party addition.
+jsonschema==4.25.1
+pydantic==2.12.4
+PyYAML==6.0.3
+
+# Web UI (server.py). The app runs and every control fires without these; app.py is
+# the CLI path and the tests use no HTTP at all.
+fastapi==0.143.1
+uvicorn==0.40.0
+jinja2==3.1.6
+# Required by FastAPI for form posts (the settings re-verification and run buttons).
+python-multipart==0.0.20
+
+# Tests only.
+pytest==8.4.2
+httpx==0.28.1

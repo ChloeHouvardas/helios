@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Bills — Helios Payables{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>All bills</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Bill</th><th>Supplier</th><th class="num">Amount</th><th>Reference</th>
+        <th>Due</th><th class="num">Days</th><th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td><a href="/bills/{{ row.bill_id }}" class="mono">{{ row.bill_id }}</a></td>
+        <td>{{ row.supplier_name }}</td>
+        <td class="num">{{ row.money }}</td>
+        <td class="mono">{{ row.reference }}</td>
+        <td>{{ row.due_date }}</td>
+        <td class="num">{{ row.days_until_due if row.days_until_due is not none else '—' }}</td>
+        <td><span class="pill {{ row.status_class }}">{{ row.status }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">
+    Amounts are integer cents in the book and formatted here; money never passes
+    through a float. <b>Days</b> is negative when a bill is overdue.
+  </p>
+</div>
+{% endblock %}

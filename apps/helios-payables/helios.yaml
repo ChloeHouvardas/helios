@@ -1,0 +1,70 @@
+# helios.yaml — the DEPLOYMENT manifest for helios-payables.
+#
+# This is NOT helios-app.yaml. That file is the app-builder manifest describing the
+# agents; this one is the deployment contract the engine reads. They have different
+# schemas and both are kept.
+#
+# Schema follows platform/deployment/engine/contracts.py:Manifest. Fields are
+# name, tenant, entry, port, permissions, env, audit_manifest, data_dir — and the
+# engine REJECTS unknown fields ("a misspelled field is silently ignored by a
+# lenient parser, so it is rejected here"), so nothing else may be added.
+#
+# `entry: server:app` points at the FastAPI object in server.py. The container runs
+# uvicorn on `port`, and the deploy smoke test polls GET /health up to 45x1s on an
+# isolated network with NO Redis, NO audit sidecar, NO model key and NO data volume.
+# That is why /health in server.py is constant and does not build the app: an app
+# whose /health needs any of those is not deployable.
+
+name: helios-payables
+tenant: ""
+entry: server:app
+port: 3000
+
+# Tool families the audit sidecar may forward to the tenant core. This is a subset
+# of the engine's ALLOWED_TOOLS; an unrecognised permission is never granted
+# silently, it fails manifest validation.
+#
+# The app's own authority is narrower and comes from the audit manifest below, which
+# is the reviewed policy. This list only says which platform families are reachable
+# at all. `payments` is included because pay_bill moves money through fin_tools;
+# `market-data` is included for the funding comparison, which currently resolves from
+# funding.py's pinned offline table and would resolve from market.reference_rate once
+# that module is merged (see worktree.md §5).
+permissions:
+  - payments
+  - email
+  - knowledge-graph
+  - market-data
+
+# NAMES only. The engine resolves each from its own environment at container
+# creation; values never appear in this file, in a deploy response, or in a log line.
+# A name the engine does not have is simply not passed, so the app can distinguish
+# "not configured" from "configured as empty".
+#
+# With no key present, server.py runs scenarios through the scripted driver, which is
+# the offline path every control and every test uses.
+env:
+  - HELIOS_LLM_API_KEY
+  - DASHSCOPE_API_KEY
+  - HELIOS_LLM_MODEL
+  - HELIOS_LLM_BASE_URL
+  - HELIOS_AUDIT_SIGNING_KEY
+  - HELIOS_AUDIT_SIGNING_KEY_ID
+
+# The engine copies this file into the audit sidecar at /policy/audit.yaml BEFORE the
+# sidecar starts. The app has no volume and no exec access to that path, so it cannot
+# rewrite its own policy after deploy — which is the structural form of "an app cannot
+# grant itself permission to move money". Without this field the sidecar falls back to
+# a default deny-all-but-core policy.
+audit_manifest: agents/helios-payables-audit.yaml
+
+# Named volume helios-data-<tenant>-helios-payables is mounted here in both the app
+# and the audit sidecar, so action logs, the hash-chained audit log, holds and replay
+# state survive a redeploy. Must be absolute: a relative path would resolve against
+# the container's WORKDIR and silently land somewhere else.
+#
+# Note this app currently writes its run logs to apps/helios-payables/runs/ and keeps
+# holds in memory (HANDOFF trap 12: AuditAgent holds are process-local), so nothing
+# yet survives a restart. Wiring the app's runs_dir and the auditor's data_dir to
+# HELIOS_DATA_DIR is the outstanding deployment work — see worktree.md §4.
+data_dir: /data

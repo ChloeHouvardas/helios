@@ -1,0 +1,680 @@
+# Audit manifest: Helios Payables
+#
+# THIS FILE IS THE AUDIT AGENT. There is no Python policy in this app — every
+# control below is data that `build_audit_agent()` compiles into deterministic
+# rules. It is written before the action manifest on purpose (BUILD.md step 3):
+# this file is the registry of what may be granted at all, so writing it first
+# makes the mandate the constraint the agent has to fit inside.
+#
+# The mandate, from the intake answers:
+#   1. pay supplier bills that are due and affordable  -> task payables.pay_bills
+#   2. reschedule what cannot be paid yet              -> task payables.reschedule
+#   3. escalate exceptions to the owner                -> task payables.escalate
+#
+# Three properties this manifest is designed around, all traceable to BUILD.md:
+#
+#   * Facts are not claims. Every safety-critical value is resolved from the
+#     app's own book by `facts.py`, never read from the agent's arguments. The
+#     agent gets to NAME a bill; it never gets to STATE what that bill says.
+#     `app.large_payment_approval` binds on the FACT `bill_amount_cents`, so an
+#     agent that claims a 30,000.00 bill is 9,000.00 is still held.
+#
+#   * Deny and hold are different decisions, and the split is deliberate.
+#     DENY: changed payee details, insufficient funds, unsupported currency.
+#     No owner decision makes any of these safe — paying a supplier whose bank
+#     details changed five days ago is how a business loses money to fraud, and
+#     approving it from a queue does not make it not fraud.
+#     HOLD: large payment, unusual amount, duplicate, run-total cap. These might
+#     be legitimate and only the owner can tell, so they go to a human with the
+#     auditor's own question attached.
+#     Getting this backwards either floods the queue with unactionable items or
+#     silently permits a bad action.
+#
+#   * The agent has no argument that names a payer account or a payee account.
+#     `pay_bill` takes `bill_id`; the account comes from `config.OPERATING_ACCOUNT`
+#     and the payee from the supplier on file. Money cannot be misdirected because
+#     there is nothing in the request to misdirect it with. This is the strongest
+#     control in the app and it is structural, not a rule.
+#
+# Known platform traps this file is written around (all verified in source):
+#
+#   * `_subject_key()` (policy.py:1192) resolves a frequency subject from
+#     `invoice_id, customer_id, supplier_id, subject_id` — NOT `bill_id`. So
+#     `send_remittance` must carry `supplier_id` explicitly, or the contact
+#     frequency rule finds no subject, gets no trusted count, and denies
+#     everything. Every email tool below requires `supplier_id` for this reason.
+#
+#   * A fact that cannot be resolved makes a limit `unverifiable`, which DENIES
+#     (policy.py:1100), and an unresolvable contact count DENIES (policy.py:1049).
+#     Fail-closed is the engine's default, so every fact a rule binds on must
+#     actually be supplied by `facts.py`. A rule bound on a typo is not a weak
+#     control, it is a total refusal.
+#
+#   * Money limits compare cents against cents. A cents argument measured against
+#     a decimal ceiling exceeds on every single call.
+
+manifest_version: "1"
+app_id: helios-payables
+name: Helios Payables Audit Agent
+description: >
+  Governs the agents inside Helios Payables: paying supplier bills that are due,
+  rescheduling bills that cannot be paid yet, and escalating exceptions to the
+  owner. Reading the bill book is free. Every payment, every reschedule and every
+  outbound email is gated per call against limits resolved from the app's own
+  book, so an agent cannot argue its way past any of them.
+
+tools:
+  # --- read-only: these run directly, no grant required ----------------------
+  - name: list_due_bills
+    description: >
+      List unpaid supplier bills due within the next 7 days, most urgent first,
+      with supplier and amount. Read-only. Use it to decide what to work on; it
+      never tells you anything you may act on without looking the bill up.
+    side_effect: false
+    input_schema:
+      type: object
+      properties: {}
+      additionalProperties: false
+
+  - name: lookup_bill
+    description: >
+      Look up one bill with its supplier: recorded amount, currency, reference,
+      due date, days until due, status, and whether another bill looks like a
+      duplicate of it. Read-only. Call this before proposing any payment so you
+      never invent a bill's details.
+    side_effect: false
+    input_schema:
+      type: object
+      properties:
+        bill_id: { type: string, minLength: 1 }
+      required: [bill_id]
+      additionalProperties: false
+
+  - name: check_funds
+    description: >
+      Read the operating account balance and whether it can settle a given bill in
+      full, with the shortfall if it cannot. Read-only, backed by the payments
+      ledger. Call this before proposing a payment; a bill the account cannot
+      cover must be rescheduled, never paid.
+    side_effect: false
+    input_schema:
+      type: object
+      properties:
+        bill_id: { type: string, minLength: 1 }
+      required: [bill_id]
+      additionalProperties: false
+
+  - name: supplier_profile
+    description: >
+      Read a supplier's profile: name, payment terms, average bill size and how
+      many times they were contacted this week. Read-only. Note what this does NOT
+      return: whether the supplier's payment details recently changed. That flag is
+      a fact the auditor resolves itself, because a control the agent can read is a
+      control the agent can argue with.
+    side_effect: false
+    input_schema:
+      type: object
+      properties:
+        supplier_id: { type: string, minLength: 1 }
+      required: [supplier_id]
+      additionalProperties: false
+
+  - name: funding_options
+    description: >
+      When a bill cannot be paid from the operating account on time, compare ways
+      to fund it: draw on the credit line, delay the supplier, or take an early
+      payment discount. Read-only. Returns ranked options with the rate used, the
+      date that rate is as of, its provenance, and a disclaimer that this is
+      information and not financial advice. You then propose either reschedule_bill
+      or pay_bill; both remain gated.
+    side_effect: false
+    input_schema:
+      type: object
+      properties:
+        bill_id: { type: string, minLength: 1 }
+        days_until_funds:
+          type: integer
+          minimum: 1
+          maximum: 365
+          description: >
+            How many days until the money is expected to arrive, e.g. from a
+            customer payment. Used to cost a short credit-line draw.
+      required: [bill_id, days_until_funds]
+      additionalProperties: false
+
+  # --- side-effecting: every call becomes a gated proposal -------------------
+  - name: draw_credit_line
+    description: >
+      Draw on the business's credit line, crediting the operating account. Side
+      effect: it is real borrowing, so it is gated and capped against the remaining
+      facility. This exists so that funding a shortfall is an audited money
+      movement rather than a flag that quietly makes an unaffordable bill
+      affordable — `app.insufficient_funds` still denies a payment the account
+      cannot cover at the moment it is proposed.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        bill_id:
+          type: string
+          minLength: 1
+          description: The bill this draw funds, so the reason is on the record.
+        amount_cents:
+          type: integer
+          minimum: 1
+          description: >
+            How much to draw, in integer cents. Capped against the remaining
+            facility, which is resolved from configuration — not from this number.
+        reason:
+          type: string
+          minLength: 12
+          maxLength: 500
+          description: Why the draw is needed, e.g. the shortfall and when it is repaid.
+      required: [bill_id, amount_cents, reason]
+      additionalProperties: false
+
+  - name: pay_bill
+    description: >
+      Pay a supplier bill in full. Side effect: it moves money, so it is reviewed
+      against this policy before it executes. Requires an auth_code from an intent
+      the OWNER confirmed — a payment without one is refused by the ledger itself,
+      not just by policy. The payer account and the payee are not arguments: they
+      come from app configuration and the supplier on file, so this tool cannot be
+      used to send funds anywhere else. If held, stop and surface the owner's
+      question. If denied, read the reason; do not reword and retry.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        bill_id:
+          type: string
+          minLength: 1
+          description: The bill to pay, e.g. BILL-2001.
+        amount_cents:
+          type: integer
+          minimum: 1
+          description: >
+            The amount you intend to pay, in integer cents. This is checked against
+            the RECORDED bill amount, which the auditor reads from the book itself.
+            Stating a smaller number here does not reduce what the policy sees, and
+            the payment that executes is always the recorded amount.
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          description: >
+            The bill's currency. Must match both the recorded bill currency and the
+            operating account's currency; this app has no FX desk.
+        auth_code:
+          type: string
+          minLength: 8
+          description: >
+            The single-use code from an intent the owner confirmed. Capture the
+            intent and have the owner confirm it before calling this tool.
+        idempotency_key:
+          type: string
+          maxLength: 120
+          description: >
+            Reuse the same key when retrying a payment so a retry cannot pay twice.
+            Convention: pay-<bill_id>. A replayed key returns the cached result,
+            including a cached rejection.
+        funding:
+          type: string
+          enum: ["", "operating_balance", "credit_line", "early_payment_discount"]
+          description: >
+            How this payment is funded. Leave empty for the operating balance. A
+            credit-line draw is capped against the facility limit resolved from
+            configuration, so it cannot be used to exceed it.
+        memo:
+          type: string
+          maxLength: 500
+          description: Free-text memo for the ledger and the remittance advice.
+      required: [bill_id, amount_cents, currency, auth_code]
+      additionalProperties: false
+
+  - name: reschedule_bill
+    description: >
+      Move a bill's scheduled payment date without paying it. Side effect: it
+      changes the book and publishes bill[rescheduled] to the shared knowledge
+      graph so the cash planner forecasts against the real date. This is the
+      correct response to a bill the account cannot cover — the obligation stays
+      visible instead of being settled with money that is not there. A reason is
+      required, because an unexplained date change is indistinguishable from an
+      agent hiding a bill it could not pay.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        bill_id: { type: string, minLength: 1 }
+        new_date:
+          type: string
+          pattern: '^\d{4}-\d{2}-\d{2}$'
+          description: The new scheduled payment date, ISO 8601 (YYYY-MM-DD).
+        reason:
+          type: string
+          minLength: 12
+          maxLength: 500
+          description: >
+            Why the bill is being moved, for the owner and the audit log. Must be a
+            factual reason, at least 12 characters; "reschedule" is not a reason.
+      required: [bill_id, new_date, reason]
+      additionalProperties: false
+
+  - name: send_remittance
+    description: >
+      Email a supplier remittance advice after a payment settled. Side effect: it
+      contacts a human outside the system. At most two emails per supplier in any
+      rolling 7 days, counted from trusted history — not from what you say about
+      having contacted them.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        supplier_id:
+          type: string
+          minLength: 1
+          description: >
+            The supplier to email. Required so the contact-frequency rule can
+            resolve a trusted subject; an email with no named supplier cannot be
+            rate-limited and is therefore refused.
+        bill_id: { type: string, minLength: 1 }
+        subject: { type: string, minLength: 1, maxLength: 200 }
+        body:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: >
+            Email body. Reference the bill, the amount paid and the payment date
+            exactly as the tools returned them. Never invent a reference.
+      required: [supplier_id, bill_id, subject, body]
+      additionalProperties: false
+
+  - name: escalate_to_owner
+    description: >
+      Email the owner about an exception this agent may not resolve: a refused
+      payment, a changed payee, a bill it cannot fund. Side effect, but the
+      recipient is always the owner and is never an argument — this tool cannot be
+      used to contact a supplier, so it is deliberately exempt from the supplier
+      contact-frequency limit. Being unable to escalate is how an agent ends up
+      improvising around a refusal, which is worse.
+    side_effect: true
+    input_schema:
+      type: object
+      properties:
+        bill_id:
+          type: string
+          minLength: 1
+          description: The bill the exception concerns.
+        subject: { type: string, minLength: 1, maxLength: 200 }
+        body:
+          type: string
+          minLength: 12
+          maxLength: 4000
+          description: >
+            What happened, what was refused and why, and what the owner needs to
+            decide. State the refusal as the tool reported it; do not paraphrase it
+            into something that sounds safe to approve.
+      required: [bill_id, subject, body]
+      additionalProperties: false
+
+tasks:
+  payables.pay_bills:
+    description: >
+      Pay supplier bills due in the next 7 days that the operating account can
+      cover, reschedule those it cannot, and send remittance advice for what
+      settled.
+    allowed_tools:
+      - list_due_bills
+      - lookup_bill
+      - check_funds
+      - supplier_profile
+      - funding_options
+      - draw_credit_line
+      - pay_bill
+      - reschedule_bill
+      - send_remittance
+    # Money movement gets a short grant lifetime: long enough to complete one
+    # payment, not long enough to sit around unused.
+    ttl_seconds: 120
+    tool_overrides:
+      # A remittance email is cheap; a storm of them is not. Three per grant.
+      send_remittance:
+        max_calls: 3
+        condition: at most three supplier notifications per authorisation
+
+  payables.reschedule:
+    description: >
+      Move the scheduled date of a bill that cannot be paid on time, after
+      comparing funding options, and publish the new date to the shared graph.
+    allowed_tools:
+      - list_due_bills
+      - lookup_bill
+      - check_funds
+      - supplier_profile
+      - funding_options
+      - draw_credit_line
+      - reschedule_bill
+      - escalate_to_owner
+    ttl_seconds: 300
+
+  payables.escalate:
+    description: >
+      Surface an exception the agent may not resolve to the owner, with the
+      refusal quoted as the tool reported it.
+    allowed_tools:
+      - list_due_bills
+      - lookup_bill
+      - supplier_profile
+      - escalate_to_owner
+      - send_remittance
+    ttl_seconds: 300
+    tool_overrides:
+      send_remittance:
+        max_calls: 1
+        condition: escalation is not a channel for supplier notifications
+
+rules:
+  # ---------------------------------------------------------------------------
+  # The payment controls. Order within this file does not determine the verdict —
+  # `Precedence.resolve` ranks deny above hold above allow (contracts.py:200), so
+  # a deny wins no matter how many holds also fire. The grouping below is for
+  # reading, not for evaluation.
+  # ---------------------------------------------------------------------------
+
+  # 1. No payment without a human-confirmed intent. `auth_code` is required, so a
+  # payment the owner never confirmed fails closed at argument validation before
+  # any money moves. Enforced by policy data rather than by hoping the agent
+  # remembers to call the intent service — and independently by the ledger, which
+  # rejects a send with no code bound to that exact (amount, currency, payee).
+  - id: app.requires_verified_intent
+    description: A payment must carry a verified intent auth code
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: >
+      a payment needs an auth_code from an intent the owner confirmed; capture the
+      intent and have the owner confirm it before proposing the payment
+    required_arguments: [bill_id, amount_cents, currency, auth_code]
+    severity: critical
+
+  # 2. The payment may not exceed the recorded bill. The AGENT chooses
+  # `amount_cents`; the CEILING (`bill_amount_cents`) is resolved from the trusted
+  # fact source. Neither side of the comparison is under the agent's control.
+  #
+  # Know which direction this guards, because it only guards one: a ceiling on an
+  # ARGUMENT catches OVER-payment. It does not catch UNDER-statement — claiming
+  # 9,000.00 on a 30,000.00 bill is inside this ceiling. That is not a defect, it
+  # is the wrong rule for that threat, and rule 3 is the right one.
+  - id: app.amount_matches_bill
+    description: A payment may not exceed the recorded bill amount
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: the payment exceeds the recorded bill amount; check the bill before paying
+    limits:
+      - argument: amount_cents
+        max_from_fact: bill_amount_cents
+        on_exceed: hold
+    severity: critical
+
+  # 3. Owner approval above 25,000.00 — bound on the FACT, not the argument. This
+  # is the rule that makes "facts are not claims" observable. An agent that
+  # understates `amount_cents` to slip under the threshold is still held, because
+  # this rule never reads the agent's number: it reads `bill_amount_cents` from
+  # the book. Cents: 2,500,000 = 25,000.00.
+  #
+  # `on_exceed: hold`, never `clamp: true`. Clamping would silently pay a
+  # different amount than the one the owner was asked about, which is worse than
+  # asking. Note also that rules evaluate the agent's ORIGINAL request
+  # independently, so a clamp here would not reduce what any other rule sees.
+  - id: app.large_payment_approval
+    description: Owner approval for any payment over 25,000.00
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: this bill is over 25,000.00 and needs owner approval before it is paid
+    limits:
+      - fact: bill_amount_cents
+        max: 2500000
+        on_exceed: hold
+    severity: warn
+
+  # 4. Total settled in one run capped at 60,000.00. Both sides are facts: the
+  # running total (including this payment) and the cap. An agent cannot lower
+  # either, and cannot split a large bill into small ones to evade it, because the
+  # total accumulates across calls within the run. Held, not denied: a busy week
+  # may legitimately need more than the cap, and that is the owner's call.
+  - id: app.run_total_cap
+    description: Owner approval once payments in one run exceed 60,000.00
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: >
+      payments in this run would exceed 60,000.00 in total; the owner must approve
+      continuing to pay
+    limits:
+      - fact: run_total_after_payment_cents
+        max_from_fact: run_total_cap_cents
+        on_exceed: hold
+    severity: warn
+
+  # 5. Changed supplier payment details: DENY, not hold. The classic fraud vector.
+  # This is a refusal, not a queue item — the agent must not proceed at all until a
+  # human re-verifies the payee out of band, in the settings page. The scripted
+  # owner in the demo approves everything it is shown, and this payment still does
+  # not happen, because a denial never reaches the queue.
+  #
+  # The 30-day window is computed in `Book.payment_details_changed` from the change
+  # date, not stored as a boolean, so re-verification is what lifts it. A supplier
+  # whose details changed 45 days ago is payable (BILL-2003), which is what proves
+  # the window is real rather than a blanket refusal of anyone who ever edited a
+  # bank account.
+  - id: app.payee_details_changed
+    description: Never pay a supplier whose payment details changed within 30 days
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: >
+      this supplier's payment details changed within the last 30 days; payment is
+      refused until the owner re-verifies the payee in settings
+    deny_if_fact_true: [payment_details_changed]
+    severity: critical
+
+  # 6. Insufficient funds: DENY. There is no owner decision that makes an
+  # unaffordable payment safe, and the correct response is a different tool
+  # (`reschedule_bill`) which the agent may propose freely.
+  #
+  # Worth stating plainly, because it is counter-intuitive: the `fin_tools`
+  # ledger would happily drive the balance negative — it is a mock with no
+  # overdraft check. The refusal is this app's policy, resolved from the live
+  # balance, and it is the only thing standing between the agent and an
+  # overdraft. `check_funds` exposes the same number so the agent can see the
+  # shortfall coming instead of discovering it as a denial.
+  - id: app.insufficient_funds
+    description: Never pay a bill the operating account cannot settle in full
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: >
+      the operating account cannot settle this bill in full; propose reschedule_bill
+      instead, or escalate the shortfall to the owner
+    deny_if_fact_true: [insufficient_funds]
+    severity: critical
+
+  # 7. Unsupported currency: DENY. The operating account holds CNY and this app
+  # has no FX desk, so a bill in any other currency cannot be settled at all.
+  #
+  # Belt and braces, and the redundancy is deliberate. The FACT rule binds on
+  # `currency_unsupported`, which the fact source derives from the bill's recorded
+  # currency against the account's — so it fires even if the agent omits or
+  # misstates the `currency` argument. The `forbidden_values` rule below catches
+  # the explicit wrong-currency argument with a more readable message. Either one
+  # alone would leave a gap.
+  - id: app.currency_unsupported
+    description: Never pay a bill in a currency the operating account does not hold
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: >
+      the operating account does not hold this bill's currency and this app has no
+      FX desk; the bill cannot be settled from here
+    deny_if_fact_true: [currency_unsupported]
+    severity: critical
+
+  - id: app.no_unlisted_currency
+    description: Refuse a payment request naming a currency the account does not hold
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: >
+      only CNY can be paid from the operating account; a bill in another currency
+      needs the owner to arrange it out of band
+    forbidden_values:
+      currency: [USD, EUR, GBP, JPY, HKD, usd, eur, gbp, jpy, hkd]
+    severity: warn
+
+  # 8. Duplicate-looking bill: HOLD. Held rather than denied because two genuine
+  # bills for the same amount and PO reference do exist — a monthly retainer
+  # reissued after a credit note, say. Only the owner can tell which case this is.
+  # The fact carries the id of the bill it duplicates, so the hold can name it.
+  - id: app.duplicate_bill
+    description: Hold a bill that duplicates an existing one for owner verification
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: >
+      this bill matches an existing one from the same supplier for the same amount
+      and reference; the owner must confirm it is not a duplicate before it is paid
+    approval_if_fact_true: [duplicate_bill]
+    severity: warn
+
+  # 9. Unusual amount: HOLD. The ceiling is a FACT — twice the supplier's own
+  # average bill — so neither side of the comparison comes from the agent, and
+  # "this is normal for them" is not something the agent can assert. An amount
+  # 5x a supplier's usual bill is either a data-entry error or something the owner
+  # should read before the money leaves.
+  #
+  # If the supplier has no recorded average the ceiling is unresolvable, which
+  # DENIES (policy.py:1100). That is intended: paying an unknown supplier an
+  # unknown multiple of an unknown norm is not a default anyone should want.
+  - id: app.unusual_amount
+    description: Owner approval for a bill more than 2x the supplier's average
+    task_types: [payables.pay_bills]
+    tools: [pay_bill]
+    message: >
+      this bill is more than twice this supplier's usual amount; the owner should
+      check it before it is paid
+    limits:
+      - argument: amount_cents
+        max_from_fact: supplier_amount_ceiling_cents
+        on_exceed: hold
+    severity: warn
+
+  # ---------------------------------------------------------------------------
+  # Credit-line draws. Real borrowing, so treated as real money movement: capped
+  # against a trusted facility, required to explain itself, and above a size that
+  # belongs to a human.
+  # ---------------------------------------------------------------------------
+
+  - id: app.credit_line_draw_reason
+    description: A credit-line draw must name the bill and give a real reason
+    task_types: [payables.pay_bills, payables.reschedule]
+    tools: [draw_credit_line]
+    message: >
+      a credit-line draw needs bill_id, amount_cents and a reason of at least 12
+      characters stating the shortfall and when it is expected to be repaid
+    required_arguments: [bill_id, amount_cents, reason]
+    severity: warn
+
+  # The ceiling is the FACT `credit_line_headroom_cents` — the facility minus what
+  # has already been drawn, resolved from configuration. Neither side comes from
+  # the agent, so it cannot enlarge its own borrowing capacity by asking for more,
+  # and it cannot draw the same headroom twice. Deny rather than hold: borrowing
+  # beyond a facility that does not exist is not something an owner can approve.
+  - id: app.credit_line_draw_cap
+    description: A draw may not exceed the remaining credit-line facility
+    task_types: [payables.pay_bills, payables.reschedule]
+    tools: [draw_credit_line]
+    message: >
+      this draw exceeds the remaining credit-line facility; the owner must arrange
+      funding out of band rather than borrow money that is not there
+    limits:
+      - argument: amount_cents
+        max_from_fact: credit_line_headroom_cents
+        on_exceed: deny
+    severity: critical
+
+  # Borrowing is a financing decision, so anything material goes to the owner even
+  # when the facility could cover it. Cents: 5,000,000 = 50,000.00. Bound on the
+  # argument here because there is no trusted "size of this draw" fact to bind on —
+  # the amount IS the draw — and the cap above already ties it to real headroom.
+  - id: app.credit_line_draw_approval
+    description: Owner approval for any credit-line draw over 50,000.00
+    task_types: [payables.pay_bills, payables.reschedule]
+    tools: [draw_credit_line]
+    message: >
+      this credit-line draw is over 50,000.00; borrowing at this size needs owner
+      approval, and the owner should see the rate, its as-of date and the cost
+    limits:
+      - argument: amount_cents
+        max: 5000000
+        on_exceed: hold
+    severity: warn
+
+  # ---------------------------------------------------------------------------
+  # Rescheduling. Cheap and reversible — it moves a date, not money — but it is
+  # still a side effect that changes what the cash planner forecasts, so it is
+  # gated and it must explain itself.
+  # ---------------------------------------------------------------------------
+
+  - id: app.reschedule_reason
+    description: A reschedule must name the bill, the new date and a real reason
+    task_types: [payables.reschedule, payables.pay_bills]
+    tools: [reschedule_bill]
+    message: >
+      a reschedule needs bill_id, new_date and a reason of at least 12 characters;
+      "reschedule" is not a reason
+    required_arguments: [bill_id, new_date, reason]
+    severity: warn
+
+  # ---------------------------------------------------------------------------
+  # Outbound contact. Suppliers are not to be hounded, and an agent that hits the
+  # limit must stop rather than find another channel or another bill belonging to
+  # the same supplier.
+  #
+  # `supplier_id` is a required argument on send_remittance specifically so this
+  # rule can resolve a subject: `_subject_key()` (policy.py:1192) does not look at
+  # `bill_id`. Without it the count is unresolvable and every email denies — which
+  # would look like the control working and would actually be a bug.
+  # ---------------------------------------------------------------------------
+
+  - id: app.supplier_contact_frequency
+    description: At most two emails per supplier in any rolling 7-day window
+    task_types: [payables.pay_bills, payables.escalate]
+    tools: [send_remittance]
+    message: >
+      this supplier has already been emailed twice in the last 7 days; stop and tell
+      the owner rather than contacting them again
+    max_contacts_in_days:
+      within_days: 7
+      max: 2
+    severity: warn
+
+  - id: app.remittance_is_identifiable
+    description: A remittance advice must name its supplier, bill, subject and body
+    task_types: [payables.pay_bills, payables.escalate]
+    tools: [send_remittance]
+    message: a remittance advice needs supplier_id, bill_id, subject and body
+    required_arguments: [supplier_id, bill_id, subject, body]
+    severity: warn
+
+  - id: app.escalation_is_identifiable
+    description: An escalation must name the bill and state the exception
+    task_types: [payables.escalate, payables.reschedule]
+    tools: [escalate_to_owner]
+    message: an escalation needs bill_id, subject and a body explaining the exception
+    required_arguments: [bill_id, subject, body]
+    severity: warn
+
+settings:
+  default_ttl_seconds: 120
+  contact_window_days: 7
+  log_path: helios-payables-audit-log.jsonl
+  # `heuristic` is deterministic and always available. Adding `qwen` appends model
+  # commentary for the human reviewer; it can never change a verdict, and it is off
+  # here so the demo runs with no API key and no network.
+  advisory: [heuristic]
+  # Never ship this as true. A local run sets HELIOS_AUDIT_SIGNING_KEY; without
+  # one, agent_integration generates an ephemeral key so grants are still signed.
+  allow_unsigned_grants: false

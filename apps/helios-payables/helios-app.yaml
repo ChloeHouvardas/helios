@@ -1,0 +1,238 @@
+# helios-app.yaml — helios-payables
+#
+# The app spec for flagship 2, answering the intake: collect supplier invoices,
+# track due dates, make sure funds are available, pay bills on time, and hold
+# duplicates, changed payee details and unusual amounts for the owner.
+#
+# Format follows specs/app-builder.md §"The app spec". Nothing in this checkout
+# parses it yet — `platform/app-builder/` is a design placeholder with no
+# scaffolder, no validator and no stacks.yaml — so the coding agent IS the
+# scaffolder (BUILD.md). It is written anyway, for three reasons:
+#   1. It forces the decisions in BUILD.md step 2 before any code is written.
+#   2. It is the design record a reviewer reads to understand the app's shape.
+#   3. It becomes machine-checkable the moment the validator lands.
+#
+# The invariants from specs/app-builder.md are self-checked by hand and mechanised
+# by `entry-point/checks/check_app.py`, which passes on this file.
+# `tests/test_controls.py` additionally asserts the cross-file ones at runtime, so
+# a drift between this spec and the manifests fails a test rather than a demo.
+
+spec_version: "1"
+
+identity:
+  id: helios-payables            # kebab-case; equals app_id in the audit manifest
+  name: Helios Payables
+  description: >
+    Pays supplier bills that are due and affordable on behalf of a small business,
+    reschedules the ones the operating account cannot cover, sends remittance advice,
+    and escalates exceptions to the owner. Bills whose supplier changed payment
+    details within 30 days are refused outright; bills in a currency the account does
+    not hold are refused; large payments, unusual amounts, duplicates and a run total
+    above the cap go to the owner.
+
+# What already exists. Populated by the intake's integration block, which is asked
+# early on purpose: whether something already exists changes every later answer.
+# This app is standalone, so every field is null — and that is a recorded answer, not
+# an unanswered question. The surprise task is decided here: an app joining an
+# existing system would fill these in and use `stack.match_existing`,
+# `data.integration` and `ui.align_with` instead.
+existing:
+  system: null
+  stack: null
+  data: null
+  ui: null
+
+stack:
+  # Exactly one of `use` / `match_existing`. Standalone prototype, so it names a
+  # stack rather than matching an existing system.
+  #
+  # CAVEAT: stacks.yaml does not exist yet, so this name resolves to nothing. The
+  # prototype runs on FastAPI + Jinja2 server-rendered pages over a JSON-backed
+  # book, which is a legitimate reading of "the mechanism, not the choice" — but it
+  # must not be presented as a stack the platform ships. See README.md §Limitations.
+  use: helios-python-web-1
+
+data:
+  # Exactly one of `local` / `integration`. This app owns its bill book.
+  #
+  # Several fields exist ONLY to serve the audit rules — `avg_bill_cents` on a
+  # supplier, the change-request evidence, the contact history. They are not
+  # business data the agent reads; they are facts the auditor resolves. Modelling
+  # them here is deliberate: a control with nowhere to read from fails closed and
+  # denies everything, which looks like a broken app rather than a working control.
+  #
+  # Money is integer cents throughout (`*_cents`). Float appears nowhere: a rounding
+  # error in a payment amount is a real financial error, not a cosmetic one.
+  local:
+    entities:
+      - name: supplier
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: name, type: string, required: true }
+          - { name: contact_name, type: string, required: false }
+          - { name: email, type: string, required: true }
+          - { name: bank_account, type: string, required: true }
+          # Fact-source input for app.payee_details_changed. Stored as a date plus a
+          # days-ago fixture convention, and the flag is DERIVED from the date and
+          # the configured window rather than stored — so re-verifying a supplier is
+          # what lifts a denial, and a stale boolean cannot.
+          - { name: payment_details_changed, type: boolean, required: false }
+          - { name: details_changed_date, type: date, required: false }
+          - { name: avg_bill_cents, type: integer, required: false }
+          - { name: public_ticker, type: string, required: false }
+          # Registry evidence for a changed payee. Owner-facing only; never returned
+          # to the agent, because evidence it can read is evidence it can argue with.
+          - { name: registered_website, type: string, required: false }
+          - { name: legal_representative, type: string, required: false }
+          - { name: change_request, type: json, required: false }
+          - { name: settlement_terms, type: string, required: false }
+          - { name: late_penalty_bps, type: integer, required: false }
+          - { name: discount_bps, type: integer, required: false }
+          - { name: discount_window_days, type: integer, required: false }
+          # Fact-source input for app.supplier_contact_frequency. A list of recent
+          # contact dates rather than only the last one, because a frequency rule
+          # counts contacts INSIDE a window and one date cannot express "twice this
+          # week". Stored as days-ago integers in the fixtures.
+          - { name: contact_history_days, type: json, required: false }
+          - { name: reverified, type: boolean, required: false }
+          - { name: reverified_at, type: date, required: false }
+          - { name: reverified_by, type: string, required: false }
+
+      - name: bill
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: supplier_id, type: string, required: true }
+          - { name: amount_cents, type: integer, required: true }
+          - { name: currency, type: string, required: true }
+          - { name: reference, type: string, required: true }
+          - { name: issue_date, type: date, required: false }
+          - { name: due_date, type: date, required: true }
+          - { name: scheduled_date, type: date, required: false }
+          - { name: status, type: string, required: true }
+          # Fact-source input for app.duplicate_bill. Empty by default: duplication is
+          # DETECTED by matching (supplier, amount, reference) inside a 90-day window,
+          # so a fixture does not have to assert it and a new bill cannot arrive
+          # pre-labelled as unique.
+          - { name: duplicate_of, type: string, required: false }
+          - { name: discount_bps, type: integer, required: false }
+          - { name: discount_window_days, type: integer, required: false }
+          # Written only by gated tool handlers after an allowed action, never by the
+          # agent directly. There is no public setter, so an agent has no path to a
+          # bill's status that does not go through the gate.
+          - { name: paid_at, type: date, required: false }
+          - { name: paid_amount_cents, type: integer, required: false }
+          - { name: settlement_ref, type: string, required: false }
+          - { name: reschedule_reason, type: string, required: false }
+          - { name: hold_reason, type: string, required: false }
+          - { name: notes, type: string, required: false }
+
+      - name: account
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: name, type: string, required: false }
+          - { name: balance_cents, type: integer, required: true }
+          - { name: currency, type: string, required: true }
+
+      # Payments as recorded in the fin_tools ledger. There is no payer-account or
+      # payee field the agent can set: both are resolved from configuration and the
+      # supplier on file, so `pay_bill` cannot be used to send funds elsewhere.
+      - name: payment
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: bill_id, type: string, required: true }
+          - { name: supplier_id, type: string, required: true }
+          - { name: amount_cents, type: integer, required: true }
+          - { name: currency, type: string, required: true }
+          - { name: state, type: string, required: true }
+          - { name: idempotency_key, type: string, required: true }
+          - { name: memo, type: string, required: false }
+          - { name: reject_reason, type: string, required: false }
+          - { name: settled_on, type: date, required: false }
+
+      # A credit-line draw. Real borrowing, so it is its own entity and its own gated
+      # tool rather than a flag on a payment — an unaffordable bill must not become
+      # affordable by annotation.
+      - name: funding_draw
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: bill_id, type: string, required: true }
+          - { name: drawn_cents, type: integer, required: true }
+          - { name: headroom_cents, type: integer, required: true }
+          - { name: interest_cents, type: integer, required: true }
+          - { name: rate_name, type: string, required: true }
+          - { name: rate_as_of, type: date, required: true }
+          - { name: reason, type: string, required: true }
+
+      # Append-only evidence. The audit builder writes a hash-chained log of its own;
+      # this is the app's record of what it did, kept separate on purpose — one is
+      # the app's memory, the other is tamper-evident evidence.
+      - name: action_log_entry
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: kind, type: string, required: true }
+          - { name: at, type: datetime, required: true }
+          - { name: payload, type: json, required: true }
+
+# Shared knowledge graph. The cross-app state channel: this app is authoritative for
+# `bill` records, so it publishes them VERIFIED, and anything it infers is an
+# OBSERVATION that can never overwrite a verified node.
+#
+# The verified/observation split is load-bearing here rather than decorative: a
+# rescheduled due date is a recorded fact the cash planner must forecast against,
+# while the financing decision behind a credit-line draw is this agent's
+# recommendation and is published as an observation.
+graph:
+  reads:
+    # Helios Cash Planner warns about shortfalls. Read rather than assumed: when that
+    # app publishes cashplan[shortfall_warning] this app can surface it on the
+    # dashboard, but nothing here depends on it existing yet, so the demo runs
+    # standalone. Recorded as an integration point, not a dependency.
+    - { entity: cashplan, events: [shortfall_warning] }
+  publishes:
+    - { entity: bill, events: [scheduled, paid, rescheduled, held] }
+    - { entity: supplier, events: [reverified] }
+    # An agent's financing recommendation, deliberately an observation rather than a
+    # fact: it is an inference, and an inference must never displace a record.
+    - { entity: funding_draw, events: [drawn] }
+
+agents:
+  action_manifest: agents/helios-payables-action.json    # Agent Toolkit format
+  audit_manifest: agents/helios-payables-audit.yaml      # Audit Agent Builder format
+
+ui:
+  # `align_with` is null because the app is standalone. The framework is not chosen
+  # here — the named stack decides how these patterns are rendered.
+  #
+  # Unlike helios-collect, these pages are REAL: `server.py` serves them as Jinja2
+  # templates over FastAPI, and `app.py` renders the same data as a CLI for offline
+  # demoing. `approval_queue` is the one that matters most (BUILD.md step 7): every
+  # side-effect action can be held, so without a queue the agents pause invisibly and
+  # the owner discovers it when they wonder why nothing happened.
+  pages:
+    - { id: dashboard, title: What is due and what is available, pattern: summary }
+    - { id: bills, title: Bills, pattern: table }
+    - { id: bill, title: Bill, pattern: detail }
+    - { id: holds, title: Needs your approval, pattern: approval_queue }
+    - { id: settings, title: Thresholds and payee re-verification, pattern: settings }
+  align_with: null
+
+tools:
+  # The app's view of the financial tools in play. Must be a SUPERSET of both
+  # manifests' tool lists: a tool an agent can call that the app never declared is a
+  # tool nobody reviewed.
+  #
+  # All ten are app-local and declared in both manifests. They wrap the platform's
+  # real services — `payments.send`, `payments.balance`, `email.send` and the
+  # knowledge graph — rather than exposing them directly, because the wrapping is
+  # where the structural controls live: no payer/payee argument, recorded amount
+  # instead of requested amount, fraud flag withheld.
+  - list_due_bills          # read-only
+  - lookup_bill             # read-only; withholds the payee-change flag
+  - check_funds             # read-only; backed by payments.balance
+  - supplier_profile        # read-only; withholds the payee-change flag
+  - funding_options         # read-only; local stand-in for the missing market.* family
+  - draw_credit_line        # side-effecting — gated; real borrowing
+  - pay_bill                # side-effecting — gated; wraps payments.send
+  - reschedule_bill         # side-effecting — gated; publishes bill[rescheduled]
+  - send_remittance         # side-effecting — gated; counts against the contact limit
+  - escalate_to_owner       # side-effecting — gated; recipient is never an argument

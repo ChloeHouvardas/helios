@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Helios Payables{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Position as of {{ summary.today }}</h2>
+  <div class="grid">
+    <div class="stat"><b>{{ summary.due_soon_count }}</b><span>bills due this week</span></div>
+    <div class="stat"><b>{{ due_soon_money }}</b><span>owed in the next 7 days</span></div>
+    <div class="stat"><b>{{ summary.paid_count }}</b><span>bills paid</span></div>
+    <div class="stat"><b>{{ paid_money }}</b><span>settled</span></div>
+    <div class="stat"><b>{{ summary.held_count }}</b><span>bills held</span></div>
+    <div class="stat"><b>{{ balance_money }}</b><span>cash available</span></div>
+    <div class="stat"><b>{{ credit_money }}</b><span>credit line remaining</span></div>
+    <div class="stat"><b>{{ outcomes|length }}</b><span>scenario runs</span></div>
+  </div>
+  <p class="note">
+    The operating account holds {{ balance_money }}. {{ summary.due_soon_count }} bills totalling
+    {{ due_soon_money }} fall due within {{ config.due_soon_window_days }} days.
+    Bills the account cannot cover are refused, not paid — the refusal is this app's
+    policy, and the mock ledger would otherwise let the balance go negative.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Run outcomes</h2>
+  {% if counts %}
+  <table>
+    <thead><tr><th>Outcome</th><th class="num">Bills</th><th>What it means</th></tr></thead>
+    <tbody>
+      {% for status, n in counts %}
+      <tr>
+        <td><span class="pill {{ status_class[status] or 'unpaid' }}">{{ status }}</span></td>
+        <td class="num">{{ n }}</td>
+        <td class="note">{{ status_meaning[status] or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">No scenarios have been run in this process yet. Press
+    <b>Run all scenarios</b> below, or use the CLI: <span class="mono">app.py</span>.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Run the agent</h2>
+  <form class="inline" method="post" action="/run">
+    <button class="btn primary" type="submit" name="scope" value="all">Run all scenarios</button>
+  </form>
+  <p class="note">
+    Each scenario runs against a fresh app instance, so one bill's payment cannot
+    change another's facts. Held actions pause for your decision on the
+    <a href="/holds">holds</a> page; refused actions never reach it.
+  </p>
+</div>
+{% endblock %}

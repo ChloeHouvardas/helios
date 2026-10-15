@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Settings — Helios Payables{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Re-verify a supplier's payee details</h2>
+  <p class="note">
+    This is the <b>only</b> thing that lifts an <span class="mono">app.payee_details_changed</span>
+    refusal. Not an owner approving a hold — that rule <b>denies</b>, and a denial never
+    reaches the approval queue. Re-verifying means you checked the new bank details out
+    of band, by phone or in person, and confirmed them yourself.
+  </p>
+  {% if suppliers %}
+  <table>
+    <thead>
+      <tr><th>Supplier</th><th class="num">Changed</th><th>State</th><th>Action</th></tr>
+    </thead>
+    <tbody>
+      {% for s in suppliers %}
+      <tr>
+        <td>{{ s.name }} <span class="mono">({{ s.supplier_id }})</span></td>
+        <td class="num">{{ s.days }} day{{ '' if s.days == 1 else 's' }} ago</td>
+        <td>
+          {% if s.reverified %}<span class="pill paid">re-verified {{ s.reverified_at }}</span>
+          {% elif s.denied %}<span class="pill refused">DENIED — inside the {{ window }}-day window</span>
+          {% else %}<span class="pill unpaid">payable — change is older than {{ window }} days</span>{% endif %}
+        </td>
+        <td>
+          {% if not s.reverified %}
+          <form class="inline" method="post" action="/settings/reverify">
+            <input type="hidden" name="supplier_id" value="{{ s.supplier_id }}">
+            <button class="btn" type="submit">Re-verify</button>
+          </form>
+          {% else %}<span class="note">—</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="note">No supplier has a payment-details change on record.</p>
+  {% endif %}
+  <p class="note">
+    Re-verifying does <b>not</b> delete the change request — the evidence stays on the
+    record and remains visible on the bill's detail page.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Thresholds</h2>
+  <table>
+    <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+    <tbody>
+      {% for key, value in settings %}
+      <tr><td class="mono">{{ key }}</td><td>{{ value }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">
+    These mirror <span class="mono">config.py</span>, but the <b>audit manifest is
+    authoritative</b>: the auditor compiles
+    <span class="mono">agents/helios-payables-audit.yaml</span> and nothing else. A
+    threshold edited here without editing the manifest changes what the page says, not
+    what the gate does.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Authority the audit manifest grants</h2>
+  <pre class="mono" style="white-space:pre-wrap;margin:0;font-size:12.5px">{{ manifest_summary }}</pre>
+</div>
+{% endblock %}
