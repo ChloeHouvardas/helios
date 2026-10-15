@@ -366,12 +366,25 @@ class AuditBridge:
 
     @staticmethod
     def _primary_rule(decision: ActionDecision) -> str:
-        """The rule id worth showing: most severe finding first."""
+        """The rule id worth showing: the finding that DECIDED, then the most severe.
+
+        A deny and a hold can fire on one call. Precedence makes the decision a
+        deny, so the rule reported must be a denying one: naming the hold rule
+        would send the agent (and the owner) to the wrong rule to read. Within
+        the deciding effect, the most severe finding wins.
+        """
         if not decision.findings:
             return decision.decision.value
+        decided = {
+            Decision.DENY: ("deny",),
+            Decision.HOLD: ("hold", "require_approval"),
+            Decision.ALLOW: ("allow",),
+        }.get(decision.decision, ())
         rank = {"critical": 0, "warn": 1, "info": 2}
         ranked = sorted(
-            decision.findings, key=lambda f: rank.get(f.severity.value, 3)
+            decision.findings,
+            key=lambda f: (0 if f.effect in decided else 1,
+                           rank.get(f.severity.value, 3)),
         )
         return ranked[0].rule_id
 
