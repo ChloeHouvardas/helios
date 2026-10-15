@@ -40,6 +40,7 @@ from pydantic import (
     ConfigDict,
     Field,
     ValidationError,
+    PrivateAttr,
     field_validator,
     model_validator,
 )
@@ -376,6 +377,27 @@ class UiSpec(_Strict):
     align_with: str | None = None
 
 
+class ToolEntry(_Strict):
+    """A tool named with an explicit side-effect flag.
+
+    `tools: [lookup_invoice, {name: reimbursements_send, side_effect: true}]` —
+    the object form exists so an author never has to rely on the scaffolder's
+    name-based guess for a tool whose name does not say what it does. A stated
+    flag beats the guess and is not marked for review.
+    """
+
+    name: str
+    side_effect: bool | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("a tool entry needs a non-empty name; write "
+                             "{name: <tool>, side_effect: true|false}")
+        return value.strip()
+
+
 class AppSpec(_Strict):
     """The whole spec. `AppSpec.load(path)` is the entry point."""
 
@@ -387,7 +409,34 @@ class AppSpec(_Strict):
     graph: GraphSpec = Field(default_factory=GraphSpec)
     agents: AgentsSpec
     ui: UiSpec = Field(default_factory=UiSpec)
-    tools: list[str] = Field(default_factory=list)
+    tools: list[str | ToolEntry] = Field(default_factory=list)
+    _tool_flags: dict[str, bool] = PrivateAttr(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _normalise_tools(self) -> "AppSpec":
+        """Flatten tool entries to names and keep any explicit side-effect flags.
+
+        `tools` accepts plain names and `{name, side_effect}` objects. After
+        validation `tools` is always a list of names, so every consumer keeps
+        reading it as strings, and `side_effect_for(name)` returns the flag the
+        author stated or None when the scaffolder must guess.
+        """
+        names: list[str] = []
+        flags: dict[str, bool] = {}
+        for entry in self.tools:
+            if isinstance(entry, ToolEntry):
+                names.append(entry.name)
+                if entry.side_effect is not None:
+                    flags[entry.name] = entry.side_effect
+            else:
+                names.append(entry)
+        self.tools = names
+        self._tool_flags = flags
+        return self
+
+    def side_effect_for(self, tool: str) -> bool | None:
+        """The author's explicit flag for a tool, or None if none was stated."""
+        return getattr(self, "_tool_flags", {}).get(tool)
 
     # -- convenience accessors -------------------------------------------
     #

@@ -96,35 +96,55 @@ class ScaffoldResult:
 #: `tools.py` is filled in, because the two files must agree.
 SIDE_EFFECT_VERBS = frozenset({
     "send", "pay", "publish", "save", "create", "record", "reschedule", "refund",
+    "draw", "transfer", "write", "update", "delete", "apply", "approve", "reject",
+    "mark", "submit", "post", "charge", "reimburse", "reverse", "escalate",
+    "notify", "email", "issue", "cancel", "settle", "upload", "import", "resolve",
+})
+
+#: A tool whose name STARTS with one of these is a read, whatever the rest of
+#: the name says. `read_record` names the object `record`, not the operation.
+READ_VERBS = frozenset({
+    "read", "get", "list", "lookup", "look", "check", "find", "fetch", "show",
+    "view", "query", "search", "count", "describe", "preview", "compare",
+    "estimate", "project", "forecast", "simulate", "inspect", "report", "summarise",
+    "summarize", "load", "explain", "what", "is", "has",
 })
 
 
 def guess_side_effect(tool_name: str) -> bool:
     """True when the tool's name says it changes something.
 
-    Only the segment that carries the OPERATION is considered, and which segment
-    that is depends on the naming style:
+    Which segment carries the OPERATION depends on the naming style:
 
-      * namespaced (`payments.send`) — the operation is the LAST segment, because
-        the earlier ones name the subsystem;
-      * snake_case (`record_payment`, `read_record`) — the operation is the FIRST
-        segment, because the later ones name the object.
+      * namespaced (`payments.send`) — the LAST segment, because the earlier ones
+        name the subsystem;
+      * snake_case — usually the FIRST segment (`record_payment`), but some
+        authors put the object first (`reimbursements_send`). So: if the first
+        segment is a read verb the tool is a read, full stop (`read_record`);
+        otherwise either end may carry the side-effect verb.
 
-    Checking every segment instead is wrong in the unsafe-looking direction:
-    `read_record` contains the segment `record`, which is a side-effect verb, so a
-    read would be declared gated and — if the reverse case occurred — a genuine
-    write could be waved through as a read. Both real apps' flags come out exactly
-    right under this rule, which is the only evidence that it is the right rule.
+    Checking every interior segment would be wrong in the unsafe-looking
+    direction, and a guess is only a guess: an author can state the flag in the
+    spec (`{name, side_effect}`) and every guessed flag carries `# REVIEW`.
     """
     lowered = tool_name.strip().lower()
     if not lowered:
         return False
     if "." in lowered:
         segments = [s for s in lowered.split(".") if s]
-        operation = segments[-1] if segments else ""
-    else:
-        operation = lowered.split("_", 1)[0]
-    return operation in SIDE_EFFECT_VERBS
+        return bool(segments) and segments[-1] in SIDE_EFFECT_VERBS
+    segments = [s for s in lowered.split("_") if s]
+    if not segments:
+        return False
+    if segments[0] in READ_VERBS:
+        return False
+    return segments[0] in SIDE_EFFECT_VERBS or segments[-1] in SIDE_EFFECT_VERBS
+
+
+def side_effect_of(spec: AppSpec, tool: str) -> bool:
+    """The flag to emit: the author's stated flag if any, else the guess."""
+    stated = spec.side_effect_for(tool)
+    return guess_side_effect(tool) if stated is None else stated
 
 
 # ---------------------------------------------------------------------------
@@ -456,8 +476,8 @@ def audit_manifest(spec: AppSpec) -> str:
     to look.
     """
     task = f"{spec.app_id.replace('-', '_')}.operate"
-    gated = [t for t in spec.tools if guess_side_effect(t)]
-    reads = [t for t in spec.tools if not guess_side_effect(t)]
+    gated = [t for t in spec.tools if side_effect_of(spec, t)]
+    reads = [t for t in spec.tools if not side_effect_of(spec, t)]
     subject_args = _subject_arguments(spec)
 
     lines: list[str] = []
@@ -479,7 +499,7 @@ def audit_manifest(spec: AppSpec) -> str:
     lines.append("")
     lines.append("tools:")
     for tool in spec.tools:
-        lines.extend(_tool_declaration(tool, subject_args))
+        lines.extend(_tool_declaration(tool, subject_args, spec.side_effect_for(tool)))
     lines.append("")
     lines.append("tasks:")
     lines.append(f"  {task}:")
@@ -510,9 +530,11 @@ def audit_manifest(spec: AppSpec) -> str:
     return text
 
 
-def _tool_declaration(tool: str, subject_args: list[str]) -> list[str]:
-    side_effect = guess_side_effect(tool)
-    marker = "  # REVIEW: side_effect guessed from the tool name"
+def _tool_declaration(tool: str, subject_args: list[str],
+                      stated: bool | None = None) -> list[str]:
+    side_effect = guess_side_effect(tool) if stated is None else stated
+    marker = ("  # declared in helios-app.yaml" if stated is not None
+              else "  # REVIEW: side_effect guessed from the tool name")
     lines = [f"  - name: {tool}"]
     lines.append(f"    description: >")
     lines.append(f"      TODO: what {tool} does, and what it changes. A description")
@@ -597,7 +619,7 @@ def action_manifest(spec: AppSpec) -> str:
     manifest; guessing receivables limits into an unrelated app would be worse than
     an empty block.
     """
-    gated = [t for t in spec.tools if guess_side_effect(t)]
+    gated = [t for t in spec.tools if side_effect_of(spec, t)]
     instructions = _instructions(spec, gated)
     document = {
         "name": spec.app_id,
@@ -940,7 +962,7 @@ __all__ = ["TOOL_NAMES", "build_tools"]
 
 def _tool_definition(spec: AppSpec, tool: str) -> str:
     fn = _safe_fn_name(tool)
-    side_effect = guess_side_effect(tool)
+    side_effect = side_effect_of(spec, tool)
     subject_args = _subject_arguments(spec)
     if side_effect:
         properties = "".join(
@@ -1959,8 +1981,8 @@ schema and no data.
 
 
 def app_readme(spec: AppSpec) -> str:
-    gated = [t for t in spec.tools if guess_side_effect(t)]
-    reads = [t for t in spec.tools if not guess_side_effect(t)]
+    gated = [t for t in spec.tools if side_effect_of(spec, t)]
+    reads = [t for t in spec.tools if not side_effect_of(spec, t)]
     page_rows = "\n".join(
         f"| `{p.id}` | {p.title or p.id} | {p.pattern} | TODO |" for p in spec.pages)
     return f"""# {spec.identity.name}
@@ -2053,7 +2075,7 @@ def controls_tests(spec: AppSpec) -> str:
     undeclared tool is refused. The six control outcomes need real policy and are
     left as named TODOs rather than as tests that pass vacuously.
     """
-    gated = [t for t in spec.tools if guess_side_effect(t)]
+    gated = [t for t in spec.tools if side_effect_of(spec, t)]
     gated_literal = ", ".join(f'"{t}"' for t in gated) or ""
     return f'''"""Control tests for {spec.identity.name}.
 
@@ -2146,6 +2168,17 @@ def test_the_side_effect_flags_agree_between_the_two_files(audit) -> None:
     for tool in audit.tools:
         if tool.name in built:
             assert bool(tool.side_effect) == bool(built[tool.name]), tool.name
+
+
+def test_the_gated_tool_list_matches_the_auditor_and_is_not_empty(audit) -> None:
+    """A parametrised test over an empty list skips silently, which would let an
+    app look tested while nothing is asserted. The list must be non-empty and
+    must be exactly the tools the auditor gates."""
+    gated_by_auditor = sorted(t.name for t in audit.tools if t.side_effect)
+    assert gated_by_auditor, "this app gates nothing; a Helios app has at least one side effect"
+    assert sorted(GATED_TOOLS) == gated_by_auditor, (
+        "GATED_TOOLS in this file must list exactly the auditor's side-effect "
+        "tools; regenerate or edit it when the manifest changes")
 
 
 @pytest.mark.parametrize("tool_name", GATED_TOOLS)

@@ -544,6 +544,10 @@ def test_the_generated_ddl_matches_the_spec_entities(generated: Path) -> None:
     ("refund_payment", True), ("reschedule_meeting", True),
     ("payments.balance", False), ("lookup_invoice", False),
     ("list_overdue_invoices", False), ("read_record", False),
+    # object-first names: the verb is at the END
+    ("reimbursements_send", True), ("draw_credit_line", True),
+    ("escalate_to_owner", True), ("supplier_profile", False),
+    ("check_funds", False), ("funding_options", False),
 ])
 def test_the_side_effect_guess_matches_the_tool_name(name: str, expected: bool) -> None:
     assert guess_side_effect(name) is expected
@@ -553,6 +557,63 @@ def test_the_side_effect_guess_matches_whole_segments_only() -> None:
     """`resend_count` contains the letters of `send` but is a read."""
     assert guess_side_effect("resend_count") is False
     assert guess_side_effect("send_reminder_email") is True
+
+
+def test_a_stated_flag_beats_the_guess_and_is_not_marked_for_review(tmp_path: Path) -> None:
+    from app_builder.scaffold import action_manifest, audit_manifest, controls_tests
+    from app_builder.spec import AppSpec
+
+    s = AppSpec.parse("""
+spec_version: "1"
+identity: { id: expenses, name: Expenses }
+stack: { use: helios-python-web-1 }
+data:
+  local:
+    entities:
+      - name: claim
+        fields: [{ name: id, type: string, required: true }]
+agents:
+  action_manifest: agents/a.json
+  audit_manifest: agents/a.yaml
+tools:
+  - claims_lookup
+  - { name: budget_snapshot, side_effect: true }
+  - { name: send_nothing, side_effect: false }
+  - reimbursements_send
+""")
+    assert s.tools == ["claims_lookup", "budget_snapshot", "send_nothing",
+                       "reimbursements_send"]
+    assert s.side_effect_for("budget_snapshot") is True
+    assert s.side_effect_for("send_nothing") is False
+    assert s.side_effect_for("claims_lookup") is None
+
+    audit = audit_manifest(s)
+
+    def declaration(tool: str) -> str:
+        start = audit.index(f"- name: {tool}")
+        rest = audit[start + 1:]
+        end = rest.find("- name: ")
+        return audit[start:] if end < 0 else audit[start:start + 1 + end]
+
+    assert "side_effect: true  # declared in helios-app.yaml" in declaration("budget_snapshot")
+    assert "side_effect: false  # declared in helios-app.yaml" in declaration("send_nothing")
+    assert "side_effect: true  # REVIEW" in declaration("reimbursements_send")
+
+    action = json.loads(action_manifest(s))
+    assert action["mandate"]["allowed_tools"] == ["budget_snapshot", "reimbursements_send"]
+
+    tests = controls_tests(s)
+    assert 'GATED_TOOLS = ["budget_snapshot", "reimbursements_send"]' in tests
+
+
+def test_a_fresh_scaffold_validates_clean_immediately(generated: Path) -> None:
+    """The rehearsal blocker: a scaffolded app must not be born invalid."""
+    report = validate_app(generated)
+    assert report.exit_code == 0, report.errors
+    manifest = json.loads((generated / "agents" / "invoice-payer-action.json").read_text())
+    assert manifest["mandate"]["allowed_tools"], "mandate.allowed_tools is empty"
+    tests = (generated / "tests" / "test_controls.py").read_text(encoding="utf-8")
+    assert "GATED_TOOLS = []" not in tests
 
 
 def test_every_guessed_flag_is_marked_for_review(generated: Path) -> None:
