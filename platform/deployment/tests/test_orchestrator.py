@@ -48,9 +48,9 @@ def test_route_written_for_new_slug(nginx_dir: Path):
     default_conf = (nginx_dir / "default.conf").read_text()
 
     assert "server_name myapp-t1.helios.test" in slug_conf
-    assert "proxy_pass http://172.20.0.9:3000" in slug_conf
+    assert "set $upstream http://172.20.0.9:3000" in slug_conf
     # Both routing files carry the IP -- the imported build only refreshed one.
-    assert "proxy_pass http://172.20.0.9:3000" in default_conf
+    assert "set $upstream http://172.20.0.9:3000" in default_conf
     assert "location /apps/myapp-t1/" in default_conf
     assert "# helios:begin myapp-t1" in default_conf
     assert "# helios:end myapp-t1" in default_conf
@@ -323,7 +323,8 @@ def test_successful_deploy_promotes_and_routes(tmp_path, monkeypatch):
     created["t1-myapp-audit-next"].rename.assert_called_once_with("t1-myapp-audit")
     created["t1-myapp-app-next"].rename.assert_called_once_with("t1-myapp-app")
     # Routing carries the real IP, not an empty string.
-    assert routes == [("myapp-t1", "172.20.0.77", 3000)]
+    # routed by container NAME, not IP, so a restart cannot strand the route
+    assert routes == [("myapp-t1", "t1-myapp-app", 3000)]
     assert result["urls"][-1] == "http://localhost/apps/myapp-t1/"
     # Secret material is never echoed back; only names are.
     assert result["audit"]["env_forwarded"] == []

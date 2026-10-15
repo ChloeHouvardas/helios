@@ -487,21 +487,33 @@ class Orchestrator:
 
     # ------------------------------------------------------------ nginx
     def _location_block(self, slug: str, app_ip: str, port: int) -> str:
-        """The marker-delimited nginx block for one app slug."""
+        """The marker-delimited nginx block for one app slug.
+
+        `app_ip` is the upstream address: the app CONTAINER NAME, which Docker's
+        embedded DNS (127.0.0.11) resolves on the ingress network. The upstream
+        goes through a variable so nginx resolves it per request rather than once
+        at reload; a restarted container gets a new IP, and a literal address would
+        answer 502 until the next deploy. `valid=5s` bounds how long a stale answer
+        can live.
+        """
         begin = _MARKER_BEGIN.format(slug=slug)
         end = _MARKER_END.format(slug=slug)
         return f"""
     {begin}
     location /apps/{slug}/ {{
         rewrite ^/apps/{slug}(/.*)$ $1 break;
-        proxy_pass http://{app_ip}:{port};
+        resolver 127.0.0.11 valid=5s ipv6=off;
+        set $upstream http://{app_ip}:{port};
+        proxy_pass $upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Prefix /apps/{slug};
     }}
 
     location = /apps/{slug} {{
-        proxy_pass http://{app_ip}:{port}/;
+        resolver 127.0.0.11 valid=5s ipv6=off;
+        set $upstream http://{app_ip}:{port}/;
+        proxy_pass $upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Prefix /apps/{slug};
@@ -532,7 +544,9 @@ class Orchestrator:
     server_name {host};
 
     location / {{
-        proxy_pass http://{app_ip}:{port};
+        resolver 127.0.0.11 valid=5s ipv6=off;
+        set $upstream http://{app_ip}:{port};
+        proxy_pass $upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-Prefix /;
@@ -800,8 +814,11 @@ class Orchestrator:
         self._promote(audit_candidate, audit_name, net.name, f"{a}-audit", t, a)
         self._promote(app_candidate, app_name, net.name, a, t, a)
 
-        app_ip = self._network_ip(app_candidate, ingress.name)
-        self.write_nginx_route(slug, host, app_ip, port)
+        # The IP is read to prove the container is attached to the ingress
+        # network (it raises if not), but the route is written by NAME so a
+        # restart, which reassigns the IP, does not strand the route.
+        self._network_ip(app_candidate, ingress.name)
+        self.write_nginx_route(slug, host, app_name, port)
         self.reload_nginx()
 
         return {
