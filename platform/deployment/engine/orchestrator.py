@@ -198,7 +198,8 @@ def _jsonl_files_from_tar(stream, tail: int) -> list[dict]:
 def platform_hash(platform_dir: Path | None = None) -> str:
     """Stable hash of the platform source that the golden base image embeds.
 
-    Covers the four packages the base image installs editable. Path + size +
+    Covers the four packages the base image installs editable, plus the image
+    definitions and the SDK the golden images embed. Path + size +
     content are all folded in, sorted by relative path, so the hash does not
     depend on filesystem enumeration order.
 
@@ -206,7 +207,12 @@ def platform_hash(platform_dir: Path | None = None) -> str:
     force a rebuild that cannot change runtime behaviour.
     """
     root = platform_dir if platform_dir is not None else REPO / "platform"
-    packages = ("action-agent-builder", "audit-agent-builder", "agent-integration", "financial-tools")
+    # The four packages app-base installs, plus what the other two golden
+    # images embed: the sidecar and core Dockerfiles and servers, and the SDK
+    # copied into app-base. A change to any of them must change the hash, or a
+    # fixed sidecar keeps running the old code under the same tag.
+    packages = ("action-agent-builder", "audit-agent-builder", "agent-integration",
+                "financial-tools", "deployment/images", "deployment/sdk")
     digest = hashlib.sha256()
 
     for pkg in packages:
