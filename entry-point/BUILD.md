@@ -92,6 +92,18 @@ The mapping rules worth knowing:
 - An `approval_queue` page is **added** if your answers omit one. Every side-effect
   action can be held, so an app without a queue has agents that pause invisibly and
   the owner discovers it when they wonder why nothing happened.
+- `tools:` is a list of **tool names**, not tool objects. A name may be namespaced
+  (`payments.send`, a platform tool) or snake_case (`claims_lookup`, an app-local
+  tool). The scaffolder guesses each tool's side-effect flag from the name and marks
+  the guess `# REVIEW`; when the name does not say what the tool does, state the
+  flag and the guess is skipped:
+
+  ```yaml
+  tools:
+    - claims_lookup                                   # read, guessed from the name
+    - { name: reimbursements_send, side_effect: true } # stated: no guess, no REVIEW
+    - { name: budget_snapshot, side_effect: false }
+  ```
 
 ### Step 3 — Edit the spec
 
@@ -126,7 +138,10 @@ instead>`. Fix them all in one pass; do not go one round trip at a time.
 helios-app new apps/<your-app> --spec helios-app.yaml [--intake intake.yaml]
 ```
 
-Generates 23 files:
+Generates a fixed set of files plus one template per declared page (23 for the
+invoice-payer spec). **The skeleton validates clean the moment it is written**
+(`helios-app validate` exits 0) and its generated tests pass; if either is not true,
+that is a scaffolder bug, not something to work around.
 
 | Path | What it is |
 |---|---|
@@ -163,7 +178,17 @@ is filled in, but only if you fill it in.
 
 ### Step 5 — Write the audit manifest FIRST
 
-Policy before agent, always. The audit manifest is the registry of what may be
+Policy before agent, always. Two things the generator cannot do for you, and the
+validator refuses an app that lacks either:
+
+- **Every gated tool needs a real `input_schema`, in this file and in `tools.py`.**
+  The generated one lists only the subject key (`invoice_id`, `bill_id`, ...) and
+  `additionalProperties: false`; add the arguments the tool actually takes, with
+  types. A rule can only bind an argument the schema declares, and the auditor
+  refuses a side-effecting tool with no schema at all.
+- **The rules.** The file ships with a commented block of the five rule shapes and
+  no rules. Policy is the product; a generated ceiling would cap the wrong thing.
+ The audit manifest is the registry of what may be
 granted at all, and writing policy first makes the mandate the constraint the agent
 fits inside. Write the instructions first and you describe an agent with no limits,
 then spend the rest of the session negotiating with yourself.
@@ -273,6 +298,11 @@ ToolDefinition(
 )
 ```
 
+The generated `input_schema` for every tool has **empty `properties`**; the spec
+carries no argument types, so the generator cannot invent them. Write the real
+schema for every tool here, matching the audit manifest for the gated ones — the
+validator reports the two files in both directions when they disagree.
+
 The generated handlers raise `NotImplementedError` naming the tool, the arguments
 they received and the file to edit. Fill them in. Do not replace them with
 something that returns a plausible empty result: a stub that succeeds lets a demo
@@ -351,31 +381,39 @@ agent-toolkit demo --run-dir /tmp/demo      # the gate, with no model and no net
 
 ### Step 10 — Deploy
 
-`helios.yaml` is generated with `entry: server:app`, `port: 3000`, and permissions
-derived from your tool families. Deploy with the engine's CLI:
+Two files, two tools. `helios-app` wrote `helios.yaml` (the deployment manifest:
+`entry: server:app`, `port: 3000`, permissions derived from your tool families,
+`audit_manifest`, `data_dir: /data`, and the secret NAMES under `env:`). The
+deployment engine's own CLI ships the directory:
 
 ```bash
-.venv/bin/python cli/helios.py deploy apps/<your-app> --tenant acme
-curl -s localhost:8100/api/v1/apps                       # the registry
-curl -s localhost:8100/api/v1/apps/<app>/logs            # app logs
+cd platform/deployment && ./bootstrap.sh            # once per machine: daemon, nginx, engine on :8100
+cd ../..
+.venv/bin/python platform/deployment/cli/helios.py doctor
+.venv/bin/python platform/deployment/cli/helios.py deploy apps/<your-app> --tenant acme
+curl -s http://localhost/apps/<your-app>-acme/health         # 200 from the deployed app
+.venv/bin/python platform/deployment/cli/helios.py apps      # the registry
+.venv/bin/python platform/deployment/cli/helios.py logs <container> --tail 200
 ```
 
-See `platform/deployment/README.md` if it exists. If it does not, the engine lives
-in `OTHER-TEAMMATE-STUFF/deployment-stuff/` and the commands above are current as
-of 2026-10-15.
+Exit codes are for you to act on: `0` deployed, `1` the engine rejected it (the
+response lists every problem with the field and what to write instead, plus the
+build or smoke-test log), `2` refused before upload because a `.env` is in the
+bundle, `3` engine unreachable, `4` bad usage. Fix and redeploy; a failed redeploy
+leaves the previous deployment serving.
 
-**The generated `helios.yaml` looks shorter than the docs suggest, and that is
-correct.** The engine's `Manifest` accepts only `name`, `tenant`, `entry`, `port`,
-`permissions`, and it does **not** forbid extra keys — so `audit_manifest`,
-`data_dir` and `env` would be silently dropped, producing a manifest that looks
-configured and is not. The scaffolder reads the engine's `contracts.py` at
-generation time and emits only what it declares; when the engine grows a field,
-regenerate and it appears.
+What the engine checks, in order: manifest (unknown fields are rejected, so a typo
+is loud), a secret scan over the bundle, a build on the golden base image that
+already holds the platform packages (no `pip install` of your own), a smoke test
+on an isolated network with **no Redis, no sidecar and no model key** — so
+`/health` must be a constant and the app must build lazily on first real page —
+then the audit sidecar and nginx routing. Full contract:
+`platform/deployment/README.md`.
 
-`ALLOWED_TOOLS` is a closed set of four — `payments`, `email`, `knowledge-graph`,
-`events` — and an unknown permission is a hard `ContractError` at deploy time. A
-tool family with no mapping (`forecast`, `market-data`, `spreadsheets`, `collect`)
-contributes nothing and is named in a `# REVIEW` comment instead.
+`permissions` must be a subset of the eight families the engine accepts —
+`payments`, `email`, `knowledge-graph`, `events`, `forecast`, `market-data`,
+`spreadsheets`, `collect`. The scaffolder maps your tool families onto them and
+names anything it could not map in a `# REVIEW` comment.
 
 ### Step 11 — The README
 
