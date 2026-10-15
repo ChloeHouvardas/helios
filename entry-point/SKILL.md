@@ -68,7 +68,7 @@ and the user discovers it when they wonder why nothing happened.
    unanswered.
 3. **Spec** — `helios-app spec-from-intake`, then **edit it**. The generated file
    carries `# TODO` markers for everything the intake did not settle.
-4. **Scaffold** — `helios-app new`. 23 files, validator-clean, never overwriting
+4. **Scaffold** — `helios-app new`. A fixed set plus one template per page, validator-clean, never overwriting
    anything that already exists.
 5. **Audit manifest first** — the policy. Before the action manifest, always: the
    audit manifest is the registry of what may be granted at all, and writing policy
@@ -84,7 +84,7 @@ and the user discovers it when they wonder why nothing happened.
 9. **Scenarios and tests** — one per control, covering allowed / held-and-approved /
    held-and-declined / denied / lying-agent-caught / undeclared-tool-refused.
 10. **Validate** — `helios-app validate` and `agent-toolkit validate --audit`.
-11. **Deploy and document** — `cli/helios.py deploy`, then the README scenario table.
+11. **Deploy and document** — `platform/deployment/cli/helios.py deploy apps/<id> --tenant <t>`, then the README scenario table.
 
 ## Critical warnings
 
@@ -93,11 +93,12 @@ and the user discovers it when they wonder why nothing happened.
   generates tool declarations and a commented block of the five rule shapes, and
   deliberately generates **no rules**, because a generated ceiling would pass
   validation while capping the wrong thing.
-- **`platform/deployment/` is not in the repo yet.** The engine lives only in the
-  read-only `OTHER-TEAMMATE-STUFF/deployment-stuff/` copy. Its manifest accepts
-  `name`, `tenant`, `entry`, `port`, `permissions` — and does *not* forbid extra
-  keys, so anything else is dropped silently. The generated `helios.yaml` therefore
-  looks shorter than the docs suggest. That is correct, not a bug.
+- **`platform/deployment/` is the engine and it rejects unknown manifest fields.**
+  `helios-app new` reads the engine's `contracts.py` at generation time and emits
+  exactly the fields its `Manifest` declares (`name`, `tenant`, `entry`, `port`,
+  `permissions`, `audit_manifest`, `data_dir`, `env`). Eight permission families;
+  an unmapped tool family is named in a `# REVIEW` comment. `/health` must be a
+  constant, because the smoke test runs with no Redis, no sidecar and no model key.
 - **The two audit gates conflict and nobody has resolved it.**
   `agent_toolkit`'s in-process gate accepts only four receivables-shaped limit
   keys, so a payables app cannot express its policy there at all. Both reference

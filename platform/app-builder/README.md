@@ -8,7 +8,7 @@ Implements the Application Builder in part 1 of the architecture
 ```bash
 helios-app questions > intake.yaml                        # the 16-question intake
 helios-app spec-from-intake intake.yaml > helios-app.yaml  # a first spec
-helios-app new apps/my-app --spec helios-app.yaml          # 23 files, validator-clean
+helios-app new apps/my-app --spec helios-app.yaml          # skeleton, validator-clean on arrival
 helios-app validate apps/my-app                            # shape + cross-file
 ```
 
@@ -39,7 +39,7 @@ tests/
   test_validate.py              both real apps clean; the broken fixture fires once per check
   test_schema.py                DDL, CHECK semantics, generated store, seeding
   test_kit.py                   every pattern renders with a minimal context
-  test_scaffold.py              23 files, idempotency, never overwrites, dry-run
+  test_scaffold.py              file set, idempotency, never overwrites, dry-run
   test_intake.py                questions, spec-from-intake, the CLI's exit codes
   fixtures/broken-app/          wrong on purpose — see its README before "fixing" it
 ```
@@ -100,7 +100,7 @@ The held-action card masks credentials using a set that **extends**
 the platform's set, so inheriting it would print a credential on the one page where
 a mistake is most visible.
 
-**Scaffolder.** 23 files: both manifests, `facts.py`, `tools.py`, `store.py`,
+**Scaffolder.** A fixed set plus one template per page (23 for invoice-payer): both manifests, `facts.py`, `tools.py`, `store.py`,
 `graph.py`, `app.py`, `server.py`, `data/schema.sql`, the declared templates, the
 generated tests and the README. Reads the spec only; never imports the agent
 builders. Never overwrites — an existing file is reported as
@@ -123,16 +123,15 @@ demo succeed while doing nothing at all.
   `validate.py` imports them lazily, inside the functions that need them, so a spec
   can be shape-checked without the sibling packages installed. `agent-integration`
   remains the only package that imports both.
-- **`helios.yaml` is field-conservative.** The engine's `Manifest` accepts `name`,
-  `tenant`, `entry`, `port`, `permissions` and does **not** forbid extra keys, so
-  anything else is dropped silently — a manifest that looks configured and is not.
-  `deployment.py` reads the engine's `contracts.py` at generation time and emits only
-  what it declares. `ALLOWED_TOOLS` is a closed set of four and an unknown permission
-  is a hard `ContractError`, so unmappable tool families are dropped with a `# REVIEW`
-  note.
-- `platform/deployment/` is not in the repo yet; the engine is only in the read-only
-  `OTHER-TEAMMATE-STUFF/` copy. When it lands, regenerate and the field set widens
-  automatically.
+- **`helios.yaml` is read from the engine.** `deployment.py` parses
+  `platform/deployment/engine/contracts.py` at generation time and emits exactly
+  the fields the engine's `Manifest` declares, which today are `name`, `tenant`,
+  `entry`, `port`, `permissions`, `audit_manifest`, `data_dir` and `env`. The
+  engine rejects unknown fields, so an extra key would fail the deploy at the
+  manifest stage rather than vanish. Permissions are filtered against the engine's
+  eight `ALLOWED_TOOLS` families; a namespaced family with no mapping is named in a
+  `# REVIEW` note. If the engine is ever absent, a recorded field set is used and
+  the generated file says so.
 
 ## Status
 

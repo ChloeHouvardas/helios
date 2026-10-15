@@ -92,18 +92,11 @@ the approval flow stays a same-origin call.
 
 ### 3. What is still missing
 
-- **`platform/deployment/` does not exist.** The deployment engine is only in the
-  read-only `OTHER-TEAMMATE-STUFF/deployment-stuff/fPT9INmvWJ/default/helios/` copy.
-  Its `Manifest` accepts exactly `name`, `tenant`, `entry`, `port`, `permissions`,
-  and does **not** set `extra="forbid"` — so an unknown key is **silently dropped**.
-  Emitting `audit_manifest`, `data_dir` or `env` produces a manifest that looks
-  configured and is not, with no error anywhere. `helios-app new` reads the engine's
-  `contracts.py` at generation time and emits only what it declares.
-- **`ALLOWED_TOOLS` is a closed set of four**: `payments`, `email`,
-  `knowledge-graph`, `events`. An unknown permission raises `ContractError` at
-  deploy time. Tool families with no mapping (`forecast`, `market-data`,
-  `spreadsheets`, `collect`) contribute nothing and are named in a `# REVIEW`
-  comment.
+- **Deployment exists and is in-tree.** `platform/deployment/` builds, smoke-tests,
+  attaches an audit sidecar and routes an app directory; `helios-app new` writes its
+  `helios.yaml` from the engine's real `Manifest` (eight fields, unknown fields
+  rejected, eight permission families). Not yet done there: the tenant core still
+  runs a mock tool service, holds are in-memory, and logs are per app.
 - **There is no `helios` console script.** Deploy with
   `.venv/bin/python cli/helios.py deploy <dir> [--tenant X]`.
 - The knowledge graph, Intent & Trust Service and shared events are still
