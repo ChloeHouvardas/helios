@@ -1500,9 +1500,23 @@ PAGES: tuple[str, ...] = ({pages},)
 
 app = FastAPI(title={json.dumps(spec.identity.name)}, version="0.1.0")
 
-app.mount("static", StaticFiles(directory=HERE / "static"), name="static")
+app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
 
 _templates = build_env(HERE / "templates")
+
+
+def _parse_qs(body: str) -> dict[str, list[str]]:
+    """Parse a urlencoded form body with the stdlib.
+
+    Deliberately not `await request.form()`: Starlette asserts that
+    `python-multipart` is installed before parsing ANY form, including
+    urlencoded ones, and that package is not a Helios dependency. Depending on it
+    here would make every generated app fail its first approval POST with an
+    AssertionError that names a package the app never asked for.
+    """
+    from urllib.parse import parse_qs
+
+    return parse_qs(body, keep_blank_values=True)
 
 
 def _app() -> Any:
@@ -1554,23 +1568,58 @@ def holds() -> str:
 
 
 @app.post("/holds/decide", response_class=HTMLResponse)
-def decide(request: Request) -> str:
+async def decide(request: Request) -> str:
     """Approve or decline one held action.
 
-    The decision carries a hold_id, and an approval applies only to the exact
-    action that was held — the runtime compares the proposed arguments before
-    executing. Approving one hold is not a standing permission for the next thing
-    the agent does.
+    The decision goes through the audit bridge, not through app state, because
+    whether an owner approved is the auditor's fact to own — on the file and HTTP
+    transports the decision may be recorded by a different process.
+
+    An approval applies to the exact arguments that were held. The runtime compares
+    them before executing, so approving one hold is not a standing permission for
+    the next thing the agent does.
     """
-    # TODO: await the form, resolve the hold through the runtime, and re-render
-    # the single card. Left unimplemented rather than stubbed to a 200, because a
-    # decision endpoint that silently does nothing is worse than one that errors:
-    # the owner believes they approved.
-    raise NotImplementedError(
-        "POST /holds/decide is not wired. Resume the hold through "
-        "app.runtime using the posted hold_id and decision, then re-render "
-        "_held_action.html.j2 for that hold. Do not return a success response "
-        "before the decision has been applied."
+    body = (await request.body()).decode("utf-8", errors="replace")
+    form = _parse_qs(body)
+    hold_id = (form.get("hold_id") or [""])[0].strip()
+    decision = (form.get("decision") or [""])[0].strip()
+
+    if not hold_id:
+        return HTMLResponse("hold_id is required", status_code=400)
+    if decision not in ("approve", "decline"):
+        # Named so a caller can see what to send rather than guessing from a 400.
+        return HTMLResponse(
+            f"decision must be 'approve' or 'decline', got {{decision!r}}",
+            status_code=400,
+        )
+
+    built = _app()
+    try:
+        record = built.integration.bridge.resolve_hold(
+            hold_id,
+            approve=(decision == "approve"),
+            decided_by="owner",
+            note="decided via the approval queue",
+        )
+    except Exception as exc:  # unknown hold, or already decided
+        # Reported rather than swallowed: a decision endpoint that returns success
+        # for a hold that was not decided leaves the owner believing they approved.
+        return HTMLResponse(
+            f"the hold could not be decided: {{exc}}", status_code=409
+        )
+
+    note = ""
+    if record.status == "approved":
+        note = (
+            "Approved. The held action executes with the exact arguments that were "
+            "held, when its run resumes."
+        )
+    else:
+        note = "Declined. The held action did not run, and no retry is implied."
+
+    return _templates.get_template("_held_action.html.j2").render(
+        hold=record.model_dump(mode="json"),
+        note=note,
     )
 
 

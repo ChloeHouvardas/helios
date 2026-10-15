@@ -16,6 +16,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    # For tests/test_boot.py, which imports and REQUESTS a generated app rather
+    # than only reading its source. httpx is what Starlette's TestClient needs to
+    # issue those requests in-process, with no socket and no background server.
+    "fastapi>=0.115",
+    "httpx>=0.27",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
