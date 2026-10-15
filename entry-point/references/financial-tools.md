@@ -219,6 +219,8 @@ without reshaping.
 | `market.borrowing_cost_compare` | no | `amount_cents: int`; `days: int`; `options: list[dict]` | `{options, cheapest, rate_used, disclaimer}` |
 | `market.company_lookup` | no | `query: str` | `{matches: list, provenance}` |
 | `market.collection_period` | no | `industry: str\|None`; `ts_code: str\|None` | `{national_avg_days, industry_median_days, basis, provenance}` |
+| `market.daily_quotes` | no | `ts_code: str`; `start_date, end_date, trade_date: str\|None` | `{ts_code, count, quotes[], units, provenance}` |
+| `market.trading_calendar` | no | `start_date, end_date: str`; `exchange: str\|None` | `{exchange, count, open_days[], days[], provenance}` |
 
 `series` ∈ `lpr_1y`, `lpr_5y`, `shibor_1m`, `shibor_3m`.
 
@@ -228,8 +230,9 @@ worth stating: it **publishes a verified graph node**
 state other apps read, so it is gated — not because reading a rate is dangerous.
 
 This is deliberately *not* a general market-data catalog. There is no FX, no
-CPI/PPI/PMI, no yield curves, no credit-score tiers, no calendars. Four tools,
-each tied to a decision an owner already faces:
+CPI/PPI/PMI, no yield curves, no credit-score tiers. Six tools: four tied to a
+decision an owner already faces, plus daily quotes and the trading calendar for
+apps that value a holding or need "the last session before this date":
 
 1. **"Can I make payroll on the 25th?"** → `forecast.query(first_shortfall)` for
    the gap, then `market.borrowing_cost_compare` to price the real options: draw

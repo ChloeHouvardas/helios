@@ -1,6 +1,6 @@
 """Market data (`market.*`) — public reference rates and registry evidence.
 
-Four read-only tools, each tied to a decision an owner already faces (see
+Six read-only tools, each tied to a decision an owner already faces (see
 `tools.py` for the three moments). Stdlib only. Everything is offline-testable
 through fixtures and goes live when `TUSHARE_TOKEN` is set.
 
@@ -10,7 +10,8 @@ Submodules:
   cache     the SQLite TTL cache in front of the live source
   rates     market.rate + market.borrowing_cost_compare
   registry  market.company_lookup + market.collection_period
-  tools     the registry wiring for all four
+  quotes    market.daily_quotes + market.trading_calendar
+  tools     the registry wiring for all six
 """
 from __future__ import annotations
 

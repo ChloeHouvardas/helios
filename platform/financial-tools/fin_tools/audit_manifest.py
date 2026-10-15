@@ -33,6 +33,12 @@ DEFAULT_FINANCIAL_MANDATE: Dict[str, Any] = {
 }
 
 
+#: Tool-name families whose gated calls can move money. The owner-approval
+#: ceiling is scoped to these; everything else that mentions `amount_cents`
+#: is arithmetic over money, not movement of it.
+MONEY_MOVING_FAMILIES = frozenset({"payments", "collect"})
+
+
 def _declared_arguments(tool: Any) -> set:
     """The argument names a tool actually accepts, from its real schema."""
     return set((tool.input_schema or {}).get("properties", {}))
@@ -83,7 +89,13 @@ def build_financial_manifest(
     rules: List[Dict[str, Any]] = []
 
     ceiling = mandate.get("payment_owner_approval_cents")
-    amount_tools = _tools_declaring(tools, "amount_cents")
+    # Only gated tools in the money-moving families. A read-only cost
+    # comparison or a forecast also declares `amount_cents`, and holding a
+    # calculation for owner approval is friction, not safety.
+    amount_tools = [
+        name for name in _tools_declaring(gated, "amount_cents")
+        if name.split(".", 1)[0] in MONEY_MOVING_FAMILIES
+    ]
     if ceiling is not None and amount_tools:
         rules.append({
             "id": "fin.large_payment_approval",

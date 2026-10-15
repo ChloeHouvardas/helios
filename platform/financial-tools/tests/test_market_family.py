@@ -50,7 +50,8 @@ def test_market_tools_are_registered(reg):
     registry, _ = reg
     names = {t.name for t in registry.list()}
     assert names == {"market.rate", "market.borrowing_cost_compare",
-                     "market.company_lookup", "market.collection_period"}
+                     "market.company_lookup", "market.collection_period",
+                     "market.daily_quotes", "market.trading_calendar"}
 
 
 def test_market_tools_are_tagged_market(reg):

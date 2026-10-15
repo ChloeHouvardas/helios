@@ -18,10 +18,10 @@ source has the series, `MarketDataUnavailable` is raised with a model-actionable
 message naming the series and the env var to set -- the tools are read-only, so
 this is an honest "unknown", never an invented number.
 
-Only the endpoints the three decision-moments need are used: `shibor_lpr`,
-`shibor`, `stock_basic`, `stock_company`, `fina_indicator` (only `arturn_days`)
-and `index_member_all`. There is deliberately no FX, CPI/PPI/PMI, yield-curve,
-credit-tier or calendar support.
+Only these endpoints are used: `shibor_lpr`, `shibor`, `stock_basic`,
+`stock_company`, `fina_indicator` (only `arturn_days`), `index_member_all`,
+`daily` and `trade_cal`. There is deliberately no FX, CPI/PPI/PMI, yield-curve or
+credit-tier support, and no tool accepts an endpoint name from its caller.
 """
 from __future__ import annotations
 
@@ -55,7 +55,8 @@ RATE_LIMIT_WINDOW_SECONDS = 60.0
 
 #: How old an as-of date can be before a value is flagged stale. Rates move at
 #: least monthly; registry/financial-indicator snapshots are annual-ish.
-MAX_AGE_DAYS = {"rate": 40, "registry": 400, "indicator": 400}
+MAX_AGE_DAYS = {"rate": 40, "registry": 400, "indicator": 400,
+                "quote": 7, "calendar": 400}
 
 
 class MarketDataUnavailable(Exception):

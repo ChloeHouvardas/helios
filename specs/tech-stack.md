@@ -37,7 +37,7 @@
 - **Market data transport:** stdlib `urllib` against the Tushare Pro HTTP API, returning plain dicts. No `tushare` SDK and no pandas, so `fin_tools` keeps `dependencies = []` and the package stays importable with nothing installed beyond the standard library
 - **Market data endpoint:** `https://api.tushare.pro`. The brief names the plain-HTTP form of the same host; HTTPS is the default because the token travels in the POST body and a plaintext request would put a live credential on the wire. HTTPS was verified working against the real API. The endpoint is overridable if plain HTTP is ever required
 - **Market data credentials:** `TUSHARE_TOKEN`, read from the environment at call time only. Never hard-coded, never logged, never stored on an instance, never present in `ToolSpec.declare()` output, and redacted from every error message. There is deliberately no `set_token()` — a token in a process global is a token in a traceback
-- **Market data endpoints are allow-listed:** `trade_cal`, `daily`, `shibor_lpr`, `shibor`, `stock_basic`, each verified against the live API before being listed. No tool accepts an `api_name`, so an agent cannot reach an endpoint nobody reviewed
+- **Market data endpoints are allow-listed:** `shibor_lpr`, `shibor`, `stock_basic`, `stock_company`, `fina_indicator`, `index_member_all`, `daily`, `trade_cal`, each hard-coded inside the tool that uses it. Offline fixtures under `fixtures/market/` serve every tool when `HELIOS_MARKET_MODE=fixture`. No tool accepts an `api_name`, so an agent cannot reach an endpoint nobody reviewed
 
 ## Tentative
 - Which of the two audit-gate implementations stays importable long term: `agent_toolkit.audit.AuditGate` is legacy and out of the loop.

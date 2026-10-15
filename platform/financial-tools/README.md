@@ -28,7 +28,7 @@ never reaches a balance or the ledger — see `specs/decisions.md`.
 | `fin_tools/payments.py` | mock ledger, send + receive, integer cents, idempotency keys | **settles only with a verified intent**; otherwise `rejected` |
 | `fin_tools/email_sender.py` | compose/render/queue to local outbox | no SMTP; outbox is inspectable by audits/sims |
 | `fin_tools/spreadsheet_tools.py` | CSV load/save/filter/aggregate/schema-check (stdlib only) | `*_cents` columns coerced to int |
-| `fin_tools/market_data.py` | live Tushare quotes, reference rates, trading calendar, listed-company registry (stdlib urllib) | **closed allow-list**; no tool takes an `api_name`; token never observable; output is quote data, never `*_cents` |
+| `fin_tools/market_data/` | reference rates, borrowing-cost comparison, company registry, collection periods, daily quotes, trading calendar; fixture, core-file, cached-live sources (stdlib urllib) | **closed allow-list**; no tool takes an `api_name`; token never observable; output is quote data, never `*_cents` |
 | `fin_tools/knowledge_graph.py` | nodes/edges with `verified` vs `observation` provenance | an observation can never overwrite a verified fact |
 | `fin_tools/simulation.py` | (a) persona-driven Monte-Carlo cash forecast + what-if; (b) copy-on-write shadow sandbox | seeded/deterministic; sandbox never mutates the real world |
 | `fin_tools/demo.py` | scripted story: simulate → preview → verify → pay → email → graph | shows tamper/replay/no-auth rejections live |
@@ -39,8 +39,8 @@ never reaches a balance or the ledger — see `specs/decisions.md`.
 `payments.send`, `payments.receive`, `payments.balance`, `email.send`,
 `email.outbox`, `spreadsheet.load`, `spreadsheet.save`, `spreadsheet.aggregate`,
 `graph.publish_verified`, `graph.observe`, `graph.read`, `simulation.forecast`,
-and the four read-only market tools `market.reference_rate`,
-`market.daily_quotes`, `market.trading_calendar`, `market.company_basic`.
+and the six `market.*` tools (`rate`, `borrowing_cost_compare`, `company_lookup`,
+`collection_period`, `daily_quotes`, `trading_calendar`).
 `bundle.registry.catalog()` is the JSON-able declaration an action agent or the
 audit gate consumes; side-effecting calls are the ones that must carry intent
 proof / go through proposals. The `market.*` tools are all read-only and never
@@ -64,7 +64,7 @@ carry a token in their declaration.
 - **Market data is quote data, and structurally cannot become money.** Tushare
   returns floats (verified live: `close` 11.5, `pct_chg` -0.605), which collides
   with "everything money-shaped is integer cents, no floats ever". Both are right:
-  a share price is a *quote*, not a balance. So `market_data.py` never imports
+  a share price is a *quote*, not a balance. So `market_data/` never imports
   `World` or `Payments`, every tool is `side_effects=False`, and no output field
   is named `*_cents` — that name would imply integer money and invite a caller to
   add a price to a balance. Amounts carry their real unit instead (`CNY per

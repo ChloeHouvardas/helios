@@ -1,8 +1,8 @@
-"""Registry wiring for the four `market.*` tools.
+"""Registry wiring for the six `market.*` tools.
 
 All read-only w.r.t. money (tags `("market",)`). `market.rate` additionally
 publishes a verified graph node, so it is gated as a side effect on shared state;
-the other three only read public data.
+the other five only read public data.
 
 The resolver is bound per bundle, so a bundle's `HELIOS_MARKET_MODE` /
 `HELIOS_DATA_DIR` / token environment is what its market tools use. Nothing here
@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 from ..contracts import REGISTRY
 from .client import MarketDataResolver, MarketDataUnavailable
 from .rates import DISCLAIMER, SERIES, RateService
+from .quotes import QuotesService
 from .registry import RegistryService
 
 _SERIES_ENUM = sorted(SERIES)
@@ -76,6 +77,32 @@ _COMPANY_SCHEMA: Dict[str, Any] = {
     "additionalProperties": False,
 }
 
+_QUOTES_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "ts_code": {"type": "string", "minLength": 1,
+                    "description": "Security code with exchange suffix, e.g. 600519.SH."},
+        "start_date": {"type": ["string", "null"], "description": "ISO date."},
+        "end_date": {"type": ["string", "null"], "description": "ISO date."},
+        "trade_date": {"type": ["string", "null"],
+                       "description": "One ISO date; overrides the range."},
+    },
+    "required": ["ts_code"],
+    "additionalProperties": False,
+}
+
+_CALENDAR_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "start_date": {"type": "string", "description": "ISO date."},
+        "end_date": {"type": "string", "description": "ISO date."},
+        "exchange": {"type": ["string", "null"],
+                     "description": "SSE (default), SZSE, BSE."},
+    },
+    "required": ["start_date", "end_date"],
+    "additionalProperties": False,
+}
+
 _COLLECTION_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -102,6 +129,7 @@ def register(registry=REGISTRY, resolver: Optional[MarketDataResolver] = None,
         resolver = build_resolver()
     rates = RateService(resolver, graph)
     registry_svc = RegistryService(resolver)
+    quotes_svc = QuotesService(resolver)
 
     @registry.tool(
         "market.rate",
@@ -164,3 +192,36 @@ def register(registry=REGISTRY, resolver: Optional[MarketDataResolver] = None,
     def _collection(industry: Optional[str] = None,
                     as_of: Optional[str] = None) -> Dict[str, Any]:
         return registry_svc.collection_period(industry=industry, as_of=as_of)
+
+    @registry.tool(
+        "market.daily_quotes",
+        "Daily OHLCV quotes for one listed security, oldest first, with explicit "
+        "units (CNY per share, lots, thousands of CNY) and provenance. Quote data, "
+        "not money: no field is in cents. Read-only; raises MarketDataUnavailable "
+        "rather than inventing a price.",
+        {"ts_code": "str", "start_date": "str|None", "end_date": "str|None",
+         "trade_date": "str|None"},
+        {"ts_code": "str", "count": "int", "quotes": "list[dict]",
+         "units": "dict", "provenance": "dict"},
+        side_effects=False, tags=("market",), input_json_schema=_QUOTES_SCHEMA,
+    )
+    def _daily_quotes(ts_code: str, start_date: Optional[str] = None,
+                      end_date: Optional[str] = None,
+                      trade_date: Optional[str] = None) -> Dict[str, Any]:
+        return quotes_svc.daily_quotes(ts_code=ts_code, start_date=start_date,
+                                       end_date=end_date, trade_date=trade_date)
+
+    @registry.tool(
+        "market.trading_calendar",
+        "Trading days in a window for an exchange (SSE default), each with "
+        "upstream's own previous-trading-day, so 'the last session before this "
+        "date' needs no arithmetic. Read-only.",
+        {"start_date": "str", "end_date": "str", "exchange": "str|None"},
+        {"exchange": "str", "count": "int", "open_days": "list[str]",
+         "days": "list[dict]", "provenance": "dict"},
+        side_effects=False, tags=("market",), input_json_schema=_CALENDAR_SCHEMA,
+    )
+    def _trading_calendar(start_date: str, end_date: str,
+                          exchange: Optional[str] = None) -> Dict[str, Any]:
+        return quotes_svc.trading_calendar(start_date=start_date, end_date=end_date,
+                                           exchange=exchange or "SSE")

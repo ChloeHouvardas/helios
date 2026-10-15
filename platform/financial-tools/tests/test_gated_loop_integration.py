@@ -101,9 +101,13 @@ def test_amount_ceiling_is_in_cents(tools):
     ceiling = next(r for r in manifest["rules"]
                    if r["id"] == "fin.large_payment_approval")
     assert ceiling["limits"][0]["max"] == 1_000_000
-    # scoped only to tools that actually declare amount_cents
+    # scoped to gated, money-moving tools that declare amount_cents
     assert "payments.send" in ceiling["tools"]
     assert "spreadsheet.save" not in ceiling["tools"]
+    # read-only arithmetic over money is not money movement
+    assert "market.borrowing_cost_compare" not in ceiling["tools"]
+    for name in ceiling["tools"]:
+        assert name.split(".")[0] in ("payments", "collect"), name
 
 
 def test_mandate_is_overridable(tools):
