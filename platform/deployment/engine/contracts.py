@@ -43,9 +43,12 @@ ALLOWED_TOOLS = {
     "collect",
 }
 
-#: Fallback tool list when a manifest declares no permissions at all. Kept in
-#: sync with the auditor's own default so the two cannot disagree.
-DEFAULT_ALLOWED_TOOLS = ("payments", "email")
+#: An app that declares no permissions is granted NO platform family. The
+#: imported build fell back to payments + email, which handed a read-only app
+#: the right to move money and send mail it never asked for. The sidecar still
+#: accepts tools the app's own audit manifest declares, so such an app can act
+#: on its own data; it just cannot reach the tenant core.
+DEFAULT_ALLOWED_TOOLS: tuple[str, ...] = ()
 
 TEXT_EXT = {".py", ".js", ".ts", ".json", ".yaml", ".yml", ".env", ".txt", ".sh", ".cfg", ".ini", ".toml"}
 
@@ -129,8 +132,11 @@ class Manifest(BaseModel):
 
     @property
     def allowed_tools(self) -> str:
-        """Comma-separated tool list for the auditor's ALLOWED_TOOLS."""
-        return ",".join(self.permissions) if self.permissions else ",".join(DEFAULT_ALLOWED_TOOLS)
+        """Comma-separated family list for the auditor's ALLOWED_TOOLS.
+
+        Empty when the manifest grants nothing: no family is ever implied.
+        """
+        return ",".join(self.permissions)
 
 
 def sanitize(value: str) -> str:

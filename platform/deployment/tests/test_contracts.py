@@ -378,3 +378,11 @@ def test_the_linter_covers_every_text_extension(tmp_path: Path) -> None:
 def test_the_linter_returns_a_list_even_for_an_empty_bundle(tmp_path: Path) -> None:
     tmp_path.mkdir(parents=True, exist_ok=True)
     assert lint(tmp_path) == []
+
+
+def test_an_empty_permission_list_grants_no_family() -> None:
+    """The imported build handed a read-only app payments + email it never asked for."""
+    from engine.contracts import DEFAULT_ALLOWED_TOOLS, Manifest
+    assert DEFAULT_ALLOWED_TOOLS == ()
+    manifest = Manifest(name="quiet", entry="server:app", port=3000, permissions=[])
+    assert manifest.allowed_tools == ""

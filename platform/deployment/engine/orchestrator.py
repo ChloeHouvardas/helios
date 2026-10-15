@@ -40,7 +40,7 @@ import docker
 from docker.errors import APIError, BuildError, ImageNotFound, NotFound
 from docker.models.containers import Container
 
-from .contracts import DEFAULT_ALLOWED_TOOLS, Manifest, resolve_env, sanitize
+from .contracts import Manifest, resolve_env, sanitize
 
 # --------------------------------------------------------------------------
 # Repository root
@@ -84,6 +84,8 @@ SANDBOX_NET = "helios_sandbox_net"
 BASE_IMAGE = "helios-app-base:latest"
 AUDIT_IMAGE = "helios-auditor:latest"
 CORE_IMAGE = "helios-core:latest"
+#: Where the tenant core keeps its SQLite snapshot and market cache.
+CORE_DATA_DIR = "/data"
 REDIS_IMAGE = "redis:7-alpine"
 
 #: Dockerfile paths are relative to the build context, which is REPO.
@@ -137,6 +139,62 @@ def _build_error_text(exc: BuildError) -> str:
 # --------------------------------------------------------------------------
 # Platform content hash
 # --------------------------------------------------------------------------
+def _jsonl_files_from_tar(stream, tail: int) -> list[dict]:
+    """Collect every .jsonl file in a docker archive stream, verifying chains.
+
+    A file whose entries carry `hash` and `prev_hash` is an audit_agent chain
+    and is verified with AuditLog.verify_chain; anything else is an app's
+    action log and is returned as-is. Only the last `tail` entries of each
+    file are returned, but the chain is verified over the whole file.
+    """
+    import io
+    import tarfile
+    import tempfile
+
+    buffer = io.BytesIO()
+    for chunk in stream:
+        buffer.write(chunk)
+    buffer.seek(0)
+    files: list[dict] = []
+    try:
+        archive = tarfile.open(fileobj=buffer, mode="r|*")
+    except tarfile.TarError as exc:
+        return [{"path": "", "error": f"unreadable archive: {exc}"}]
+    with archive:
+        for member in archive:
+            if not member.isfile() or not member.name.endswith(".jsonl"):
+                continue
+            handle = archive.extractfile(member)
+            if handle is None:
+                continue
+            raw = handle.read()
+            lines = [ln for ln in raw.decode("utf-8", "replace").splitlines() if ln.strip()]
+            entries: list = []
+            for ln in lines:
+                try:
+                    entries.append(json.loads(ln))
+                except json.JSONDecodeError:
+                    entries.append({"unparseable": ln[:200]})
+            record: dict = {"path": member.name, "entries": len(entries),
+                            "tail": entries[-tail:]}
+            if entries and all(isinstance(e, dict) and "hash" in e and "prev_hash" in e
+                               for e in entries):
+                try:
+                    from audit_agent.audit_log import AuditLog
+                    with tempfile.NamedTemporaryFile("wb", suffix=".jsonl", delete=False) as tmp:
+                        tmp.write(raw)
+                        tmp_path = Path(tmp.name)
+                    try:
+                        ok, problems = AuditLog(tmp_path).verify_chain()
+                    finally:
+                        tmp_path.unlink(missing_ok=True)
+                    record["chain"] = {"verified": True, "intact": ok, "problems": problems[:10]}
+                except Exception as exc:  # noqa: BLE001 - report, never hide
+                    record["chain"] = {"verified": False, "error": str(exc)[:200]}
+            files.append(record)
+    return files
+
+
 def platform_hash(platform_dir: Path | None = None) -> str:
     """Stable hash of the platform source that the golden base image embeds.
 
@@ -282,7 +340,11 @@ class Orchestrator:
         path = TENANTS_DIR / f"{tenant}.json"
         if path.is_file():
             return json.loads(path.read_text())
-        state = {"execution_secret": uuid.uuid4().hex}
+        state = {"execution_secret": uuid.uuid4().hex,
+                 # Signs the core service's intent auth codes. Separate from the
+                 # execution secret on purpose: authenticating a caller and
+                 # authorising a payment are two different powers.
+                 "intent_secret": uuid.uuid4().hex}
         path.write_text(json.dumps(state, indent=2))
         return state
 
@@ -361,17 +423,32 @@ class Orchestrator:
         return {"tag": hashed_tag, "platform_hash": digest, "rebuilt": not reused}
 
     def ensure_base_images(self) -> dict:
+        """Build or reuse every golden image, each keyed by the platform hash.
+
+        The auditor embeds audit-agent-builder and the core embeds
+        financial-tools, so a platform change must reach them exactly as it
+        reaches app-base: a present hash tag is reused, an absent one is built,
+        and `:latest` is repointed so the containers the engine starts always
+        run the current platform.
+        """
         base = self._ensure_base_image()
+        digest = base["platform_hash"]
         for tag, dockerfile in GOLDEN_IMAGES.items():
+            repo, _, _ = tag.partition(":")
+            hashed_tag = f"{repo}:{digest}"
             try:
-                self.client.images.get(tag)
+                self.client.images.get(hashed_tag)
             except ImageNotFound:
                 try:
                     self.client.images.build(path=str(REPO), dockerfile=dockerfile,
-                                             tag=tag, rm=True, quiet=True)
+                                             tag=hashed_tag, rm=True, quiet=True)
                 except BuildError as exc:
                     raise DeployError(500, {"stage": "base-image", "image": tag,
                                             "logs": _build_error_text(exc)}) from exc
+            try:
+                self.client.images.get(hashed_tag).tag(repo, "latest", force=True)
+            except (ImageNotFound, APIError):
+                pass
         return base
 
     # --------------------------------------------------------- tenant infra
@@ -386,11 +463,25 @@ class Orchestrator:
                 labels={"helios.managed": "true", "helios.role": "redis", "helios.tenant": tenant},
             )
         if not self._is_running(f"helios-core-{tenant}"):
+            core_env = {
+                "HELIOS_EXECUTION_SECRET": state["execution_secret"],
+                "HELIOS_INTENT_SECRET": state.get("intent_secret", ""),
+                "HELIOS_TENANT": tenant,
+                "HELIOS_DATA_DIR": CORE_DATA_DIR,
+                # Live market data only when the engine's own environment holds
+                # a token; otherwise the committed fixtures answer and say so.
+                "HELIOS_MARKET_MODE": os.environ.get("HELIOS_MARKET_MODE")
+                                      or ("auto" if os.environ.get("TUSHARE_TOKEN") else "fixture"),
+            }
+            if os.environ.get("TUSHARE_TOKEN"):
+                core_env["TUSHARE_TOKEN"] = os.environ["TUSHARE_TOKEN"]
             self._container(
                 f"helios-core-{tenant}", CORE_IMAGE,
                 {net.name: {"aliases": ["helios-core"]}},
-                {"HELIOS_EXECUTION_SECRET": state["execution_secret"]},
-                labels={"helios.managed": "true", "helios.role": "core", "helios.tenant": tenant},
+                core_env,
+                labels={"helios.managed": "true", "helios.role": "core",
+                        "helios.tenant": tenant, "helios.data_dir": CORE_DATA_DIR},
+                volumes={self._core_volume(tenant): {"bind": CORE_DATA_DIR, "mode": "rw"}},
             )
         return net, state
 
@@ -527,6 +618,10 @@ class Orchestrator:
             return ""
 
     # ------------------------------------------------------------ volumes
+    def _core_volume(self, tenant: str) -> str:
+        """Named volume holding the tenant core's ledger, graph and cache."""
+        return f"helios-data-{tenant}-core"
+
     def _data_volume(self, tenant: str, app: str) -> str:
         """Named volume holding action logs, audit chain, holds and replay state."""
         return f"helios-data-{tenant}-{app}"
@@ -646,7 +741,7 @@ class Orchestrator:
         # in a sidecar is a liability, not a feature. See specs/decisions.md.
 
         labels_next = {"helios.managed": "true", "helios.role": "candidate",
-                       "helios.tenant": t, "helios.app": a}
+                       "helios.tenant": t, "helios.app": a, "helios.data_dir": data_dir}
 
         candidates: list[Container] = []
         try:
@@ -721,7 +816,7 @@ class Orchestrator:
             # Names only. Values are resolved from the engine environment and
             # are deliberately never echoed back.
             "audit": {
-                "allowed_tools": manifest.permissions or list(DEFAULT_ALLOWED_TOOLS),
+                "allowed_tools": list(manifest.permissions),
                 "env_forwarded": list(manifest.env),
                 "audit_manifest": manifest.audit_manifest or None,
                 "data_dir": manifest.data_dir,
@@ -842,6 +937,7 @@ class Orchestrator:
         """
         t = sanitize(tenant)
         removed: list[str] = []
+        removed_apps: set[str] = set()
         for c in self.client.containers.list(all=True, filters={"label": "helios.managed=true"}):
             if c.labels.get("helios.tenant") != t:
                 continue
@@ -850,20 +946,60 @@ class Orchestrator:
             try:
                 c.remove(force=True)
                 removed.append(c.name)
+                if c.labels.get("helios.app"):
+                    removed_apps.add(c.labels["helios.app"])
             except (APIError, NotFound):
                 continue
-        if app:
-            slug = f"{sanitize(app)}-{t}"
-            for path in (NGINX_DIR / f"{slug}.conf",):
-                if path.exists():
-                    path.unlink()
+        # Every slug this call took down loses its route, whether one app was
+        # named or the whole tenant was. A route left behind proxies to a dead
+        # IP and answers 502 until the next deploy of that slug.
+        slugs = sorted({f"{sanitize(app)}-{t}"} if app else
+                       {f"{name}-{t}" for name in removed_apps})
+        for slug in slugs:
+            path = NGINX_DIR / f"{slug}.conf"
+            if path.exists():
+                path.unlink()
             self._strip_nginx_block(slug)
+        if slugs:
             try:
                 self.reload_nginx()
             except DeployError:
                 pass
         return {"status": "undeployed", "tenant": t, "app": app, "removed": sorted(removed),
-                "data_volume_kept": bool(app)}
+                "routes_removed": slugs, "data_volumes_kept": True}
+
+    # ------------------------------------------------------------ evidence
+    def tenant_logs(self, tenant: str, app: str | None = None, tail: int = 200) -> dict:
+        """Every app's action log, audit chain and sidecar log, read from the volumes.
+
+        The engine runs on the host and only the containers see the named
+        volumes, so each log is pulled through `get_archive` from a container
+        that mounts it. Hash-chained files are verified with `audit_agent`'s own
+        chain walker, so the number reported here is the same one the sidecar's
+        /health reports.
+        """
+        t = sanitize(tenant)
+        wanted = sanitize(app) if app else None
+        apps: dict[str, dict] = {}
+        for c in self.client.containers.list(all=True, filters={"label": "helios.managed=true"}):
+            labels = c.labels or {}
+            if labels.get("helios.tenant") != t:
+                continue
+            name = labels.get("helios.app")
+            role = labels.get("helios.role")
+            if not name or role not in ("app", "candidate", "running"):
+                continue
+            if wanted and name != wanted:
+                continue
+            data_dir = labels.get("helios.data_dir") or "/data"
+            entry = apps.setdefault(name, {"container": c.name, "data_dir": data_dir, "files": []})
+            try:
+                stream, _ = c.get_archive(data_dir)
+            except (APIError, NotFound) as exc:
+                entry["error"] = f"could not read {data_dir}: {exc}"
+                continue
+            entry["files"] = _jsonl_files_from_tar(stream, tail)
+        return {"tenant": t, "apps": apps}
 
     def _strip_nginx_block(self, slug: str) -> None:
         default_conf_path = NGINX_DIR / "default.conf"
