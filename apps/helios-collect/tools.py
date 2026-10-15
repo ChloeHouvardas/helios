@@ -40,6 +40,7 @@ from agent_toolkit.store import Store
 from agent_toolkit.tools import make_send_email
 
 import config
+import tenant_events
 from book import Book
 
 LIST_OVERDUE = "list_overdue_invoices"
@@ -275,9 +276,16 @@ def make_record_extension(book: Book, graph: Any) -> ToolDefinition:
                 "negotiation", invoice_id,
                 {"terms_note": note, "agreed_on": book.today.isoformat()},
                 observer=config.GRAPH_OBSERVER)
+        # The notification other apps act on: the cash planner re-projects
+        # against the agreed date. The graph node is the record; this is the ping.
+        event = tenant_events.publish(
+            "invoice.extension_agreed", invoice=invoice_id,
+            new_due=str(updated.get("due_date")), previous_due=str(previous_due),
+            extension_days=days)
         return {
             "invoice_id": invoice_id,
             "extension_days": days,
+            "event": event,
             "previous_due_date": str(previous_due),
             "new_due_date": str(updated.get("due_date")),
             "graph_node_id": node_id,
@@ -344,12 +352,16 @@ def make_record_payment(book: Book, payments: Any, graph: Any) -> ToolDefinition
                  "reference": reference, "account": account,
                  "invoice_status": updated.get("status")},
                 source=config.GRAPH_SOURCE)["node_id"]
+        event = tenant_events.publish(
+            "invoice.payment_applied", invoice=invoice_id, customer=customer_id,
+            amount_cents=amount_cents, status=str(updated.get("status")))
 
         return {
             "payment_id": str(record.get("payment_id")),
             "state": str(record.get("state")),
             "invoice_id": invoice_id,
             "status": str(updated.get("status")),
+            "event": event,
             "amount_cents": amount_cents,
             "balance_cents": int(updated.get("balance_cents") or 0),
             "credited_account": account,

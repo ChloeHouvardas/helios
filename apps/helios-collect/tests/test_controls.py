@@ -1193,3 +1193,32 @@ def test_baseline_rules_cannot_be_overridden_by_this_app():
                                 f"- id: {bad_id}", 1)
         with pytest.raises(PolicyLooseningError):
             AuditManifest.parse(tampered, origin="<test>")
+
+
+def test_an_agreed_extension_is_announced_on_the_bus_when_one_is_configured(monkeypatch, tmp_path):
+    """Offline there is no bus and the tool says so; with one, the SDK is called
+    with the agreed date, which is what the cash planner re-projects against."""
+    import sys
+    import types
+
+    app = build_app(run_dir=tmp_path / "runs")
+    try:
+        tool = next(t for t in app.integration.tools if t.name == "record_agreed_extension")
+        monkeypatch.delenv("HELIOS_REDIS_URL", raising=False)
+        out = tool.handler({"invoice_id": "INV-1005", "customer_id": "CUST-005",
+                            "extension_days": 14, "terms_note": "Customer asked for two more weeks."})
+        assert out["event"]["status"] == "no_bus"
+
+        published: list[tuple[str, dict]] = []
+        fake = types.ModuleType("helios_sdk")
+        fake.publish_event = lambda event, **data: published.append((event, data)) or {"status": "published"}
+        monkeypatch.setitem(sys.modules, "helios_sdk", fake)
+        monkeypatch.setenv("HELIOS_REDIS_URL", "redis://helios-redis:6379/0")
+        out = tool.handler({"invoice_id": "INV-1005", "customer_id": "CUST-005",
+                            "extension_days": 7, "terms_note": "And one more week."})
+        assert out["event"]["status"] == "published"
+        assert published[0][0] == "invoice.extension_agreed"
+        assert published[0][1]["invoice"] == "INV-1005"
+        assert published[0][1]["new_due"]
+    finally:
+        app.close()
