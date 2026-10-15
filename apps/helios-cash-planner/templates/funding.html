@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Funding — Helios Cash Planner{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Ways to cover {{ amount }}{% if short %} in {{ short.week }}{% endif %} for 30 days</h2>
+  {% if error %}<div class="rule deny">{{ error }}</div>{% endif %}
+  {% if comparison %}
+  <table><thead><tr><th>Option</th><th class="num">Cost</th><th class="num">Annualised</th><th>Formula</th></tr></thead><tbody>
+  {% for o in comparison.options %}<tr>
+    <td><b>{{ o.kind }}</b>{% if o.kind == comparison.cheapest %} <span class="pill paid">cheapest</span>{% endif %}</td>
+    <td class="num">{{ money(o.cost_cents) if o.cost_cents is not none else '—' }}</td>
+    <td class="num">{{ o.annualised_pct if o.annualised_pct is not none else '—' }}%</td>
+    <td class="note mono">{{ o.formula }}</td>
+  </tr>{% endfor %}</tbody></table>
+  <p class="note">{{ comparison.disclaimer }}</p>
+  {% endif %}
+  {% if rate %}
+  <div class="rule">
+    <b>{{ rate.series }}</b> = {{ rate.value_pct }}% as of {{ rate.as_of }} ·
+    source {{ rate.provenance.publisher }} ({{ rate.provenance.api_name }}) ·
+    mode <b>{{ rate.provenance.mode }}</b>{% if rate.provenance.stale %} · <b>stale</b>{% endif %}
+    <p class="note" style="margin:4px 0 0">A fallback is never shown as live: the mode says which source answered. Credit line priced at this rate plus {{ config.credit_line_spread_bps }} bp; facility {{ config.credit_line_limit }}.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

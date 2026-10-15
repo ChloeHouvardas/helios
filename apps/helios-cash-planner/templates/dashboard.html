@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Helios Cash Planner{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Position</h2>
+  <div class="grid">
+    <div class="stat"><b>{{ balance }}</b><span>cash today</span></div>
+    <div class="stat"><b>{{ receivables }}</b><span>owed to you over the horizon</span></div>
+    <div class="stat"><b>{{ payables }}</b><span>you owe over the horizon</span></div>
+    <div class="stat"><b>{{ headroom }}</b><span>credit line remaining</span></div>
+    {% if short %}
+    <div class="stat" style="background:var(--short)"><b>{{ short.week }} · {{ short.start }}</b><span>first short week — {{ money(short.shortfall_cents) }} below the buffer{% if short.payroll %}, payroll in that week{% endif %}</span></div>
+    {% else %}
+    <div class="stat"><b>none</b><span>no short week in the horizon</span></div>
+    {% endif %}
+    <div class="stat"><b>{{ '%.0f' % (sim.probability_below * 100) }}%</b><span>chance of dipping below the buffer ({{ sim.n_paths }} paths)</span></div>
+  </div>
+  <p class="note">The projection times each inflow by how that customer actually pays, not by its due date.
+    The buffer is {{ config.cash_buffer }}. The auditor reads this same projection, so the agent can only warn about weeks it marks short.</p>
+</div>
+
+<div class="card">
+  <h2>Thirteen weeks</h2>
+  <table>
+    <thead><tr><th>Week</th><th>Starts</th><th class="num">In</th><th class="num">Out</th><th class="num">Lowest balance</th><th></th></tr></thead>
+    <tbody>
+    {% for w in weeks %}
+      <tr class="{{ 'short' if w.short else '' }}">
+        <td class="mono">{{ w.week }}{% if w.payroll %} <span class="pill unpaid">payroll</span>{% endif %}</td>
+        <td>{{ w.start }}</td>
+        <td class="num">{{ money(w.inflows_cents) }}</td>
+        <td class="num">{{ money(w.outflows_cents) }}</td>
+        <td class="num">{{ money(w.min_balance_cents) }}</td>
+        <td>{% if w.short %}<span class="pill refused">short</span>{% else %}<span class="bar" style="width:{{ [w.min_balance_cents // 20000, 120] | min }}px"></span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Warnings and recommendations</h2>
+  {% if warnings or recommendations %}
+    {% for w in warnings %}<div class="rule deny"><b>{{ w.week }}</b> short by {{ money(w.shortfall_cents) }} — published as <span class="mono">{{ w.graph_node_id }}</span></div>{% endfor %}
+    {% for r in recommendations %}<div class="rule warn"><b>{{ r.kind }}</b> for {{ r.week }} → <span class="mono">{{ r.target_id }}</span>{% if r.amount_cents %} ({{ money(r.amount_cents) }}){% endif %}: {{ r.reason }}</div>{% endfor %}
+  {% else %}
+    <p class="note">Nothing recorded in this process yet. Run the agent below; refused actions never appear here.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Run the agent</h2>
+  <form class="inline" method="post" action="{{ prefix }}/run"><button class="btn primary" type="submit">Run all scenarios</button></form>
+  {% if counts %}<table style="margin-top:12px"><thead><tr><th>Outcome</th><th class="num">Scenarios</th><th>Meaning</th></tr></thead><tbody>
+    {% for status, n in counts %}<tr><td><span class="pill {{ status_class[status] or 'unpaid' }}">{{ status }}</span></td><td class="num">{{ n }}</td><td class="note">{{ status_meaning[status] or '' }}</td></tr>{% endfor %}
+  </tbody></table>{% endif %}
+  {% if last_run %}<p class="note">Last run {{ last_run }}.</p>{% endif %}
+</div>
+
+<div class="card">
+  <h2>Events from other apps</h2>
+  {% if events %}<table><thead><tr><th>Event</th><th>From</th><th>Data</th></tr></thead><tbody>
+    {% for e in events %}<tr><td class="mono">{{ e.event }}</td><td>{{ e.app }}</td><td class="mono">{{ e.data }}</td></tr>{% endfor %}
+  </tbody></table>{% else %}<p class="note">No tenant events received. When Collect agrees an extension or Payables moves a bill, it lands here and the forecast re-projects.</p>{% endif %}
+</div>
+{% endblock %}

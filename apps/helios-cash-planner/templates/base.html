@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Helios Cash Planner{% endblock %}</title>
+  <style>
+    :root { --ink:#14181f; --muted:#5b6675; --line:#e2e6ec; --bg:#f6f7f9;
+            --card:#fff; --deny:#b42318; --hold:#b54708; --ok:#067647; --short:#fef3f2; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink);
+           font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; }
+    header { background:var(--card); border-bottom:1px solid var(--line); padding:14px 22px; }
+    header h1 { margin:0; font-size:17px; letter-spacing:-.01em; }
+    header p { margin:3px 0 0; color:var(--muted); font-size:13px; }
+    nav { display:flex; gap:4px; margin-top:11px; flex-wrap:wrap; }
+    nav a { padding:5px 11px; border-radius:7px; color:var(--muted); text-decoration:none; font-size:13.5px; }
+    nav a.active, nav a:hover { background:#eef1f5; color:var(--ink); }
+    main { padding:22px; max-width:1180px; margin:0 auto; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:11px; padding:17px 19px; margin-bottom:17px; }
+    .card h2 { margin:0 0 12px; font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(178px,1fr)); gap:11px; }
+    .stat { background:#fbfcfd; border:1px solid var(--line); border-radius:9px; padding:12px 13px; }
+    .stat b { display:block; font-size:21px; letter-spacing:-.02em; }
+    .stat span { color:var(--muted); font-size:12.5px; }
+    table { width:100%; border-collapse:collapse; font-size:14px; }
+    th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); }
+    th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
+    td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+    tr.short td { background:var(--short); }
+    .bar { display:inline-block; height:9px; border-radius:3px; background:#1849a9; }
+    .bar.neg { background:var(--deny); }
+    .pill { display:inline-block; padding:2px 8px; border-radius:20px; font-size:12px; font-weight:600; }
+    .pill.paid { background:#ecfdf3; color:var(--ok); }
+    .pill.held { background:#fffaeb; color:var(--hold); }
+    .pill.refused { background:#fef3f2; color:var(--deny); }
+    .pill.unpaid { background:#eef1f5; color:var(--muted); }
+    code, .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; }
+    .note { color:var(--muted); font-size:13px; margin:9px 0 0; }
+    .rule { background:#fbfcfd; border-left:3px solid var(--line); padding:9px 12px; margin:9px 0; border-radius:0 7px 7px 0; font-size:13.5px; }
+    .rule b { font-family:ui-monospace,Menlo,monospace; font-size:12.5px; }
+    .warn { background:#fffaeb; border-color:#fdb022; }
+    .deny { background:#fef3f2; border-color:#f97066; }
+    dl { margin:0; display:grid; grid-template-columns:minmax(160px,auto) 1fr; gap:7px 14px; }
+    dt { color:var(--muted); font-size:13px; } dd { margin:0; font-size:14px; }
+    .btn { display:inline-block; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); font-size:13.5px; cursor:pointer; text-decoration:none; }
+    .btn.primary { background:var(--ink); color:#fff; border-color:var(--ink); }
+    form.inline { display:inline; }
+    select, input { padding:6px 8px; border:1px solid var(--line); border-radius:7px; font-size:14px; }
+    footer { color:var(--muted); font-size:12.5px; text-align:center; padding:18px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Helios Cash Planner</h1>
+  <p>{{ subtitle }}</p>
+  <nav>
+    {% for item in nav %}
+      <a href="{{ prefix }}{{ item.href }}" class="{{ 'active' if item.id == active else '' }}">{{ item.label }}</a>
+    {% endfor %}
+  </nav>
+</header>
+<main>{% block content %}{% endblock %}</main>
+<footer>The model proposes, code decides. The forecast is a fact the agent cannot write.
+  Authority: <span class="mono">agents/helios-cash-planner-audit.yaml</span>.</footer>
+</body>
+</html>

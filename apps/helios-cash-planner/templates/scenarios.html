@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}What if — Helios Cash Planner{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Ask a what-if</h2>
+  <form method="get" action="{{ prefix }}/scenarios">
+    <select name="kind">
+      <option value="customer_pays_late" {{ 'selected' if kind == 'customer_pays_late' }}>a customer pays late by</option>
+      <option value="move_bill" {{ 'selected' if kind == 'move_bill' }}>a bill is moved later by</option>
+      <option value="drop_inflow" {{ 'selected' if kind == 'drop_inflow' }}>an inflow never arrives</option>
+    </select>
+    <select name="target_id">
+      {% for r in receivables %}<option value="{{ r.id }}" {{ 'selected' if target_id == r.id }}>{{ r.id }} · {{ customers[r.customer_id].name }} · {{ money(r.amount_cents) }}</option>{% endfor %}
+      {% for p in payables %}<option value="{{ p.id }}" {{ 'selected' if target_id == p.id }}>{{ p.id }} · {{ p.payee }} · {{ money(p.amount_cents) }}</option>{% endfor %}
+    </select>
+    <input type="number" name="days" value="{{ days }}" min="0" max="120" style="width:80px"> days
+    <button class="btn primary" type="submit">Project</button>
+  </form>
+  {% if error %}<div class="rule deny">{{ error }}</div>{% endif %}
+  {% if result %}
+  <dl style="margin-top:14px">
+    <dt>Baseline lowest balance</dt><dd>{{ money(result.baseline_min_balance_cents) }}</dd>
+    <dt>Scenario lowest balance</dt><dd><b>{{ money(result.scenario_min_balance_cents) }}</b></dd>
+    <dt>Baseline first shortfall</dt><dd>{{ result.baseline_first_shortfall or 'none' }}</dd>
+    <dt>Scenario first shortfall</dt><dd>{{ result.scenario_first_shortfall or 'none' }}</dd>
+    <dt>Resolves the baseline shortfall</dt><dd>{{ 'yes' if result.scenario_resolves_baseline_shortfall else 'no' }}</dd>
+    <dt>Inputs hash</dt><dd class="mono">{{ result.inputs_hash[:16] }}…</dd>
+  </dl>
+  {% endif %}
+  <p class="note">A what-if changes nothing. It runs the same projection with one flow moved, so the answer is tied to the exact inputs by its hash.</p>
+</div>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Settings — Helios Cash Planner{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Thresholds and horizon</h2>
+  <dl>
+    <dt>Horizon</dt><dd>{{ config.weeks }} weeks ({{ config.horizon_days }} days)</dd>
+    <dt>Cash buffer</dt><dd>{{ config.cash_buffer }} — a week whose lowest balance falls below this is short</dd>
+    <dt>Credit facility</dt><dd>{{ config.credit_line_limit }} at {{ config.credit_line_base_series }} + {{ config.credit_line_spread_bps }} bp</dd>
+    <dt>Owner digest</dt><dd>at most {{ config.max_digests }} per {{ config.digest_window_days }} days</dd>
+    <dt>Simulation</dt><dd>{{ config.simulation_paths }} seeded paths</dd>
+  </dl>
+  <p class="note">Every number here is mirrored from the audit manifest, which is the authority.</p>
+</div>
+<div class="card">
+  <h2>The rules</h2>
+  {% for r in rules %}<div class="rule"><b>{{ r.id }}</b> — {{ r.description }} <span class="note">({{ r.tools | join(', ') }})</span></div>{% endfor %}
+</div>
+{% endblock %}

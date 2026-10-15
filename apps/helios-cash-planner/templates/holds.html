@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Holds — Helios Cash Planner{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Needs your approval</h2>
+  {% if pending %}{% for h in pending %}<div class="rule warn"><p style="margin:0 0 6px"><b>{{ h.tool }}</b> <span class="mono">{{ h.hold_id }}</span> · {{ h.scenario }}</p><p style="margin:0">{{ h.question }}</p></div>{% endfor %}
+  {% else %}<p class="note">Nothing is waiting on you right now.</p>{% endif %}
+</div>
+<div class="card">
+  <h2>Decisions in this session</h2>
+  {% if decided %}<table><thead><tr><th>Scenario</th><th>Tool</th><th>Decision</th><th>The question you were asked</th></tr></thead><tbody>
+  {% for d in decided %}<tr><td class="mono">{{ d.scenario }}</td><td class="mono">{{ d.tool }}</td><td><span class="pill {{ 'paid' if d.approved else 'refused' }}">{{ 'approved' if d.approved else 'declined' }}</span></td><td class="note">{{ d.question }}</td></tr>{% endfor %}
+  </tbody></table>{% else %}<p class="note">No holds have been put to you yet.</p>{% endif %}
+</div>
+<div class="card">
+  <h2>Refused in code, without asking you</h2>
+  <p class="note">These were <b>denied</b>: an invented shortfall, a disputed customer, payroll, a draw above the facility. Approving everything above could not have allowed any of them.</p>
+  {% if refused %}<table><thead><tr><th>Scenario</th><th>Control</th><th>Rule</th><th>Reason the agent was given</th></tr></thead><tbody>
+  {% for r in refused %}<tr><td class="mono">{{ r.scenario }}</td><td>{{ r.control }}</td><td class="mono">{{ r.rule or '—' }}</td><td class="note">{{ r.reason }}</td></tr>{% endfor %}
+  </tbody></table>{% else %}<p class="note">Nothing was refused in this session.</p>{% endif %}
+</div>
+<div class="card">
+  <h2>Every scenario</h2>
+  {% if outcomes %}<table><thead><tr><th>Scenario</th><th>Control</th><th>Outcome</th><th>Expected</th></tr></thead><tbody>
+  {% for o in outcomes %}<tr><td class="mono">{{ o.id }}</td><td class="mono">{{ o.control }}</td><td><span class="pill {{ status_class[o.status] or 'unpaid' }}">{{ o.status }}</span></td><td class="note">{{ o.expects }}</td></tr>{% endfor %}
+  </tbody></table>{% else %}<p class="note">Run the agent from the dashboard.</p>{% endif %}
+</div>
+{% endblock %}

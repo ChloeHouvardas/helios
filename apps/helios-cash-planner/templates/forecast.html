@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Forecast — Helios Cash Planner{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Weeks</h2>
+  <table>
+    <thead><tr><th>Week</th><th>From</th><th>To</th><th class="num">In</th><th class="num">Out</th><th class="num">Lowest</th><th class="num">Closing</th><th></th></tr></thead>
+    <tbody>{% for w in weeks %}<tr class="{{ 'short' if w.short else '' }}">
+      <td class="mono">{{ w.week }}</td><td>{{ w.start }}</td><td>{{ w.end }}</td>
+      <td class="num">{{ money(w.inflows_cents) }}</td><td class="num">{{ money(w.outflows_cents) }}</td>
+      <td class="num">{{ money(w.min_balance_cents) }}</td><td class="num">{{ money(w.closing_balance_cents) }}</td>
+      <td>{% if w.short %}<span class="pill refused">short by {{ money(w.shortfall_cents) }}</span>{% endif %}{% if w.payroll %} <span class="pill unpaid">payroll</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+</div>
+<div class="card">
+  <h2>Inflows, timed by behaviour</h2>
+  <table><thead><tr><th>Receivable</th><th>Customer</th><th class="num">Amount</th><th>Due</th><th>How they pay</th></tr></thead><tbody>
+  {% for r in receivables %}{% set b = behaviours[r.customer_id] %}<tr>
+    <td class="mono">{{ r.id }}</td><td>{{ customers[r.customer_id].name }}</td><td class="num">{{ money(r.amount_cents) }}</td><td>{{ r.due_date }}</td>
+    <td class="note">{% for d, w in b.offset_days[:4] %}+{{ d }}d ({{ '%.0f' % (w*100) }}%) {% endfor %} · evidence: {{ b.level }}{% if b.level == 'default' %} — <b>no history, prior only</b>{% endif %}</td>
+  </tr>{% endfor %}</tbody></table>
+</div>
+<div class="card">
+  <h2>Outflows</h2>
+  <table><thead><tr><th>Payable</th><th>Payee</th><th>Kind</th><th class="num">Amount</th><th>Due</th><th>Movable</th></tr></thead><tbody>
+  {% for p in payables %}<tr><td class="mono">{{ p.id }}</td><td>{{ p.payee }}</td><td>{{ p.kind }}</td><td class="num">{{ money(p.amount_cents) }}</td><td>{{ p.due_date }}</td><td>{{ 'yes' if p.reschedulable else 'never' }}</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% endblock %}
