@@ -21,7 +21,10 @@ cd "$(dirname "$0")"
 ENGINE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$ENGINE_ROOT/../.." && pwd)"
 VENV="$REPO_ROOT/.venv"
-RUN_DIR="$ENGINE_ROOT/.helios-run"
+# The engine resolves its run directory at the REPO root (engine/orchestrator.py:
+# RUN = REPO / ".helios-run"), so nginx must mount that one or it serves its
+# default page while the engine believes it routed an app.
+RUN_DIR="$REPO_ROOT/.helios-run"
 PORT="${HELIOS_ENGINE_PORT:-8100}"
 
 # --- 1. Docker daemon -----------------------------------------------------
