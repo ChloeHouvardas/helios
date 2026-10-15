@@ -1,0 +1,159 @@
+# helios-app.yaml — helios-cash-planner
+#
+# The app spec for flagship 3, written from the intake in `intake.yaml`
+# (`helios-app spec-from-intake` produced the first draft; this is the edited
+# contract, BUILD.md step 3). Forecast thirteen weeks of cash from how customers
+# actually pay, warn weeks ahead, recommend one action per shortfall with the
+# public borrowing rate cited, and let the owner ask what-if questions.
+#
+# The forecast is a FACT here, not a number the agent reports: every rule about
+# a week reads the projection the app computed, so an agent cannot invent a
+# shortfall, overstate one, or recommend borrowing for a week that is fine.
+
+spec_version: "1"
+
+identity:
+  id: helios-cash-planner
+  name: Helios Cash Planner
+  description: >
+    Forecasts the next thirteen weeks of cash for a small business from how its
+    customers actually pay, warns the owner weeks ahead of a shortfall,
+    recommends one action per short week — chase a customer, move a supplier
+    bill, or draw on the credit line — with the public reference rate cited, and
+    answers what-if questions. Warnings are only published for weeks the
+    forecast marks short and never for more than the projected gap; a follow-up
+    is refused for a customer in dispute; payroll is never moved; a credit draw
+    recommendation always goes to the owner.
+
+# Standalone, and that is a recorded answer. When Collect and Payables are
+# deployed in the same tenant their verified graph nodes and tenant events
+# replace this app's own fixtures for receivables and payables.
+existing:
+  system: null
+  stack: null
+  data: null
+  ui: null
+
+stack:
+  use: helios-python-web-1
+
+data:
+  local:
+    entities:
+      - name: account
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: name, type: string, required: false }
+          - { name: balance_cents, type: integer, required: true }
+          - { name: currency, type: string, required: true }
+          - { name: credit_line_limit_cents, type: integer, required: false }
+          - { name: credit_line_drawn_cents, type: integer, required: false }
+
+      - name: customer
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: name, type: string, required: true }
+          - { name: segment, type: string, required: true }
+          # Fact-source input for app.no_follow_up_in_dispute. Withheld from
+          # the agent's customer view so it cannot argue with it.
+          - { name: disputed, type: boolean, required: true }
+          # {due, paid} pairs feeding behavior.profile. How this customer
+          # ACTUALLY pays is what drives the inflow timing.
+          - { name: payment_history, type: json, required: false }
+          - { name: last_contacted, type: date, required: false }
+
+      - name: receivable
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: customer_id, type: string, required: true }
+          - { name: amount_cents, type: integer, required: true }
+          - { name: currency, type: string, required: true }
+          - { name: due_date, type: date, required: true }
+          - { name: status, type: string, required: true }
+          - { name: source, type: string, required: false }
+
+      - name: payable
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: payee, type: string, required: true }
+          # payroll | rent | supplier | tax | loan — payroll is never moved.
+          - { name: kind, type: string, required: true }
+          - { name: amount_cents, type: integer, required: true }
+          - { name: currency, type: string, required: true }
+          - { name: due_date, type: date, required: true }
+          - { name: status, type: string, required: true }
+          - { name: reschedulable, type: boolean, required: true }
+          - { name: source, type: string, required: false }
+
+      # Written only by the gated tools after an allowed action.
+      - name: shortfall_warning
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: week, type: string, required: true }
+          - { name: shortfall_cents, type: integer, required: true }
+          - { name: projected_min_balance_cents, type: integer, required: true }
+          - { name: published_at, type: datetime, required: true }
+          - { name: graph_node_id, type: string, required: false }
+
+      - name: recommendation
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: week, type: string, required: true }
+          # follow_up | reschedule | credit_draw
+          - { name: kind, type: string, required: true }
+          - { name: target_id, type: string, required: true }
+          - { name: amount_cents, type: integer, required: false }
+          - { name: reason, type: string, required: true }
+          - { name: status, type: string, required: true }
+          - { name: rate_name, type: string, required: false }
+          - { name: rate_as_of, type: date, required: false }
+
+      - name: action_log_entry
+        fields:
+          - { name: id, type: string, required: true }
+          - { name: kind, type: string, required: true }
+          - { name: at, type: datetime, required: true }
+          - { name: payload, type: json, required: true }
+
+# The cross-app channel. Reads are preferred over fixtures when present;
+# nothing here depends on another app being deployed.
+graph:
+  reads:
+    - { entity: invoice, events: [extension_agreed, payment_applied, reminder_sent] }
+    - { entity: bill, events: [rescheduled, paid, scheduled] }
+  publishes:
+    # Verified: this app is the authority for the cash plan.
+    - { entity: cashplan, events: [shortfall_warning, cleared] }
+    # Observations: a recommendation is this agent's inference, never a record.
+    - { entity: recommendation, events: [follow_up, reschedule, credit_draw] }
+
+agents:
+  action_manifest: agents/helios-cash-planner-action.json
+  audit_manifest: agents/helios-cash-planner-audit.yaml
+
+ui:
+  pages:
+    - { id: dashboard, title: Cash position and the next shortfall, pattern: summary }
+    - { id: forecast, title: Thirteen weeks, pattern: table }
+    - { id: scenarios, title: What if, pattern: form }
+    - { id: funding, title: Ways to fund a gap, pattern: table }
+    - { id: holds, title: Needs your approval, pattern: approval_queue }
+    - { id: settings, title: Thresholds and horizon, pattern: settings }
+  align_with: null
+
+tools:
+  # Read-only, run directly.
+  - cash_position
+  - project_cash
+  - simulate_cash
+  - what_if
+  - customer_behavior
+  - compare_funding
+  - reference_rate
+  # Side-effecting, gated. Stated explicitly: three of these are recommendations
+  # whose names do not carry a verb the guess would catch.
+  - { name: publish_shortfall_warning, side_effect: true }
+  - { name: recommend_follow_up, side_effect: true }
+  - { name: recommend_reschedule, side_effect: true }
+  - { name: recommend_credit_draw, side_effect: true }
+  - { name: send_owner_digest, side_effect: true }

@@ -1,0 +1,92 @@
+{
+  "INV-3001": {
+    "id": "INV-3001",
+    "customer_id": "CUST-002",
+    "amount_cents": 1800000,
+    "currency": "CNY",
+    "due_date_days_ago": -4,
+    "status": "open",
+    "source": "fixture"
+  },
+  "INV-3002": {
+    "id": "INV-3002",
+    "customer_id": "CUST-001",
+    "amount_cents": 6600000,
+    "currency": "CNY",
+    "due_date_days_ago": -16,
+    "status": "open",
+    "source": "fixture"
+  },
+  "INV-3003": {
+    "id": "INV-3003",
+    "customer_id": "CUST-003",
+    "amount_cents": 3100000,
+    "currency": "CNY",
+    "due_date_days_ago": -9,
+    "status": "open",
+    "source": "fixture"
+  },
+  "INV-3004": {
+    "id": "INV-3004",
+    "customer_id": "CUST-005",
+    "amount_cents": 1250000,
+    "currency": "CNY",
+    "due_date_days_ago": -30,
+    "status": "open",
+    "source": "fixture"
+  },
+  "INV-3005": {
+    "id": "INV-3005",
+    "customer_id": "CUST-001",
+    "amount_cents": 7400000,
+    "currency": "CNY",
+    "due_date_days_ago": -47,
+    "status": "open",
+    "source": "fixture"
+  },
+  "INV-3006": {
+    "id": "INV-3006",
+    "customer_id": "CUST-004",
+    "amount_cents": 2400000,
+    "currency": "CNY",
+    "due_date_days_ago": -38,
+    "status": "open",
+    "source": "fixture"
+  },
+  "INV-3007": {
+    "id": "INV-3007",
+    "customer_id": "CUST-002",
+    "amount_cents": 2100000,
+    "currency": "CNY",
+    "due_date_days_ago": -62,
+    "status": "open",
+    "source": "fixture"
+  },
+  "INV-3008": {
+    "id": "INV-3008",
+    "customer_id": "CUST-005",
+    "amount_cents": 1400000,
+    "currency": "CNY",
+    "due_date_days_ago": -80,
+    "status": "open",
+    "source": "fixture"
+  },
+  "INV-3009": {
+    "id": "INV-3009",
+    "customer_id": "CUST-002",
+    "amount_cents": 3600000,
+    "currency": "CNY",
+    "due_date_days_ago": -24,
+    "status": "open",
+    "source": "fixture"
+  },
+  "INV-3010": {
+    "id": "INV-3010",
+    "customer_id": "CUST-005",
+    "amount_cents": 2300000,
+    "currency": "CNY",
+    "due_date_days_ago": -55,
+    "status": "open",
+    "source": "fixture"
+  }
+}

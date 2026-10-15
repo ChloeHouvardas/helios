@@ -1,0 +1,102 @@
+# Helios app intake — Helios Cash Planner, flagship 3.
+# Answered 2026-10-15 from specs/helios-context.md §"Helios Cash Planner".
+q01_job:
+  question: What is the job this app performs, in the user's own words?
+  answer: >
+    Forecast my cash for the next thirteen weeks based on how my customers
+    actually pay, warn me early when I will be short, tell me what to do about
+    it (who to chase, which bill to move, whether to borrow), and let me ask
+    what-if questions in plain language.
+  assumption: null
+q02_users:
+  question: Who uses it, and what do they need to decide or do?
+  answer: >
+    The owner and the bookkeeper of a small business. They decide whether to
+    chase a customer, move a supplier payment, or draw on the credit line before
+    payroll on the 25th.
+  assumption: null
+q03_success:
+  question: What does success look like?
+  answer: >
+    The owner learns about a shortfall weeks ahead instead of on payroll day,
+    with a ranked set of options and the public borrowing rate cited.
+  assumption: null
+q04_existing_system:
+  question: Is there an existing system this app joins, or is it standalone?
+  answer: Standalone. It reads what Collect and Payables publish to the shared graph when present.
+  assumption: null
+q05_existing_stack:
+  question: If existing, what stack?
+  answer: null
+  assumption: Not applicable, standalone.
+q06_existing_data:
+  question: If existing, where does its data live?
+  answer: null
+  assumption: Not applicable, standalone.
+q07_existing_ui:
+  question: If existing, what UI conventions?
+  answer: null
+  assumption: Not applicable, standalone.
+q08_records:
+  question: What records does the app need?
+  answer: >
+    account (id, balance_cents, currency); customer (id, name, segment,
+    disputed, payment history); receivable (id, customer_id, amount_cents,
+    due_date, status); payable (id, payee, kind, amount_cents, due_date, status,
+    reschedulable); shortfall_warning (week, shortfall_cents, published_at);
+    recommendation (id, week, kind, target, amount_cents, status).
+  assumption: Money is integer cents throughout.
+q09_data_ownership:
+  question: Which already exist elsewhere, and which must this app create?
+  answer: >
+    Receivables are Collect's records and payables are Payables' records when
+    those apps are present; this app keeps its own copies as fixtures and
+    prefers verified graph nodes when published. It owns warnings and
+    recommendations.
+  assumption: null
+q10_graph:
+  question: What must be shared across apps?
+  answer: >
+    Reads invoice[extension_agreed, payment_applied] and bill[rescheduled, paid].
+    Publishes cashplan[shortfall_warning] as a verified node, and its
+    recommendations as observations.
+  assumption: null
+q11_agent_work:
+  question: What work should an agent do without being asked each time?
+  answer: >
+    Re-project the thirteen weeks whenever inflows or outflows change, publish a
+    warning for a week that goes short, recommend one action per shortfall, and
+    send the owner a weekly digest.
+  assumption: null
+q12_mandate:
+  question: For each agent, what may it do, its limits, what needs approval?
+  answer: >
+    It may publish a warning only for a week the forecast actually marks short,
+    and never for more than the projected gap. A follow-up recommendation is
+    refused for a customer with a dispute. Payroll is never rescheduled. A
+    credit draw recommendation always goes to the owner and is capped at the
+    facility headroom. One digest per week.
+  assumption: null
+q13_tools:
+  question: Which financial tools does that work need?
+  answer: >
+    forecast.project, forecast.simulate, forecast.scenario, behavior.profile,
+    market.rate, market.borrowing_cost_compare, the knowledge graph, email.
+  assumption: null
+q14_side_effects:
+  question: Which of those have side effects?
+  answer: >
+    Publishing a warning, recording a recommendation (follow-up, reschedule,
+    credit draw) and sending the digest. Everything else is a read.
+  assumption: null
+q15_pages:
+  question: What does the user need to see and act on?
+  answer: >
+    A dashboard with the position and the next shortfall; the 13-week forecast;
+    a what-if page; funding options with the rate cited; the approval queue;
+    settings.
+  assumption: null
+q16_patterns:
+  question: Which UI pattern fits each page?
+  answer: summary, table, form, table, approval_queue, settings
+  assumption: null

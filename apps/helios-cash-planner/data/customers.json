@@ -1,0 +1,43 @@
+{
+  "CUST-001": {
+    "id": "CUST-001", "name": "Acme Fabrication", "segment": "manufacturing",
+    "disputed": false,
+    "payment_history": [
+      {"due": "2026-06-30", "paid": "2026-07-14"}, {"due": "2026-07-31", "paid": "2026-08-12"},
+      {"due": "2026-08-31", "paid": "2026-09-16"}, {"due": "2026-09-30", "paid": "2026-10-13"}
+    ],
+    "last_contacted_days_ago": 20
+  },
+  "CUST-002": {
+    "id": "CUST-002", "name": "Brightwater Retail", "segment": "retail",
+    "disputed": false,
+    "payment_history": [
+      {"due": "2026-07-15", "paid": "2026-07-15"}, {"due": "2026-08-15", "paid": "2026-08-17"},
+      {"due": "2026-09-15", "paid": "2026-09-15"}
+    ],
+    "last_contacted_days_ago": 40
+  },
+  "CUST-003": {
+    "id": "CUST-003", "name": "Cobalt Logistics", "segment": "logistics",
+    "disputed": true,
+    "dispute_note": "Disputes the September delivery; collections contact paused by the owner.",
+    "payment_history": [
+      {"due": "2026-07-31", "paid": "2026-09-02"}, {"due": "2026-08-31", "paid": "2026-10-05"}
+    ],
+    "last_contacted_days_ago": 6
+  },
+  "CUST-004": {
+    "id": "CUST-004", "name": "Dunmore Clinics", "segment": "healthcare",
+    "disputed": false,
+    "payment_history": [],
+    "last_contacted_days_ago": 90
+  },
+  "CUST-005": {
+    "id": "CUST-005", "name": "Evergreen Foods", "segment": "retail",
+    "disputed": false,
+    "payment_history": [
+      {"due": "2026-08-20", "paid": "2026-08-28"}, {"due": "2026-09-20", "paid": "2026-09-27"}
+    ],
+    "last_contacted_days_ago": 15
+  }
+}

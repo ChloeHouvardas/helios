@@ -1,0 +1,10 @@
+{
+  "operating": {
+    "id": "operating",
+    "name": "Operating account",
+    "balance_cents": 9500000,
+    "currency": "CNY",
+    "credit_line_limit_cents": 15000000,
+    "credit_line_drawn_cents": 0
+  }
+}

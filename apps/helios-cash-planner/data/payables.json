@@ -1,0 +1,101 @@
+{
+  "PAY-4001": {
+    "id": "PAY-4001",
+    "payee": "Landlord (Jinjiang office)",
+    "kind": "rent",
+    "amount_cents": 1900000,
+    "currency": "CNY",
+    "due_date_days_ago": -3,
+    "status": "scheduled",
+    "reschedulable": false,
+    "source": "fixture"
+  },
+  "PAY-4002": {
+    "id": "PAY-4002",
+    "payee": "Meridian Logistics",
+    "kind": "supplier",
+    "amount_cents": 2600000,
+    "currency": "CNY",
+    "due_date_days_ago": -8,
+    "status": "scheduled",
+    "reschedulable": true,
+    "source": "fixture"
+  },
+  "PAY-4003": {
+    "id": "PAY-4003",
+    "payee": "Northwind Components",
+    "kind": "supplier",
+    "amount_cents": 3400000,
+    "currency": "CNY",
+    "due_date_days_ago": -26,
+    "status": "scheduled",
+    "reschedulable": true,
+    "source": "fixture"
+  },
+  "PAY-4004": {
+    "id": "PAY-4004",
+    "payee": "Provincial tax bureau",
+    "kind": "tax",
+    "amount_cents": 1500000,
+    "currency": "CNY",
+    "due_date_days_ago": -41,
+    "status": "scheduled",
+    "reschedulable": false,
+    "source": "fixture"
+  },
+  "PAY-4005": {
+    "id": "PAY-4005",
+    "payee": "Landlord (Jinjiang office)",
+    "kind": "rent",
+    "amount_cents": 1900000,
+    "currency": "CNY",
+    "due_date_days_ago": -33,
+    "status": "scheduled",
+    "reschedulable": false,
+    "source": "fixture"
+  },
+  "PAY-4006": {
+    "id": "PAY-4006",
+    "payee": "Shenzhen Tooling",
+    "kind": "supplier",
+    "amount_cents": 3900000,
+    "currency": "CNY",
+    "due_date_days_ago": -41,
+    "status": "scheduled",
+    "reschedulable": true,
+    "source": "fixture"
+  },
+  "PAY-4007": {
+    "id": "PAY-4007",
+    "payee": "Landlord (Jinjiang office)",
+    "kind": "rent",
+    "amount_cents": 1900000,
+    "currency": "CNY",
+    "due_date_days_ago": -63,
+    "status": "scheduled",
+    "reschedulable": false,
+    "source": "fixture"
+  },
+  "PAY-4008": {
+    "id": "PAY-4008",
+    "payee": "Northwind Components",
+    "kind": "supplier",
+    "amount_cents": 2900000,
+    "currency": "CNY",
+    "due_date_days_ago": -70,
+    "status": "scheduled",
+    "reschedulable": true,
+    "source": "fixture"
+  },
+  "PAYROLL": {
+    "id": "PAYROLL",
+    "payee": "Staff payroll",
+    "kind": "payroll",
+    "amount_cents": 3800000,
+    "currency": "CNY",
+    "due_day_of_month": 25,
+    "status": "scheduled",
+    "reschedulable": false,
+    "source": "fixture"
+  }
+}
