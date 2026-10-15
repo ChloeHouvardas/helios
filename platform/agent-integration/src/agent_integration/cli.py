@@ -2,14 +2,14 @@
 
     agent-integration doctor               # is the model reachable? run this first
     agent-integration demo                 # offline, all five scenarios
-    agent-integration run --task "..."     # GLM-5.3, interactive approvals
+    agent-integration run --task "..."     # Qwen, interactive approvals
     agent-integration run --offline ...    # scripted, no token needed
     agent-integration inspect              # what does the auditor govern
     agent-integration manifest --out X     # generate the audit YAML
     agent-integration selfcheck            # do the two packages still agree
 
 Everything works with no token at all. ``run`` uses a scripted driver when
-``--offline`` is given or no token is configured, and GLM-5.3 otherwise.
+``--offline`` is given or no token is configured, and Qwen otherwise.
 
 Exit codes are meaningful for CI: 0 ran, 1 config or connectivity, 2 refused
 (the auditor granted no authority), 3 held with nobody to decide, 4 the run
@@ -383,7 +383,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     setting is wrong if it fails. No tools are offered, so it cannot trigger a
     side effect and never touches the auditor.
     """
-    from .model_driver import ModelDriver, ModelError, api_key_present, resolve_token, token_env_var_name
+    from .model_driver import (
+        TOKEN_ENV_VARS,
+        ModelDriver,
+        ModelError,
+        api_key_present,
+        resolve_token,
+        token_env_var_name,
+    )
 
     print("model connectivity check")
     print("-" * 60)
@@ -391,7 +398,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     driver = ModelDriver(
         model=args.model,
         base_url=base_url or None,
-        reasoning_effort="low",  # cheapest setting; this is a ping, not a task
+        enable_thinking=False,  # cheapest setting; this is a ping, not a task
         max_tokens=64,
     )
     print(f"  model          : {driver.model}")
@@ -401,9 +408,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     token = resolve_token()
     if not token:
         print(f"\nFAILED: no token is set.")
+        # Say what actually works. Nothing in this package loads a .env file —
+        # the driver reads os.environ only — so instructing the reader to edit
+        # one sends them into a loop where the file exists and this still fails.
         print(
-            f"  Copy .env.example to .env and set one of HELIOS_LLM_API_KEY / "
-            f"LLM_API_TOKEN, then re-run this command."
+            f"  The token is read from the environment, not from a .env file.\n"
+            f"  Set {' / '.join(TOKEN_ENV_VARS[:2])} or DASHSCOPE_API_KEY, then re-run:\n"
+            f"    export HELIOS_LLM_API_KEY=...\n"
+            f"    # or load an existing file into the environment first:\n"
+            f"    set -a; . ./platform/agent-integration/.env; set +a"
         )
         return EXIT_USAGE
     # Show only the shape, never the value.

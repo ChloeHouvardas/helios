@@ -38,7 +38,7 @@ action agent ──ToolContractView──▶ AuditBridge ──▶ audit agent (
 | --- | --- |
 | `demo` | Runs five scenarios offline and prints every verdict |
 | `doctor` | Checks model connectivity with one minimal request — run this first |
-| `run --task "..."` | One agent on one task. GLM if a token is set, scripted otherwise |
+| `run --task "..."` | One agent on one task. Qwen if a token is set, scripted otherwise |
 | `run --offline --task "..." --call 'send_email:{...}'` | Scripted, no token needed |
 | `inspect` | The authority surface: which tools are gated, which are read-only |
 | `manifest [--out path]` | Print or write the generated audit YAML |
@@ -49,32 +49,39 @@ authority), `3` held with nobody to decide, `4` the run errored.
 
 ## Using the real model
 
-GLM-5.3 over the OpenAI-compatible Chat Completion protocol, stdlib HTTP only
-— no SDK, no dependency tree.
+Qwen via Alibaba Cloud Model Studio (DashScope) in OpenAI-compatible mode,
+stdlib HTTP only — no SDK, no dependency tree. Qwen is the only generative
+model the competition permits.
 
 ```bash
-cp .env.example .env      # set HELIOS_LLM_API_KEY
+cp .env.example .env      # set HELIOS_LLM_API_KEY (a DashScope API key)
 set -a; source .env; set +a
 agent-integration doctor  # one minimal request, tells you exactly what is wrong
 agent-integration run --task "Follow up on overdue invoice INV-1001"
 ```
 
-`doctor` prints the token as `L2...1Y (13 chars)` — the shape, never the value.
+`doctor` prints the token as `sk...x9 (35 chars)` — the shape, never the value.
 
-Two things about the GLM-5.3 contract that are easy to get wrong, both handled
-in `model_driver.py` and asserted by tests:
+Three things about the DashScope OpenAI-compatible contract that are easy to get
+wrong, all handled in `model_driver.py` and asserted by tests:
 
-- **Auth is a plain Bearer token.** GLM-5.3 rejects the legacy JWT-shaped key,
-  so nothing signs or encodes the token.
-- **Thinking cannot be disabled.** `reasoning_effort` (`low`/`high`/`max`)
-  picks the depth; a request sending `thinking.type: "disabled"` fails outright.
-  `tool_choice` only accepts `"auto"`, and `temperature` caps at `1.0`.
+- **Auth is a plain Bearer token.** Nothing signs or encodes the key.
+- **Thinking is `enable_thinking`, not a nested object.** It is a DashScope
+  extension sent top-level in the HTTP body. `qwen3.8-max` is a hybrid-thinking
+  model, so `false` is accepted — `doctor` uses it for a cheap ping.
+  `thinking_budget` (1–32768) caps the reasoning tokens and is omitted at 0.
+  Reasoning arrives in `reasoning_content`, the answer in `content`.
+- **Non-streaming requests.** Commercial Qwen thinking models answer them; some
+  open-source variants only support streaming and reject a synchronous call.
+  Set `HELIOS_LLM_ENABLE_THINKING=false` or repoint the transport if you hit one.
 
-If your token came from a gateway rather than Zhipu directly — a token shaped
-like `L2...` instead of `sk-...` usually means it did — set
-`HELIOS_LLM_BASE_URL` to that gateway, or pass `--base-url`. The public
-endpoints are `https://open.bigmodel.cn/api/paas/v4` (mainland) and
-`https://api.z.ai/api/paas/v4` (international).
+The OpenAI-compatible base URL ends in `/compatible-mode/v1` and excludes
+`/chat/completions`, which the driver appends. If your key is scoped to a
+workspace or region, Model Studio issues its own base URL of the form
+`https://{WorkspaceId}.<region>.maas.aliyuncs.com/compatible-mode/v1` — set
+`HELIOS_LLM_BASE_URL` to it, or pass `--base-url`. The public endpoints are
+`https://dashscope.aliyuncs.com/compatible-mode/v1` (mainland / Beijing) and
+`https://dashscope-intl.aliyuncs.com/compatible-mode/v1` (Singapore).
 
 When the auditor holds an action the CLI prompts you:
 
@@ -166,16 +173,16 @@ src/agent_integration/
 ├── manifest_gen.py   # audit YAML derived from real tool definitions
 ├── bridge.py         # authorize → adjudicate → grant lifecycle
 ├── runtime.py        # gated loop + resume + ScriptedDriver
-├── model_driver.py   # GLM-5.3, stdlib HTTP, imported lazily
+├── model_driver.py   # Qwen via DashScope, stdlib HTTP, imported lazily
 ├── wiring.py         # build_integration()
 └── cli.py            # demo / doctor / run / inspect / manifest / selfcheck
 tests/
 ├── conftest.py           # blocks non-loopback sockets; clears model tokens
 ├── test_integration.py   # 87 tests: adapters, bridge, runtime, evidence
-└── test_model_driver.py  # 36 tests: GLM wire protocol against a local mock
+└── test_model_driver.py  # 44 tests: Qwen wire protocol against a local mock
 ```
 
-123 tests. No network, no token — `conftest.py` fails any test that tries to
+131 tests. No network, no token — `conftest.py` fails any test that tries to
 reach anything off loopback, so the suite cannot quietly depend on a vendor
 endpoint or on whose shell it ran in.
 

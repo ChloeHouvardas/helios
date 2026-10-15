@@ -1,4 +1,4 @@
-"""The model driver: GLM proposes, code still decides.
+"""The model driver: Qwen proposes, code still decides.
 
 Kept in its own module so importing the runtime never imports an HTTP client
 or a model SDK. Everything else in this package runs offline against
@@ -6,17 +6,26 @@ or a model SDK. Everything else in this package runs offline against
 
 Provider
 --------
-GLM-5.3 over the OpenAI-compatible Chat Completion protocol. Verified against
-the published contract, and three details there are load-bearing:
+Qwen via Alibaba Cloud Model Studio (DashScope) in **OpenAI-compatible mode**,
+over the Chat Completion protocol. Qwen is the only generative model the
+competition permits, so the defaults point there and no other provider is
+named in this package.
 
-- Auth is a **plain Bearer token**. GLM-5.3 no longer accepts the legacy
-  JWT-shaped key, so nothing here signs or encodes the token — it is sent as
-  given.
-- ``thinking`` cannot be disabled on GLM-5.3. ``reasoning_effort`` picks the
-  depth (``low`` / ``high`` / ``max``, default ``max``). A request that sends
-  ``thinking.type: "disabled"`` fails outright.
-- ``tool_choice`` only accepts ``"auto"``, and ``temperature`` is capped at
-  ``1.0`` — not the ``2.0`` an OpenAI-shaped client would assume.
+Three details of that contract are load-bearing:
+
+- Auth is a **plain Bearer token** carrying the DashScope API key. Nothing here
+  signs or encodes it — it is sent as given.
+- Thinking mode is controlled by ``enable_thinking``, a DashScope extension to
+  the OpenAI body rather than an OpenAI standard field, so it is sent top-level
+  over HTTP. ``qwen3.8-max`` is a hybrid-thinking model that defaults to
+  thinking on; ``thinking_budget`` caps the reasoning tokens (range 1–32768)
+  and is only sent when configured, because its default is the model's own
+  maximum. Reasoning arrives in ``reasoning_content`` and the answer in
+  ``content`` — ``text_of`` keeps them apart.
+- **Non-streaming requests are used here.** Commercial Qwen thinking models
+  answer them, but some open-source variants only support streaming and reject
+  a synchronous call. Set ``HELIOS_LLM_ENABLE_THINKING=false`` for such a
+  model, or repoint the driver at a streaming transport.
 
 Stdlib HTTP only, matching the house style of ``audit_agent.transport``: no
 SDK to install, no transitive dependency tree, and the request is visible in
@@ -48,22 +57,23 @@ from agent_toolkit.contracts import ToolDefinition
 from .runtime import ToolCall
 
 #: Defaults, each overridable by environment. The base URL is a variable
-#: rather than a constant because a competition or enterprise gateway will
-#: issue its own endpoint, and a token shaped like a gateway token will not
-#: authenticate against the public one.
-DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
-DEFAULT_MODEL = "glm-5.3"
-DEFAULT_REASONING_EFFORT = "high"
+#: rather than a constant because an enterprise or workspace gateway issues its
+#: own endpoint, and a key scoped to one region does not authenticate against
+#: another. DashScope's OpenAI-compatible base URL ends in ``/compatible-mode/v1``
+#: and excludes ``/chat/completions``, which ``_post`` appends.
+DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_MODEL = "qwen3.8-max"
+DEFAULT_ENABLE_THINKING = True
+DEFAULT_THINKING_BUDGET = 0  # 0 means "not sent"; let the model use its own cap
 DEFAULT_MAX_TOKENS = 4096
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
 #: Accepted names for the token, in priority order. ``LLM_API_TOKEN`` matches
-#: how the competition labels the credential.
+#: how the competition labels the credential; ``DASHSCOPE_API_KEY`` is the name
+#: Alibaba Cloud Model Studio documents for its own key.
 TOKEN_ENV_VARS: tuple[str, ...] = (
     "HELIOS_LLM_API_KEY",
     "LLM_API_TOKEN",
-    "GLM_API_KEY",
-    "ZHIPUAI_API_KEY",
     "DASHSCOPE_API_KEY",
 )
 
@@ -130,6 +140,21 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Boolean from the environment, fail-closed on anything unrecognised.
+
+    Only an explicit true/false shape is honoured. An unparseable value falls
+    back to ``default`` rather than guessing, because guessing here decides
+    whether a thinking model is asked to think.
+    """
+    raw = os.environ.get(name, "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 class ModelDriver:
     """A ``Driver`` backed by an OpenAI-compatible chat endpoint."""
 
@@ -139,7 +164,8 @@ class ModelDriver:
         model: str | None = None,
         base_url: str | None = None,
         token: str | None = None,
-        reasoning_effort: str | None = None,
+        enable_thinking: bool | None = None,
+        thinking_budget: int | None = None,
         max_tokens: int | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
@@ -148,8 +174,17 @@ class ModelDriver:
             base_url
             or _env("HELIOS_LLM_BASE_URL", DEFAULT_BASE_URL)
         ).rstrip("/")
-        self.reasoning_effort = reasoning_effort or _env(
-            "HELIOS_LLM_REASONING_EFFORT", DEFAULT_REASONING_EFFORT
+        # ``enable_thinking`` is a real bool, not a truthy-or-default, so an
+        # explicit False must survive rather than fall through to the env.
+        self.enable_thinking = (
+            _env_bool("HELIOS_LLM_ENABLE_THINKING", DEFAULT_ENABLE_THINKING)
+            if enable_thinking is None
+            else enable_thinking
+        )
+        self.thinking_budget = (
+            _env_int("HELIOS_LLM_THINKING_BUDGET", DEFAULT_THINKING_BUDGET)
+            if thinking_budget is None
+            else thinking_budget
         )
         self.max_tokens = max_tokens or _env_int(
             "HELIOS_LLM_MAX_TOKENS", DEFAULT_MAX_TOKENS
@@ -183,16 +218,18 @@ class ModelDriver:
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": self._messages(instructions, history),
-            # GLM-5.3 always thinks; the only knob is how hard.
-            "thinking": {"type": "enabled"},
-            "reasoning_effort": self.reasoning_effort,
             "max_tokens": self.max_tokens,
             "stream": False,
         }
+        # enable_thinking is a DashScope extension, not an OpenAI standard
+        # field, so it is sent top-level over HTTP. thinking_budget caps the
+        # reasoning tokens; omit it when 0 to let the model use its own max.
+        payload["enable_thinking"] = self.enable_thinking
+        if self.thinking_budget > 0:
+            payload["thinking_budget"] = self.thinking_budget
         functions = [tool_function(tool) for tool in tools]
         if functions:
             payload["tools"] = functions
-            # The endpoint documents "auto" as the only supported value.
             payload["tool_choice"] = "auto"
 
         data = self._post("/chat/completions", payload)
@@ -418,8 +455,10 @@ def parse_arguments(arguments: Any) -> dict[str, Any]:
 def text_of(message: Mapping[str, Any]) -> str:
     """The visible answer, ignoring the reasoning trace.
 
-    GLM-5.3 returns ``reasoning_content`` alongside ``content``. The trace is
-    not the answer, so it is never treated as one.
+    With ``enable_thinking`` on, Qwen returns the thinking process in
+    ``reasoning_content`` alongside the answer in ``content``. The trace is not
+    the answer, so it is never treated as one — doing so would end a run on a
+    model's half-finished thought instead of its reply.
     """
     content = message.get("content")
     if isinstance(content, str):
@@ -462,7 +501,9 @@ def _safe_error_body(exc: urllib.error.HTTPError) -> str:
 
 __all__ = [
     "DEFAULT_BASE_URL",
+    "DEFAULT_ENABLE_THINKING",
     "DEFAULT_MODEL",
+    "DEFAULT_THINKING_BUDGET",
     "GATE_NOTICE",
     "ModelError",
     "ModelDriver",
