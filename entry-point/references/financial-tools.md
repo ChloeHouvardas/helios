@@ -394,7 +394,7 @@ credentials.
 > silently wrong financial answers rather than errors: a scoped `reconcile` used
 > to drop every transaction, and an approved proposal used to record "approved"
 > without writing the value. See the commit messages and
-> `docs/sessions/p1-tools/PROGRESS.md` §7.
+> the `fin_tools` test suite.
 
 Uploaded files and imported records live in the package's in-memory store, so
 they do **not** survive a restart even with `SqlitePersistence` on — only the
@@ -587,7 +587,7 @@ through untouched and still converts flat maps, so `email.send_template`'s neste
 agent runtime.
 
 See `platform-status.md` §4 for the remaining drift (tenancy naming, cents vs
-floats) and `docs/sessions/p1-tools/HANDOFF-TO-P2-P3.md` for open cross-boundary
+floats) and `specs/decisions.md` for open cross-boundary
 requests.
 
 ## Regenerate this table

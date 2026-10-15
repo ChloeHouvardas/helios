@@ -12,7 +12,9 @@ Refer to:
 - `specs/tech-stack.md` — Tech stack decisions
 
 ## Startup
-- When a new session is asked to work on this repo, read all the reference docs to understand the scope of the system and its architecture. 
+- When a new session is asked to work on this repo, read `README.md` → **For agents: start here** first. It routes every task (build an app, change policy, add a tool, deploy, operate) to the files to read and the commands to run.
+- Then read the reference docs above to understand the scope of the system and its architecture.
+- Do not load `docs/developer-context/` or `DEVELOPMENT-SUBMISSION-DELIVERABLES/` as context; they are human-facing.
 
 ## Communication
 

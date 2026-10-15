@@ -716,7 +716,7 @@ Everything below has already cost someone hours. Each is still true as of
 
 28. **`platform/financial-tools` is P1's.** `platform/deployment/` and
     `apps/helios-collect/` are P2's. Read them; do not edit them. Leave requests in
-    `docs/sessions/<your-session>/HANDOFF-TO-P1-P2.md`.
+    a note in your commit message.
 
 ### The generator itself
 

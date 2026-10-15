@@ -477,7 +477,7 @@ helios-core (platform tools)
 > that path to reach the app. Making the claim true would mean putting app
 > containers on the tenant network only and letting nginx reach them through a
 > second interface on the sidecar; that is an open hardening item, not the
-> current behaviour. See `docs/sessions/p2-deploy/HANDOFF-TO-P1-P3.md`.
+> current behaviour.
 
 ### Current limitations
 
@@ -528,7 +528,6 @@ helios/
 ├── test-deploy.sh             # End-to-end test
 ├── requirements.txt           # Python dependencies
 ├── README.md                  # High-level overview
-├── DEV-NOTES.md               # Design decisions, deviations
 └── AGENT-BUILDERS-GUIDE.md    # Guide for agent builders
 ```
 

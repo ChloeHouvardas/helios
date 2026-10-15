@@ -102,11 +102,11 @@ knows how to check it.
 Flat layout, no `[build-system]`, so `pip install -e` fails on package discovery.
 `scripts/bootstrap-venv.sh` writes a `.pth` into the venv instead. That is P1's
 package and is not ours to fix; the two-line `pyproject.toml` addition that would
-close it is recorded in `docs/sessions/p3-builder/HANDOFF-TO-P1-P2.md`.
+close it is recorded below.
 
 ## Dependencies on other sessions
 
-Tracked in `docs/sessions/p3-builder/HANDOFF-TO-P1-P2.md`. The short version:
+The short version:
 
 - **P0** — `scripts/` did not exist when this session started and was written here;
   the two versions need reconciling rather than overwriting.

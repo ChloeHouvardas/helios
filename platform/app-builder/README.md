@@ -145,5 +145,5 @@ because an integration stack has no type map to generate DDL from); serving a
 generated app end to end, which needs `platform/deployment/`.
 
 See the status table at the end of `specs/app-builder.md`, and
-`docs/sessions/p3-builder/HANDOFF-TO-P1-P2.md` for what other sessions need to change
+`PLAN.md` in this directory for what is still open
 for some of these to close.

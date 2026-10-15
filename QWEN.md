@@ -63,7 +63,7 @@ a model reply to a side effect without the auditor.
   fixtures before their tests.
 - **Never weaken a control to make a test pass.** If a gate correctly refused, fix the
   test or the fixture. Do not edit or "clean up" files you do not recognise, and never
-  touch `OTHER-TEAMMATE-STUFF/`, `docs/milestones/`, `.env`, or any `.venv`.
+  touch `OTHER-TEAMMATE-STUFF/`, `docs/developer-context/`, `.env`, or any `.venv`.
   `platform/deployment/.helios-run/tenants/demo.json` holds a live tenant execution
   secret and must never be committed.
 - No new third-party dependency without recording why in the commit body; pin it, and
@@ -77,4 +77,4 @@ a model reply to a side effect without the auditor.
 
 `docs/developer-context/HANDOFF.md` (what exists, the traps, what's next) ·
 `entry-point/references/platform-status.md` (verified: runs vs designed) · `AGENTS.md` ·
-`specs/decisions.md` · `specs/tech-stack.md` · `entry-point/SKILL.md` → `BUILD.md`. Keep a plan and a running log under `docs/sessions/<your-session>/`, commit them, and re-read both after any context compaction.
+`specs/decisions.md` · `specs/tech-stack.md` · `entry-point/SKILL.md` → `BUILD.md`. Start from `README.md` → **For agents: start here** for the task-to-file map.
