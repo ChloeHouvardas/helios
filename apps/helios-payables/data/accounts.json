@@ -1,0 +1,8 @@
+{
+  "operating": {
+    "name": "Operating account",
+    "balance_cents": 18000000,
+    "currency": "CNY",
+    "notes": "Opening balance 180,000.00 CNY. This is the only account the app may pay from, and pay_bill has no argument that names one, so money cannot be directed elsewhere."
+  }
+}
