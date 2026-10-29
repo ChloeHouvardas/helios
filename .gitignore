@@ -30,3 +30,9 @@ OTHER-TEAMMATE-STUFF/
 
 # OS noise
 .DS_Store
+
+# Local live-mode run artefacts (logs, pids, data)
+.run-live/
+
+# Competition submission deliverables: kept local, not pushed
+DEVELOPMENT-SUBMISSION-DELIVERABLES/
